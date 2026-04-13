@@ -430,6 +430,8 @@ TR = {
     "profile_title":      "👤 PROFİLİM",
     # ═══ SPAM KORUMA ═══
     "spam_warning":       "⚠️ Çok hızlı mesaj gönderiyorsun. Lütfen bekle.",
+    # ═══ SELAMLAMA ═══
+    "greeting_reply":     "👋 Merhaba! Ana menüye dönmek için /start yazabilirsin.",
     # ═══ STARTUP ═══
     "startup_msg":        "✅ Bot yeniden başladı! Tüm servisler aktif.",
     # ═══ WEB ARAMA YAPAY ZEKASI ═══
@@ -807,6 +809,8 @@ AR = {
     "profile_btn":        "👤 ملفي الشخصي",
     "profile_title":      "👤 ملفي الشخصي",
     "spam_warning":       "⚠️ أنت تُرسل بسرعة كبيرة. الرجاء الانتظار.",
+    # ═══ SELAMLAMA (AR) ═══
+    "greeting_reply":     "👋 أهلاً وسهلاً! اكتب /start للعودة إلى القائمة الرئيسية.",
     "startup_msg":        "✅ البوت يعمل مجدداً! جميع الخدمات متاحة.",
     # ═══ WEB ARAMA YAPAY ZEKASI (AR) ═══
     "ai_searching":       "🔍 جارٍ البحث...",
@@ -1152,6 +1156,19 @@ def _is_question(text: str) -> bool:
     ]
     norm = text.lower()
     return any(ind in norm for ind in question_indicators) or len(text.split()) >= 4
+
+_GREETINGS = {
+    "slm", "selam", "merhaba", "mrb", "hey", "hi", "hello",
+    "سلام", "سلاموا", "هاي", "هلو", "أهلا", "اهلا", "اهلاً",
+    "السلام عليكم", "سلام عليكم", "وعليكم السلام", "مرحبا", "مرحباً",
+    "صباح الخير", "مساء الخير", "صباح النور", "مساء النور",
+    "هلا", "هلا والله", "ايش الاخبار", "كيف الحال",
+}
+
+def _is_greeting(text: str) -> bool:
+    """Selamlama mesajı mı?"""
+    norm = text.strip().lower()
+    return norm in _GREETINGS or any(norm.startswith(g + " ") or norm == g for g in _GREETINGS)
 
 def _try_math_eval(expr: str) -> Optional[str]:
     """
@@ -4809,6 +4826,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         # Spam koruması
         if not check_rate_limit(uid):
             await update.message.reply_text(L(uid, "spam_warning"))
+            return ConversationHandler.END
+
+        # Selamlama kontrolü
+        if _is_greeting(text):
+            log_user_message(user, "msg", text)
+            await update.message.reply_text(L(uid, "greeting_reply"))
             return ConversationHandler.END
 
         # Sabit mesaj (ilk kez)
