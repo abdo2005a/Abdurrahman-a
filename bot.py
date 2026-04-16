@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -63,6 +64,44 @@ USER_NOTES_FILE  = os.path.join(BASE_DIR, "personal_notes.json")
 QUIZ_FILE        = os.path.join(BASE_DIR, "quizzes.json")
 REPORT_FILE      = os.path.join(BASE_DIR, "file_reports.json")
 ADMIN_PERMS_FILE = os.path.join(BASE_DIR, "admin_perms.json")
+
+# ── Tam Yedek Şeması ─────────────────────────────────────────
+BACKUP_SCHEMA = {
+    "bot_data":      DATA_FILE,
+    "users":         USERS_FILE,
+    "messages":      MESSAGES_FILE,
+    "settings":      SETTINGS_FILE,
+    "admins":        ADMINS_FILE,
+    "blocked":       BLOCKED_FILE,
+    "view_counts":   VIEW_COUNTS_FILE,
+    "polls":         POLLS_FILE,
+    "classes":       CLASS_FILE,
+    "faq":           FAQ_FILE,
+    "auto_rules":    AUTO_RULES_FILE,
+    "favorites":     FAVORITES_FILE,
+    "notes":         NOTES_FILE,
+    "warns":         WARNS_FILE,
+    "admin_log":     ADMIN_LOG_FILE,
+    "subs":          SUBS_FILE,
+    "recent":        RECENT_FILE,
+    "folder_descs":  FOLDER_DESC_FILE,
+    "whitelist":     WHITELIST_FILE,
+    "scheduled":     SCHEDULED_FILE,
+    "tags":          TAGS_FILE,
+    "reminders":     REMINDERS_FILE,
+    "leaderboard":   LEADERBOARD_FILE,
+    "achievements":  ACHIEVEMENTS_FILE,
+    "feedback":      FEEDBACK_FILE,
+    "pinned_msgs":   PINNED_MSG_FILE,
+    "broadcast_log": BROADCAST_LOG_FILE,
+    "countdowns":    COUNTDOWN_FILE,
+    "groups":        GROUP_FILE,
+    "anon_q":        ANON_Q_FILE,
+    "user_notes":    USER_NOTES_FILE,
+    "quizzes":       QUIZ_FILE,
+    "reports":       REPORT_FILE,
+    "admin_perms":   ADMIN_PERMS_FILE,
+}
 
 # ── Arama / AI ayarları ──────────────────────────────────────
 SEARCH_TIMEOUT   = 10   # saniye
@@ -353,8 +392,19 @@ TR = {
     "backup_btn":       "💾 Tam Yedek Al",
     "backup_sending":   "💾 Yedek hazırlanıyor...",
     "backup_done":      "✅ Yedek tamamlandı. {} dosya gönderildi.",
+    "full_backup_btn":  "📦 Tek Dosya Yedek",
+    "full_backup_ok":   "✅ Tam yedek hazırlandı ve pinlendi!",
+    "restore_start":    "🔄 Yedekten geri yükleniyor...",
+    "restore_done":     "✅ {count} dosya geri yüklendi!",
+    "restore_fail":     "❌ Geri yükleme başarısız: {err}",
     "export_users_btn": "📤 Kullanıcıları Dışa Aktar",
     "export_done":      "✅ {} kullanıcı dışa aktarıldı.",
+    # ═══ EXCEL ═══
+    "excel_all_btn":    "📊 Excel (Tüm Kullanıcılar)",
+    "excel_user_btn":   "📊 Excel (Bu Kullanıcı)",
+    "excel_building":   "📊 Excel hazırlanıyor...",
+    "excel_done":       "✅ Excel hazır — {} kullanıcı",
+    "excel_user_done":  "✅ Kullanıcı Excel'i hazır!",
     # ═══ HEDEFLİ DUYURU ═══
     "bcast_targeted":   "🎯 Hedefli Duyuru",
     "bcast_all":        "📢 Tüm Kullanıcılar",
@@ -737,8 +787,18 @@ AR = {
     "backup_btn":        "💾 نسخ احتياطي كامل",
     "backup_sending":    "💾 جارٍ تجهيز النسخ الاحتياطية...",
     "backup_done":       "✅ اكتمل النسخ الاحتياطي. {} ملف.",
+    "full_backup_btn":   "📦 نسخ موحّد",
+    "full_backup_ok":    "✅ تم إنشاء النسخة الاحتياطية الموحّدة وتثبيتها!",
+    "restore_start":     "🔄 جارٍ الاستعادة من النسخة الاحتياطية...",
+    "restore_done":      "✅ تمت استعادة {count} ملف!",
+    "restore_fail":      "❌ فشل الاستعادة: {err}",
     "export_users_btn":  "📤 تصدير المستخدمين",
     "export_done":       "✅ تم تصدير {} مستخدم.",
+    "excel_all_btn":     "📊 Excel (كل المستخدمين)",
+    "excel_user_btn":    "📊 Excel (هذا المستخدم)",
+    "excel_building":    "📊 جارٍ إنشاء ملف Excel...",
+    "excel_done":        "✅ Excel جاهز — {} مستخدم",
+    "excel_user_done":   "✅ ملف Excel للمستخدم جاهز!",
     "bcast_targeted":    "🎯 إرسال موجّه",
     "bcast_all":         "📢 الجميع",
     "bcast_class":       "🎓 حسب السنة",
@@ -1622,6 +1682,291 @@ def check_rate_limit(uid: str) -> bool:
     return True
 
 # ── İç Yapay Zeka (FAQ + Kural motoru) ───────────────────────
+# ================================================================
+#  TAM YEDEK (tek JSON dosyası) — oluştur / geri yükle
+# ================================================================
+def create_full_backup() -> bytes:
+    """Tüm veri dosyalarını tek bir JSON bytes nesnesine paketler."""
+    bundle = {}
+    for key, fpath in BACKUP_SCHEMA.items():
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    bundle[key] = json.load(f)
+            except Exception:
+                pass
+    return json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
+
+
+def restore_full_backup(raw: bytes):
+    """Tek JSON bytes nesnesinden tüm dosyaları geri yükler.
+    Returns (success: bool, count: int, error: str)"""
+    try:
+        bundle = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        return False, 0, str(e)
+    count = 0
+    for key, data in bundle.items():
+        fpath = BACKUP_SCHEMA.get(key)
+        if fpath:
+            try:
+                os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                with open(fpath, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                count += 1
+            except Exception:
+                pass
+    return True, count, ""
+
+
+# ================================================================
+#  EXCEL YARDIMCILARI
+# ================================================================
+def _excel_header(ws, cols, color_hex="1F4E79"):
+    from openpyxl.styles import PatternFill, Font, Alignment
+    fill = PatternFill("solid", fgColor=color_hex)
+    font = Font(bold=True, color="FFFFFF", size=11)
+    for col_idx, title in enumerate(cols, 1):
+        cell = ws.cell(row=1, column=col_idx, value=title)
+        cell.fill = fill; cell.font = font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 20
+
+
+def _excel_row(ws, row_num, values, color_hex=None):
+    from openpyxl.styles import PatternFill, Alignment
+    fill = PatternFill("solid", fgColor=color_hex) if color_hex else None
+    for col_idx, val in enumerate(values, 1):
+        cell = ws.cell(row=row_num, column=col_idx, value=val)
+        if fill: cell.fill = fill
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+
+def _auto_col_width(ws, min_w=8, max_w=40):
+    for col in ws.columns:
+        max_len = 0
+        for cell in col:
+            try:
+                cell_len = len(str(cell.value or ""))
+                if cell_len > max_len: max_len = cell_len
+            except Exception:
+                pass
+        ws.column_dimensions[col[0].column_letter].width = min(max(max_len + 4, min_w), max_w)
+
+
+def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
+                    polls_d, leaderboard_d, blocked_list, admins_list,
+                    chunk_size: int = 5000):
+    """Tüm kullanıcılar için kapsamlı Excel. Returns list[(bytes, part_no)]."""
+    from openpyxl import Workbook
+
+    cols2 = ["Tarih", "Kullanıcı ID", "Ad", "Tür", "İçerik / Başlık"]
+    TYPE_COLORS = {"photo": "FFF3E0", "video": "FFF3E0", "document": "FFF3E0",
+                   "search": "E8F5E9", "ai_query": "E3F2FD"}
+
+    # Tüm mesajları topla
+    all_msgs = []
+    for uid_, mlist in msgs_d.items():
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", uid_)
+        for m in mlist:
+            all_msgs.append((m.get("time", ""), uid_, name,
+                             m.get("type", "msg"), m.get("text", "")[:120]))
+    all_msgs.sort(key=lambda x: x[0], reverse=True)
+
+    results = []
+
+    # ── DOSYA 1: Ana dosya ────────────────────────────
+    wb = Workbook()
+
+    # Sayfa 1: Kullanıcılar
+    ws1 = wb.active; ws1.title = "Kullanıcılar"
+    ws1.freeze_panes = "A2"
+    cols1 = ["ID", "Ad Soyad", "Kullanıcı Adı", "Sınıf", "Kayıt Tarihi",
+             "Son Görülme", "Mesaj Sayısı", "Uyarı Sayısı", "Puan", "Admin", "Bloke", "Not"]
+    _excel_header(ws1, cols1, "1F4E79")
+    row = 2
+    for uid_, u in sorted(users_d.items(), key=lambda x: x[1].get("first_seen", ""), reverse=True):
+        cls_key = classes_d.get(uid_, "")
+        cls_name = CLASS_DEFS.get(cls_key, {}).get("tr", "—")
+        msg_count = len(msgs_d.get(uid_, []))
+        w_count = len(warns_d.get(uid_, []))
+        score = leaderboard_d.get(uid_, 0)
+        is_adm = "✅" if int(uid_) in admins_list or int(uid_) == ADMIN_ID else ""
+        is_blk = "🚫" if int(uid_) in blocked_list else ""
+        note = notes_d.get(uid_, "")
+        name = u.get("full_name") or u.get("first_name", "—")
+        un = f"@{u['username']}" if u.get("username") else "—"
+        color = "FFE0E0" if is_blk else ("E0EEFF" if is_adm else ("F9F9F9" if row % 2 == 0 else None))
+        _excel_row(ws1, row, [uid_, name, un, cls_name,
+                               u.get("first_seen", "—"), u.get("last_seen", "—"),
+                               msg_count, w_count, score, is_adm, is_blk, note], color)
+        row += 1
+    _auto_col_width(ws1)
+
+    # Sayfa 2: Mesaj Geçmişi (Bölüm 1)
+    ws2 = wb.create_sheet("Mesaj Geçmişi")
+    ws2.freeze_panes = "A2"
+    _excel_header(ws2, cols2, "375623")
+    row = 2
+    for t, uid_, name, typ, text in all_msgs[:chunk_size]:
+        color = TYPE_COLORS.get(typ, ("F9F9F9" if row % 2 == 0 else None))
+        _excel_row(ws2, row, [t, uid_, name, typ, text], color)
+        row += 1
+    _auto_col_width(ws2)
+
+    # Sayfa 3: Uyarılar & Notlar
+    ws3 = wb.create_sheet("Uyarılar & Notlar")
+    ws3.freeze_panes = "A2"
+    cols3 = ["Kullanıcı ID", "Ad", "Kullanıcı Adı", "Sınıf", "Uyarı Sayısı", "Uyarı Detayları", "Admin Notu"]
+    _excel_header(ws3, cols3, "833C00")
+    row = 2
+    for uid_ in set(warns_d.keys()) | set(notes_d.keys()):
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", "—")
+        un = f"@{u['username']}" if u.get("username") else "—"
+        cls_name = CLASS_DEFS.get(classes_d.get(uid_, ""), {}).get("tr", "—")
+        wlist = warns_d.get(uid_, [])
+        details = " | ".join(w.get("reason", "") for w in wlist)
+        note = notes_d.get(uid_, "")
+        color = "FFE0E0" if len(wlist) >= 3 else ("FFF3CD" if wlist else None)
+        _excel_row(ws3, row, [uid_, name, un, cls_name, len(wlist), details[:200], note], color)
+        row += 1
+    _auto_col_width(ws3)
+
+    # Sayfa 4: Anket Sonuçları
+    ws4 = wb.create_sheet("Anket Sonuçları")
+    ws4.freeze_panes = "A2"
+    cols4 = ["Anket ID", "Soru", "Tür", "Aktif", "Toplam Oy", "Seçenekler & Oylar"]
+    _excel_header(ws4, cols4, "7B2C9E")
+    row = 2
+    for pid, poll in polls_d.items():
+        q = poll.get("question", "—")
+        typ = "Açık Uçlu" if poll.get("type") == "open" else "Çoktan Seçmeli"
+        active = "✅" if poll.get("active") else "❌"
+        votes = poll.get("votes", {})
+        opts = poll.get("options", [])
+        if opts:
+            counts = {}
+            for v in votes.values(): counts[v] = counts.get(v, 0) + 1
+            opts_str = " | ".join(f"{o}:{counts.get(o,0)}" for o in opts)
+        else:
+            opts_str = f"{len(votes)} yazılı cevap"
+        _excel_row(ws4, row, [pid, q, typ, active, len(votes), opts_str],
+                   "F3E8FF" if row % 2 == 0 else None)
+        row += 1
+    _auto_col_width(ws4)
+
+    # Sayfa 5: İstatistikler
+    ws5 = wb.create_sheet("İstatistikler")
+    _excel_header(ws5, ["Metrik", "Değer"], "2E4057")
+    stats = [
+        ("Toplam Kullanıcı",  len(users_d)),
+        ("Toplam Admin",      len([u for u in users_d if int(u) in admins_list]) + 1),
+        ("Bloke Kullanıcı",   len(blocked_list)),
+        ("Toplam Mesaj (log)", sum(len(v) for v in msgs_d.values())),
+        ("Toplam Anket",      len(polls_d)),
+        ("Aktif Anket",       sum(1 for p in polls_d.values() if p.get("active"))),
+        ("Toplam Uyarı",      sum(len(v) for v in warns_d.values())),
+        ("Rapor Tarihi",      datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")),
+    ]
+    lb_sorted = sorted(leaderboard_d.items(), key=lambda x: x[1], reverse=True)[:5]
+    for i, (uid_, sc) in enumerate(lb_sorted, 1):
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", uid_)
+        stats.append((f"Top {i}: {name}", f"{sc} puan"))
+    for r, (k, v) in enumerate(stats, 2):
+        _excel_row(ws5, r, [k, v], "EBF5FB" if r % 2 == 0 else None)
+    _auto_col_width(ws5)
+
+    buf = io.BytesIO(); wb.save(buf)
+    results.append((buf.getvalue(), 1))
+
+    # ── EK DOSYALAR: Mesaj bölüm 2, 3... ─────────────
+    if len(all_msgs) > chunk_size:
+        for part, start in enumerate(range(chunk_size, len(all_msgs), chunk_size), 2):
+            chunk = all_msgs[start:start + chunk_size]
+            wb_c = Workbook()
+            ws_c = wb_c.active; ws_c.title = "Mesaj Geçmişi"
+            ws_c.freeze_panes = "A2"
+            _excel_header(ws_c, cols2, "375623")
+            r = 2
+            for t, uid_, name, typ, text in chunk:
+                color = TYPE_COLORS.get(typ, ("F9F9F9" if r % 2 == 0 else None))
+                _excel_row(ws_c, r, [t, uid_, name, typ, text], color)
+                r += 1
+            _auto_col_width(ws_c)
+            buf_c = io.BytesIO(); wb_c.save(buf_c)
+            results.append((buf_c.getvalue(), part))
+
+    return results
+
+
+def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
+                     warns_d, notes_d, polls_d, leaderboard_d,
+                     favorites_d, recent_d) -> bytes:
+    """Tek kullanıcı için detaylı Excel."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    u = users_d.get(uid_, {})
+    name = u.get("full_name") or u.get("first_name", "—")
+    cls_name = CLASS_DEFS.get(classes_d.get(uid_, ""), {}).get("tr", "—")
+
+    # Sayfa 1: Profil
+    ws1 = wb.active; ws1.title = "Profil"
+    _excel_header(ws1, ["Alan", "Değer"], "1F4E79")
+    wlist = warns_d.get(uid_, [])
+    profile = [
+        ("Kullanıcı ID",    uid_),
+        ("Ad Soyad",        name),
+        ("Kullanıcı Adı",   f"@{u['username']}" if u.get("username") else "—"),
+        ("Sınıf",           cls_name),
+        ("Kayıt Tarihi",    u.get("first_seen", "—")),
+        ("Son Görülme",     u.get("last_seen", "—")),
+        ("Mesaj Sayısı",    len(msgs_d.get(uid_, []))),
+        ("Uyarı Sayısı",    len(wlist)),
+        ("Puan",            leaderboard_d.get(uid_, 0)),
+        ("Dil",             u.get("language_code", "—")),
+    ]
+    for r, (k, v) in enumerate(profile, 2):
+        _excel_row(ws1, r, [k, v], "EBF5FB" if r % 2 == 0 else None)
+    _auto_col_width(ws1)
+
+    # Sayfa 2: Mesaj Geçmişi
+    ws2 = wb.create_sheet("Mesaj Geçmişi")
+    ws2.freeze_panes = "A2"
+    _excel_header(ws2, ["Tarih", "Tür", "İçerik"], "375623")
+    TYPE_COLORS = {"photo": "FFF3E0", "video": "FFF3E0", "document": "FFF3E0",
+                   "search": "E8F5E9", "ai_query": "E3F2FD"}
+    for r, m in enumerate(msgs_d.get(uid_, []), 2):
+        color = TYPE_COLORS.get(m.get("type", ""), ("F9F9F9" if r % 2 == 0 else None))
+        _excel_row(ws2, r, [m.get("time", ""), m.get("type", ""), m.get("text", "")[:200]], color)
+    _auto_col_width(ws2)
+
+    # Sayfa 3: Uyarılar
+    ws3 = wb.create_sheet("Uyarılar")
+    ws3.freeze_panes = "A2"
+    _excel_header(ws3, ["Tarih", "Sebep", "Yazan Admin"], "833C00")
+    for r, w in enumerate(wlist, 2):
+        _excel_row(ws3, r, [w.get("time", ""), w.get("reason", ""), w.get("by", "")],
+                   "FFE0E0" if r % 2 == 0 else None)
+    _auto_col_width(ws3)
+
+    # Sayfa 4: Anket Katılımı
+    ws4 = wb.create_sheet("Anket Katılımı")
+    ws4.freeze_panes = "A2"
+    _excel_header(ws4, ["Anket ID", "Soru", "Verilen Cevap"], "7B2C9E")
+    for r, (pid, poll) in enumerate(polls_d.items(), 2):
+        vote = poll.get("votes", {}).get(uid_)
+        if vote is not None:
+            _excel_row(ws4, r, [pid, poll.get("question", "—"), vote],
+                       "F3E8FF" if r % 2 == 0 else None)
+    _auto_col_width(ws4)
+
+    buf = io.BytesIO(); wb.save(buf)
+    return buf.getvalue()
+
+
 # ── Admin İşlem Günlüğü ───────────────────────────────────────
 def log_admin_action(admin_uid: str, action: str, detail: str = ""):
     log = load_admin_log()
@@ -2745,8 +3090,10 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
             [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
              InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
-            [InlineKeyboardButton(TR["backup_btn"],       callback_data="backup|do"),
-             InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users")],
+            [InlineKeyboardButton(TR["backup_btn"],        callback_data="backup|do"),
+             InlineKeyboardButton(TR["full_backup_btn"],  callback_data="backup|full")],
+            [InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users"),
+             InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all")],
             [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
              InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
             [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
@@ -3135,6 +3482,85 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             filename="kullanici_listesi.csv",
             caption=TR["export_done"].format(len(lines)-1))
         log_admin_action(uid, "EXPORT_USERS", f"{len(lines)-1} kullanıcı")
+        return ConversationHandler.END
+
+    # ── Tam Yedek (tek JSON) ─────────────────────────
+    if cb == "backup|full" and is_main_admin(uid):
+        await query.answer("📦 Yedek hazırlanıyor...", show_alert=False)
+        try:
+            raw  = create_full_backup()
+            ts   = datetime.now(IRAQ_TZ).strftime("%Y%m%d_%H%M")
+            fname = f"tam_yedek_{ts}.json"
+            msg  = await context.bot.send_document(
+                int(uid), io.BytesIO(raw), filename=fname,
+                caption=f"📦 Tam yedek — {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}\n"
+                        f"Restore için bu dosyayı bota 'restore' başlığıyla gönder.")
+            try:
+                await context.bot.pin_chat_message(int(uid), msg.message_id, disable_notification=True)
+            except Exception:
+                pass
+            await context.bot.send_message(int(uid), TR["full_backup_ok"])
+            log_admin_action(uid, "FULL_BACKUP", fname)
+        except Exception as e:
+            await context.bot.send_message(int(uid), f"❌ Yedek hatası: {e}")
+        return ConversationHandler.END
+
+    # ── Excel: Tüm Kullanıcılar ──────────────────────
+    if cb == "export|excel_all" and is_main_admin(uid):
+        await query.answer(TR["excel_building"], show_alert=False)
+        try:
+            users_d       = load_users()
+            classes_d     = load_classes()
+            msgs_d        = load_messages()
+            warns_d       = load_warns()
+            notes_d       = load_notes()
+            polls_d       = load_polls()
+            leaderboard_d = load_leaderboard()
+            blocked_list  = load_blocked()
+            admins_list   = load_admins()
+            files = build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
+                                    polls_d, leaderboard_d, blocked_list, admins_list)
+            ts = datetime.now(IRAQ_TZ).strftime("%Y%m%d_%H%M")
+            total_msgs = sum(len(v) for v in msgs_d.values())
+            for data, part in files:
+                if part == 1:
+                    fname   = f"kullanicilar_{ts}.xlsx"
+                    caption = TR["excel_done"].format(len(users_d))
+                    if len(files) > 1:
+                        caption += f"\n📨 {total_msgs} mesaj → {len(files)} dosyaya bölündü"
+                else:
+                    fname   = f"kullanicilar_{ts}_mesajlar_{part}.xlsx"
+                    caption = f"📊 Mesaj Geçmişi — Bölüm {part}/{len(files)}"
+                await context.bot.send_document(int(uid), io.BytesIO(data), filename=fname, caption=caption)
+            log_admin_action(uid, "EXCEL_ALL", f"{len(users_d)} kullanıcı, {len(files)} dosya")
+        except Exception as e:
+            await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
+        return ConversationHandler.END
+
+    # ── Excel: Tek Kullanıcı ─────────────────────────
+    if cb.startswith("export|excel_user|") and is_main_admin(uid):
+        target = cb.split("|")[2]
+        await query.answer(TR["excel_building"], show_alert=False)
+        try:
+            users_d       = load_users()
+            classes_d     = load_classes()
+            msgs_d        = load_messages()
+            warns_d       = load_warns()
+            notes_d       = load_notes()
+            polls_d       = load_polls()
+            leaderboard_d = load_leaderboard()
+            favorites_d   = load_favorites()
+            recent_d      = load_recent()
+            data  = build_excel_user(target, users_d, classes_d, msgs_d, warns_d, notes_d,
+                                     polls_d, leaderboard_d, favorites_d, recent_d)
+            u     = users_d.get(target, {})
+            name  = (u.get("full_name") or u.get("first_name", "user")).replace(" ", "_")
+            fname = f"kullanici_{name}_{target}.xlsx"
+            await context.bot.send_document(int(uid), io.BytesIO(data), filename=fname,
+                                            caption=TR["excel_user_done"])
+            log_admin_action(uid, "EXCEL_USER", target)
+        except Exception as e:
+            await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
         return ConversationHandler.END
 
     # ── Hedefli Duyuru ────────────────────────────────
@@ -4675,6 +5101,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                             InlineKeyboardButton("👥 Grup Değiştir",  callback_data=f"user|change_grp|{target}")])
                 kb.append([InlineKeyboardButton("➕ Ek Sınav Sınıfı", callback_data=f"user|extra_cls|{target}")])
             kb.append([InlineKeyboardButton("📥 Aktivite İndir", callback_data=f"user|export|{target}")])
+            if is_main_admin(uid):
+                kb.append([InlineKeyboardButton(TR["excel_user_btn"], callback_data=f"export|excel_user|{target}")])
             kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
             # Alt admin — sadece isim + kullanıcıadı + 2 buton
             if not is_main_admin(uid):
@@ -5276,9 +5704,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
             return WAIT_FILE
 
-        # Sil/Düzenle — SADECE süper admin
-        if not is_main_admin(uid):
-            await query.answer("⛔", show_alert=True); return ConversationHandler.END
+        # Sil/Düzenle — yetki kontrolü (süper admin her şeye, alt admin izinlerine göre)
+        _perm_map = {"del_folder": "can_del_folder", "del_file": "can_del_file",
+                     "rename_folder": "can_rename_file", "rename_file": "can_rename_file"}
+        if action in _perm_map and not get_admin_perm(uid, _perm_map[action]):
+            await query.answer("⛔ Yetkin yok / ليس لديك صلاحية", show_alert=True)
+            return ConversationHandler.END
 
         if action == "del_folder":
             folds = list(folder.get("folders",{}).keys())
@@ -7542,6 +7973,24 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     action = context.user_data.get("action","")
 
+    # ── Tam yedek geri yükleme (restore) ─────────────
+    if (is_main_admin(uid) and action != "add_file" and msg.document):
+        _cap   = (msg.caption or "").strip().lower()
+        _fname = msg.document.file_name or ""
+        if _cap == "restore" or _fname.startswith("tam_yedek_"):
+            await msg.reply_text(TR["restore_start"])
+            try:
+                f_obj  = await context.bot.get_file(msg.document.file_id)
+                raw    = await f_obj.download_as_bytearray()
+                ok, count, err = restore_full_backup(bytes(raw))
+                if ok:
+                    await msg.reply_text(TR["restore_done"].format(count=count))
+                else:
+                    await msg.reply_text(TR["restore_fail"].format(err=err))
+            except Exception as e:
+                await msg.reply_text(TR["restore_fail"].format(err=str(e)))
+            return ConversationHandler.END
+
     if action == "broadcast" and is_main_admin(uid):
         users = load_users(); success = fail = 0
         cap_raw  = msg.caption or ""
@@ -7940,6 +8389,31 @@ def main():
         job_queue.run_repeating(_check_exam_reminders, interval=3600, first=30)
         job_queue.run_repeating(_check_lab_reminders, interval=3600, first=60)
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
+
+    # ── Startup: otomatik yedek geri yükleme ────────────────
+    async def _startup_restore(application):
+        if load_users():
+            return  # Veri zaten var, geri yüklemeye gerek yok
+        try:
+            chat = await application.bot.get_chat(ADMIN_ID)
+            pinned = chat.pinned_message
+            if pinned and pinned.document:
+                fname = pinned.document.file_name or ""
+                if fname.startswith("tam_yedek_"):
+                    logger.info("Startup: pinned backup found, restoring...")
+                    f_obj = await application.bot.get_file(pinned.document.file_id)
+                    raw   = await f_obj.download_as_bytearray()
+                    ok, count, err = restore_full_backup(bytes(raw))
+                    if ok:
+                        logger.info(f"Startup restore: {count} files restored")
+                        await application.bot.send_message(
+                            ADMIN_ID, TR["restore_done"].format(count=count))
+                    else:
+                        logger.warning(f"Startup restore failed: {err}")
+        except Exception as e:
+            logger.warning(f"Startup restore check failed: {e}")
+
+    app.post_init = _startup_restore
 
     # Mevcut webhook varsa sil — run_polling başlamadan önce
     app.run_polling(
