@@ -2349,6 +2349,10 @@ async def do_search(message, uid: str, query: str):
     else:
         results = search_content(query)
 
+    # Kullanıcılar sadece klasör isimlerine göre arama yapar (dosya adları gizli)
+    if not is_admin(uid):
+        results = [r for r in results if r["is_folder"]]
+
     if not results:
         await message.reply_text(L(uid, "search_none").format(query))
         return
@@ -2490,12 +2494,15 @@ def folder_text(folder, path, uid):
             cnt = folder_item_count(sub)
             lines.append(f"  • {name}" + (f"  ({cnt})" if cnt else ""))
     if files:
-        lines.append(L(uid, "file_list"))
-        pinned = [f for f in files if f.get("pinned")]
-        normal = [f for f in files if not f.get("pinned")]
-        for f in pinned + normal:
-            pin = "📌" if f.get("pinned") else "  "
-            lines.append(f" {pin} {f.get('caption', f.get('name','?'))}")
+        if is_admin(uid):
+            lines.append(L(uid, "file_list"))
+            pinned = [f for f in files if f.get("pinned")]
+            normal = [f for f in files if not f.get("pinned")]
+            for f in pinned + normal:
+                pin = "📌" if f.get("pinned") else "  "
+                lines.append(f" {pin} {f.get('caption', f.get('name','?'))}")
+        else:
+            lines.append(f"📎 {len(files)} ملف")
     if is_admin(uid):
         s = load_settings()
         lines.append("")
@@ -2527,11 +2534,12 @@ def folder_kb(path, folder, uid, page=0):
         label = f"📁 {name}" + (f" ({cnt})" if cnt else "")
         kb.append([InlineKeyboardButton(label, callback_data=f"open|{name}")])
 
-    # Dosyalar
+    # Dosyalar — admin görür, kullanıcıya klasör açılınca otomatik gönderilir
     files = folder.get("files", [])
-    for idx, f in enumerate(files[:12]):
-        cap = f.get("caption", f.get("name", "?"))
-        kb.append([InlineKeyboardButton(f"📎 {cap}", callback_data=f"getfile|{idx}")])
+    if is_admin(uid):
+        for idx, f in enumerate(files[:12]):
+            cap = f.get("caption", f.get("name", "?"))
+            kb.append([InlineKeyboardButton(f"📎 {cap}", callback_data=f"getfile|{idx}")])
 
     # Sayfa navigasyonu
     total_pages = max(1, -(-len(all_folders) // PAGE_SIZE))
@@ -2592,14 +2600,16 @@ async def _send_file_get_msg(message, f: dict, uid: str):
     """Dosyayı gönderir ve gönderilen mesajı döndürür."""
     ftype = f.get("type",""); fid = f.get("file_id","")
     cap   = f.get("caption",""); url = f.get("url","")
+    # Kullanıcılara dosya adı/başlığı gösterme (datasheet gizli)
+    display_cap = cap if is_admin(str(uid)) else ""
     sent  = None
     try:
-        if   ftype == "photo":     sent = await message.reply_photo(fid, caption=cap)
-        elif ftype == "video":     sent = await message.reply_video(fid, caption=cap)
-        elif ftype == "animation": sent = await message.reply_animation(fid, caption=cap)
-        elif ftype == "document":  sent = await message.reply_document(fid, caption=cap)
-        elif ftype == "audio":     sent = await message.reply_audio(fid, caption=cap)
-        elif ftype == "voice":     sent = await message.reply_voice(fid, caption=cap)
+        if   ftype == "photo":     sent = await message.reply_photo(fid, caption=display_cap or None)
+        elif ftype == "video":     sent = await message.reply_video(fid, caption=display_cap or None)
+        elif ftype == "animation": sent = await message.reply_animation(fid, caption=display_cap or None)
+        elif ftype == "document":  sent = await message.reply_document(fid, caption=display_cap or None)
+        elif ftype == "audio":     sent = await message.reply_audio(fid, caption=display_cap or None)
+        elif ftype == "voice":     sent = await message.reply_voice(fid, caption=None)
         elif ftype == "link":      sent = await message.reply_text(f"🔗 {cap}\n{url}" if cap != url else f"🔗 {url}")
         elif ftype == "text":      sent = await message.reply_text(cap)
         else: sent = await message.reply_text(L(uid, "unsupported"))
@@ -3044,9 +3054,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown")])
                 kb.append([InlineKeyboardButton("🔬 إضافة موعد مختبر", callback_data="lab|add_new")])
             if get_admin_perm(uid, "can_poll"):
-                kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
+                kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="sadmin|poll")])
             if get_admin_perm(uid, "can_broadcast"):
-                kb.append([InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin_bcast|panel")])
+                kb.append([InlineKeyboardButton("📢 إرسال إعلان", callback_data="sadmin|broadcast")])
             if not kb:
                 await update.message.reply_text("لا توجد صلاحيات محددة لك حتى الآن.")
                 return
@@ -4002,7 +4012,42 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return ConversationHandler.END
 
     # ── Alt Admin Duyuru ─────────────────────────────
+    # ── Alt Admin: Duyuru + Anket (sadmin|) ─────────────
+    if cb.startswith("sadmin|") and is_admin(uid) and not is_main_admin(uid):
+        sadmin_act = cb.split("|")[1]
+
+        if sadmin_act == "broadcast":
+            if not get_admin_perm(uid, "can_broadcast"):
+                await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+            context.user_data["action"] = "sadmin_bcast"
+            await safe_edit(query, "📢 اكتب نص الإعلان:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "poll":
+            if not get_admin_perm(uid, "can_poll"):
+                await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+            # Hedefi admin'in sınıfına göre ayarla
+            adm_cls = get_admin_cls(uid)
+            adm_grp = get_admin_grp(uid)
+            target  = f"cls_{adm_cls}" if adm_cls else "all"
+            if adm_grp and adm_cls: target += f"|grp_{adm_grp}"
+            context.user_data["poll_target"] = target
+            kb = [
+                [InlineKeyboardButton("📋 اختيار متعدد", callback_data="poll|type|choice")],
+                [InlineKeyboardButton("✍️ إجابة مفتوحة",  callback_data="poll|type|open")],
+                [InlineKeyboardButton("◀️ إلغاء",         callback_data="nav|root")],
+            ]
+            await safe_edit(query, "📊 نوع الاستطلاع:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_POLL_QUESTION
+
+        return ConversationHandler.END
+
     if cb.startswith("admin_bcast|") and is_admin(uid) and not is_main_admin(uid):
+        # Eski sistem — yönlendir
+        return ConversationHandler.END
+
+    if False and cb.startswith("admin_bcast|") and is_admin(uid) and not is_main_admin(uid):
         if not get_admin_perm(uid, "can_broadcast"):
             await query.answer("ليس لديك صلاحية الإعلانات", show_alert=True); return ConversationHandler.END
         ab_parts  = cb.split("|")
@@ -7100,39 +7145,33 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action", None)
         return ConversationHandler.END
 
-    if action == "admin_bcast_msg" and is_admin(uid) and not is_main_admin(uid):
-        tgt_cls = context.user_data.pop("ab_cls", context.user_data.pop("admin_bcast_cls", None))
-        tgt_grp = context.user_data.pop("ab_grp", context.user_data.pop("admin_bcast_grp", None))
-        tgt_sft = context.user_data.pop("ab_sft", context.user_data.pop("admin_bcast_sft", ""))
+    # ── Alt Admin: Yeni Duyuru (sadmin_bcast) ──────────
+    if action == "sadmin_bcast" and is_admin(uid) and not is_main_admin(uid):
         context.user_data.pop("action", None)
-        u_admin  = load_users().get(uid, {})
-        aname    = u_admin.get("full_name") or u_admin.get("first_name") or uid
-        cls_name = get_class_display_name(tgt_cls) if tgt_cls else "الكل"
-        bcast_text = (
-            f"📢 إعلان رسمي\n{text}\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        )
-        # Hedef: sınıf + grup filtresi
-        if tgt_cls:
-            targets = [u for u in users_by_class(tgt_cls) if not is_blocked(u)]
+        adm_cls = get_admin_cls(uid)
+        adm_grp = get_admin_grp(uid)
+        if adm_cls:
+            targets = list(users_by_class(adm_cls))
         else:
-            targets = [u for u in load_users() if int(u) != ADMIN_ID and not is_blocked(u)]
-        if tgt_sft:
-            shfts_d = load_shifts()
-            targets = [u for u in targets if shfts_d.get(u,"") in (tgt_sft,"sabah" if tgt_sft=="sabahi" else "gece")]
-        if tgt_grp:
-            grps = load_groups()
-            targets = [u for u in targets if grps.get(u,"").startswith(tgt_grp)]
-        success = fail = 0
+            targets = [u for u in load_users() if int(u) != ADMIN_ID]
+        if adm_grp:
+            grps_d  = load_groups()
+            targets = [u for u in targets if grps_d.get(u,"").startswith(adm_grp)]
+        targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
+        btext = f"📢 إعلان\n\n{text}\n\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        success = 0
         for uid_ in targets:
-            try: await context.bot.send_message(int(uid_), bcast_text); success += 1
-            except: fail += 1
+            try: await context.bot.send_message(int(uid_), btext); success += 1
+            except: pass
+        u_adm = load_users().get(uid, {})
+        aname = u_adm.get("full_name") or u_adm.get("first_name") or uid
         try:
             await context.bot.send_message(
                 ADMIN_ID,
-                f"📢 إعلان\nالمسؤول: {aname} ({uid})\nالهدف: {cls_name} {tgt_grp or ''}\nالمرسل: {success}\n\n{text[:150]}")
+                f"📢 إعلان من مسؤول\n👤 {aname} ({uid})\n📊 أُرسل إلى {success} مستخدم\n\n{text[:200]}")
         except: pass
-        log_admin_action(uid, "BROADCAST", f"cls:{tgt_cls} grp:{tgt_grp} n:{success}")
-        await update.message.reply_text(f"✅ {success} مستخدم")
+        log_admin_action(uid, "BROADCAST", f"sadmin:{uid} n:{success}")
+        await update.message.reply_text(f"✅ تم الإرسال إلى {success} مستخدم")
         return ConversationHandler.END
 
     if action == "admin_msg_to_super" and is_admin(uid) and not is_main_admin(uid):
