@@ -4011,115 +4011,114 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 log_admin_action(uid, "COPY_FILE", f"{fname} → {dest_name}")
             return ConversationHandler.END
 
-    # ── Alt Admin Duyuru ─────────────────────────────
     # ── Alt Admin: Duyuru + Anket (sadmin|) ─────────────
     if cb.startswith("sadmin|") and is_admin(uid) and not is_main_admin(uid):
-        sadmin_act = cb.split("|")[1]
+        parts = cb.split("|")
+        sadmin_act = parts[1]
 
+        def _cls_kb(prefix):
+            kb = []
+            row = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                row.append(InlineKeyboardButton(cls_def["ar"], callback_data=f"sadmin|{prefix}|{cls_id}"))
+                if len(row) == 2:
+                    kb.append(row); row = []
+            if row: kb.append(row)
+            kb.append([InlineKeyboardButton("📋 الكل", callback_data=f"sadmin|{prefix}|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")])
+            return kb
+
+        def _sft_kb(prefix, cls_val, back_cb):
+            return [
+                [InlineKeyboardButton("☀️ صباحي", callback_data=f"sadmin|{prefix}|{cls_val}|sabahi"),
+                 InlineKeyboardButton("🌙 مسائي",  callback_data=f"sadmin|{prefix}|{cls_val}|masaiy"),
+                 InlineKeyboardButton("📋 الكل",   callback_data=f"sadmin|{prefix}|{cls_val}|all")],
+                [InlineKeyboardButton("◀️ رجوع",   callback_data=back_cb)],
+            ]
+
+        def _grp_kb(prefix, cls_val, sft_val, back_cb):
+            grp_keys = list(get_class_groups(cls_val).keys()) if cls_val != "all" else ["A", "B", "C"]
+            row = [InlineKeyboardButton("📋 الكل", callback_data=f"sadmin|{prefix}|{cls_val}|{sft_val}|all")]
+            for g in grp_keys:
+                row.append(InlineKeyboardButton(g, callback_data=f"sadmin|{prefix}|{cls_val}|{sft_val}|{g}"))
+            return [row, [InlineKeyboardButton("◀️ رجوع", callback_data=back_cb)]]
+
+        # ── Broadcast ──
         if sadmin_act == "broadcast":
             if not get_admin_perm(uid, "can_broadcast"):
                 await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+            await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("bcls")))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "bcls":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            await safe_edit(query, "📢 الفترة الدراسية:",
+                reply_markup=InlineKeyboardMarkup(_sft_kb("bsft", cls_val, "sadmin|broadcast")))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "bsft":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            sft_val = parts[3] if len(parts) > 3 else "all"
+            await safe_edit(query, "📢 المجموعة:",
+                reply_markup=InlineKeyboardMarkup(_grp_kb("bgrp", cls_val, sft_val, f"sadmin|bcls|{cls_val}")))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "bgrp":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            sft_val = parts[3] if len(parts) > 3 else "all"
+            grp_val = parts[4] if len(parts) > 4 else "all"
+            tgt_parts = []
+            if cls_val != "all": tgt_parts.append(f"cls_{cls_val}")
+            if sft_val != "all": tgt_parts.append(f"sft_{sft_val}")
+            if grp_val != "all": tgt_parts.append(f"grp_{grp_val}")
+            context.user_data["sb_target"] = "|".join(tgt_parts) or "all"
             context.user_data["action"] = "sadmin_bcast"
-            await safe_edit(query, "📢 اكتب نص الإعلان:",
+            lbl = target_label(context.user_data["sb_target"])
+            await safe_edit(query, f"📢 {lbl}\n\nاكتب نص الإعلان:",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
             return WAIT_BROADCAST_MSG
 
+        # ── Poll ──
         if sadmin_act == "poll":
             if not get_admin_perm(uid, "can_poll"):
                 await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
-            # Hedefi admin'in sınıfına göre ayarla
-            adm_cls = get_admin_cls(uid)
-            adm_grp = get_admin_grp(uid)
-            target  = f"cls_{adm_cls}" if adm_cls else "all"
-            if adm_grp and adm_cls: target += f"|grp_{adm_grp}"
-            context.user_data["poll_target"] = target
+            await safe_edit(query, "📊 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("pcls")))
+            return WAIT_POLL_QUESTION
+
+        if sadmin_act == "pcls":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            await safe_edit(query, "📊 الفترة الدراسية:",
+                reply_markup=InlineKeyboardMarkup(_sft_kb("psft", cls_val, "sadmin|poll")))
+            return WAIT_POLL_QUESTION
+
+        if sadmin_act == "psft":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            sft_val = parts[3] if len(parts) > 3 else "all"
+            await safe_edit(query, "📊 المجموعة:",
+                reply_markup=InlineKeyboardMarkup(_grp_kb("pgrp", cls_val, sft_val, f"sadmin|pcls|{cls_val}")))
+            return WAIT_POLL_QUESTION
+
+        if sadmin_act == "pgrp":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            sft_val = parts[3] if len(parts) > 3 else "all"
+            grp_val = parts[4] if len(parts) > 4 else "all"
+            tgt_parts = []
+            if cls_val != "all": tgt_parts.append(f"cls_{cls_val}")
+            if sft_val != "all": tgt_parts.append(f"sft_{sft_val}")
+            if grp_val != "all": tgt_parts.append(f"grp_{grp_val}")
+            context.user_data["poll_target"] = "|".join(tgt_parts) or "all"
+            lbl = target_label(context.user_data["poll_target"])
             kb = [
                 [InlineKeyboardButton("📋 اختيار متعدد", callback_data="poll|type|choice")],
                 [InlineKeyboardButton("✍️ إجابة مفتوحة",  callback_data="poll|type|open")],
                 [InlineKeyboardButton("◀️ إلغاء",         callback_data="nav|root")],
             ]
-            await safe_edit(query, "📊 نوع الاستطلاع:", reply_markup=InlineKeyboardMarkup(kb))
+            await safe_edit(query, f"📊 {lbl}\n\nنوع الاستطلاع:", reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_POLL_QUESTION
 
         return ConversationHandler.END
 
     if cb.startswith("admin_bcast|") and is_admin(uid) and not is_main_admin(uid):
-        # Eski sistem — yönlendir
-        return ConversationHandler.END
-
-    if False and cb.startswith("admin_bcast|") and is_admin(uid) and not is_main_admin(uid):
-        if not get_admin_perm(uid, "can_broadcast"):
-            await query.answer("ليس لديك صلاحية الإعلانات", show_alert=True); return ConversationHandler.END
-        ab_parts  = cb.split("|")
-        ab_action = ab_parts[1]
-        adm_cls   = get_admin_cls(uid)   # None=hepsi
-        adm_grp   = get_admin_grp(uid)   # None=hepsi
-
-        if ab_action == "panel":
-            # Adım 1: sınıf seç (sabit sınıf varsa atla)
-            if adm_cls:
-                context.user_data["ab_cls"] = adm_cls
-                # Vardiya seç
-                kb = [
-                    [InlineKeyboardButton("☀️ صباحي", callback_data="admin_bcast|sft|sabahi"),
-                     InlineKeyboardButton("🌙 مسائي",  callback_data="admin_bcast|sft|masaiy"),
-                     InlineKeyboardButton("📋 الكل",   callback_data="admin_bcast|sft|all")],
-                    [InlineKeyboardButton("◀️ إلغاء",  callback_data="nav|root")],
-                ]
-                await safe_edit(query, "📢 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
-            else:
-                # Sınıf yok — sınıf seç
-                kb = []
-                for cls_id, cls_def in CLASS_DEFS.items():
-                    kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"admin_bcast|cls|{cls_id}")])
-                kb.append([InlineKeyboardButton("📋 الكل", callback_data="admin_bcast|cls|all")])
-                kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")])
-                await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
-            return WAIT_FOLDER
-
-        if ab_action == "cls":
-            cls_val = ab_parts[2] if len(ab_parts) > 2 else "all"
-            context.user_data["ab_cls"] = "" if cls_val == "all" else cls_val
-            # Vardiya seç
-            kb = [
-                [InlineKeyboardButton("☀️ صباحي", callback_data="admin_bcast|sft|sabahi"),
-                 InlineKeyboardButton("🌙 مسائي",  callback_data="admin_bcast|sft|masaiy"),
-                 InlineKeyboardButton("📋 الكل",   callback_data="admin_bcast|sft|all")],
-                [InlineKeyboardButton("◀️ رجوع",   callback_data="admin_bcast|panel")],
-            ]
-            await safe_edit(query, "📢 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
-            return WAIT_FOLDER
-
-        if ab_action == "sft":
-            sft_val = ab_parts[2] if len(ab_parts) > 2 else "all"
-            context.user_data["ab_sft"] = "" if sft_val == "all" else sft_val
-            cls_fixed = adm_cls or context.user_data.get("ab_cls","")
-            if adm_grp:
-                # Grup sabit — direkt yaz
-                context.user_data["ab_grp"] = adm_grp
-                context.user_data["action"] = "admin_bcast_msg"
-                await safe_edit(query, "📢 اكتب نص الإعلان:",
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء","nav|root")]]))
-                return WAIT_FOLDER
-            # Grup seç
-            grp_keys = list(get_class_groups(cls_fixed).keys()) if cls_fixed else ["A","B","C"]
-            kb = []
-            row = [InlineKeyboardButton("📋 الكل", callback_data="admin_bcast|grp|all")]
-            for g in grp_keys:
-                row.append(InlineKeyboardButton(g, callback_data=f"admin_bcast|grp|{g}"))
-            kb.append(row)
-            kb.append([InlineKeyboardButton("◀️ رجوع", callback_data="admin_bcast|panel")])
-            await safe_edit(query, "📢 المجموعة:", reply_markup=InlineKeyboardMarkup(kb))
-            return WAIT_FOLDER
-
-        if ab_action == "grp":
-            grp_val = ab_parts[2] if len(ab_parts) > 2 else "all"
-            context.user_data["ab_grp"] = "" if grp_val == "all" else grp_val
-            context.user_data["action"] = "admin_bcast_msg"
-            await safe_edit(query, "📢 اكتب نص الإعلان:",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء","nav|root")]]))
-            return WAIT_FOLDER
-
         return ConversationHandler.END
 
     # ── Laboratuvar Programı ─────────────────────────
@@ -7148,15 +7147,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     # ── Alt Admin: Yeni Duyuru (sadmin_bcast) ──────────
     if action == "sadmin_bcast" and is_admin(uid) and not is_main_admin(uid):
         context.user_data.pop("action", None)
-        adm_cls = get_admin_cls(uid)
-        adm_grp = get_admin_grp(uid)
-        if adm_cls:
-            targets = list(users_by_class(adm_cls))
+        sb_target = context.user_data.pop("sb_target", "")
+        if sb_target and sb_target != "all":
+            targets = get_target_users(sb_target)
         else:
             targets = [u for u in load_users() if int(u) != ADMIN_ID]
-        if adm_grp:
-            grps_d  = load_groups()
-            targets = [u for u in targets if grps_d.get(u,"").startswith(adm_grp)]
         targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
         btext = f"📢 إعلان\n\n{text}\n\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
         success = 0
@@ -7165,12 +7160,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             except: pass
         u_adm = load_users().get(uid, {})
         aname = u_adm.get("full_name") or u_adm.get("first_name") or uid
+        lbl = target_label(sb_target) if sb_target and sb_target != "all" else "الجميع"
         try:
             await context.bot.send_message(
                 ADMIN_ID,
-                f"📢 إعلان من مسؤول\n👤 {aname} ({uid})\n📊 أُرسل إلى {success} مستخدم\n\n{text[:200]}")
+                f"📢 إعلان من مسؤول\n👤 {aname} ({uid})\n🎯 {lbl}\n📊 أُرسل إلى {success} مستخدم\n\n{text[:200]}")
         except: pass
-        log_admin_action(uid, "BROADCAST", f"sadmin:{uid} n:{success}")
+        log_admin_action(uid, "BROADCAST", f"sadmin:{uid} tgt:{sb_target} n:{success}")
         await update.message.reply_text(f"✅ تم الإرسال إلى {success} مستخدم")
         return ConversationHandler.END
 
