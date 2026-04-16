@@ -2512,28 +2512,21 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── İçerik ──────────────────────────────────────
     if text in (TR["btn_content"], AR["btn_content"]):
-        if is_main_admin(uid):
-            kb = [
-                [InlineKeyboardButton(L(uid,"add_folder"),    callback_data="cnt|add_folder"),
-                 InlineKeyboardButton(L(uid,"del_folder"),    callback_data="cnt|del_folder")],
-                [InlineKeyboardButton(L(uid,"rename_folder"), callback_data="cnt|rename_folder"),
-                 InlineKeyboardButton(L(uid,"add_file"),      callback_data="cnt|add_file")],
-                [InlineKeyboardButton(L(uid,"del_file"),      callback_data="cnt|del_file"),
-                 InlineKeyboardButton(L(uid,"rename_file"),   callback_data="cnt|rename_file")],
-                [InlineKeyboardButton(L(uid,"pin_file"),      callback_data="extra|pin"),
-                 InlineKeyboardButton(L(uid,"move_file"),     callback_data="extra|move")],
-                [InlineKeyboardButton(L(uid,"copy_file"),     callback_data="extra|copy"),
-                 InlineKeyboardButton(L(uid,"sort_az"),       callback_data="extra|sort_az")],
-                [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
-                 InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
-                [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
-            ]
-        else:
-            kb = [
-                [InlineKeyboardButton(L(uid,"add_folder"), callback_data="cnt|add_folder"),
-                 InlineKeyboardButton(L(uid,"add_file"),   callback_data="cnt|add_file")],
-                [InlineKeyboardButton(L(uid,"back"),       callback_data="nav|root")],
-            ]
+        kb = [
+            [InlineKeyboardButton(L(uid,"add_folder"),    callback_data="cnt|add_folder"),
+             InlineKeyboardButton(L(uid,"del_folder"),    callback_data="cnt|del_folder")],
+            [InlineKeyboardButton(L(uid,"rename_folder"), callback_data="cnt|rename_folder"),
+             InlineKeyboardButton(L(uid,"add_file"),      callback_data="cnt|add_file")],
+            [InlineKeyboardButton(L(uid,"del_file"),      callback_data="cnt|del_file"),
+             InlineKeyboardButton(L(uid,"rename_file"),   callback_data="cnt|rename_file")],
+            [InlineKeyboardButton(L(uid,"pin_file"),      callback_data="extra|pin"),
+             InlineKeyboardButton(L(uid,"move_file"),     callback_data="extra|move")],
+            [InlineKeyboardButton(L(uid,"copy_file"),     callback_data="extra|copy"),
+             InlineKeyboardButton(L(uid,"sort_az"),       callback_data="extra|sort_az")],
+            [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
+             InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
+            [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
+        ]
         sent = await update.message.reply_text(L(uid,"content_mgmt"), reply_markup=InlineKeyboardMarkup(kb))
         context.user_data["last_inline_msg"] = sent.message_id
         return
@@ -2881,7 +2874,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Hedefli Duyuru ────────────────────────────────
-    if cb.startswith("bcast|") and is_main_admin(uid):
+    if cb.startswith("bcast|") and is_admin(uid):
         action = cb.split("|")[1]
         if action == "panel":
             kb = [
@@ -3707,8 +3700,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
             return WAIT_FILE
 
-        # Sil/Düzenle — SADECE süper admin
-        if not is_main_admin(uid):
+        # Sil/Düzenle — tüm adminler
+        if not is_admin(uid):
             await query.answer("⛔", show_alert=True); return ConversationHandler.END
 
         if action == "del_folder":
@@ -3770,9 +3763,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text(L(uid,"rename_file_select"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
-    # ── Do (sadece süper admin) ───────────────────────
+    # ── Do (tüm adminler) ────────────────────────────
     # ── Checkbox toggle (seç/kaldır) ─────────────────
-    if cb.startswith("dsel|") and is_main_admin(uid):
+    if cb.startswith("dsel|") and is_admin(uid):
         parts    = cb.split("|")
         sel_type = parts[1]   # "folder" veya "file"
         val      = parts[2]   # klasör adı veya dosya index
@@ -3821,7 +3814,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             except: pass
         return ConversationHandler.END
 
-    if cb.startswith("do|") and is_main_admin(uid):
+    if cb.startswith("do|") and is_admin(uid):
         parts  = cb.split("|",2); action = parts[1]; arg = parts[2] if len(parts)>2 else ""
         folder = get_folder(content, path)
 
@@ -4055,7 +4048,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return WAIT_WELCOME   # aynı state kullan
 
     # ── Duyuru Geçmişi (admin) ───────────────────────
-    if cb == "bcast|history" and is_main_admin(uid):
+    if cb == "bcast|history" and is_admin(uid):
         log_ = load_bcast_log()
         if not log_:
             await query.answer(TR["bcast_history_empty"], show_alert=True); return ConversationHandler.END
@@ -4163,7 +4156,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Anket işlemleri ───────────────────────────────
-    if cb.startswith("poll|") and is_main_admin(uid):
+    if cb.startswith("poll|") and is_admin(uid):
         action = cb.split("|")[1]
 
         if action == "create":
@@ -4733,7 +4726,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Hedefli Broadcast (admin) ────────────────────
-    if action == "broadcast_targeted" and is_main_admin(uid):
+    if action == "broadcast_targeted" and is_admin(uid):
         targets = context.user_data.pop("broadcast_targets", [])
         success = fail = 0
         for uid_ in targets:
@@ -4763,7 +4756,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Anket sorusu ──────────────────────────────────
-    if action == "poll_question" and is_main_admin(uid):
+    if action == "poll_question" and is_admin(uid):
         if not text:
             await update.message.reply_text(TR["poll_enter_q"]); return WAIT_POLL_QUESTION
         context.user_data["poll_question"] = text
@@ -5039,7 +5032,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             context.user_data["add_folder_status_id"] = sent.message_id
         return WAIT_FOLDER
 
-    if action == "rename_folder" and is_main_admin(uid):
+    if action == "rename_folder" and is_admin(uid):
         old = context.user_data.get("target","")
         if not text: await update.message.reply_text(L(uid,"folder_empty")); return WAIT_RENAME_FOLDER
         if text in folder.get("folders",{}):
@@ -5050,7 +5043,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action",None); context.user_data.pop("target",None)
         return ConversationHandler.END
 
-    if action == "rename_file" and is_main_admin(uid):
+    if action == "rename_file" and is_admin(uid):
         idx = context.user_data.get("target",0); files = folder.get("files",[])
         if not text: await update.message.reply_text(L(uid,"folder_empty")); return WAIT_RENAME_FILE
         if 0 <= idx < len(files):
@@ -5098,10 +5091,10 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     user = update.effective_user; uid = str(user.id); msg = update.message
     register_user(user)
 
-    if not is_main_admin(uid):
+    if not is_admin(uid):
         if is_blocked(uid): return ConversationHandler.END
         s = load_settings()
-        if s["maintenance"] and not is_admin(uid):
+        if s["maintenance"]:
             await msg.reply_text(s.get("maintenance_text","🔧")); return ConversationHandler.END
         if   msg.photo:
             fid = msg.photo[-1].file_id; cap = msg.caption or "(photo)"
@@ -5128,7 +5121,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
     action = context.user_data.get("action","")
 
-    if action == "broadcast" and is_main_admin(uid):
+    if action == "broadcast" and is_admin(uid):
         users = load_users(); success = fail = 0
         cap_raw  = msg.caption or ""
         cap_text = (
