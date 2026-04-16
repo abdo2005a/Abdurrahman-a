@@ -167,10 +167,30 @@ def _auto_col_width(ws):
         ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
 
 def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
-                    polls_d, leaderboard_d, blocked_list, admins_list) -> bytes:
-    """Tüm kullanıcılar için kapsamlı Excel dosyası oluşturur."""
+                    polls_d, leaderboard_d, blocked_list, admins_list,
+                    chunk_size: int = 5000):
+    """Tüm kullanıcılar için kapsamlı Excel dosyası oluşturur.
+    Returns list of (bytes, part_number) tuples.
+    Part 1 has all sheets; extra parts have only Mesaj Geçmişi sheet."""
     from openpyxl import Workbook
     from openpyxl.styles import PatternFill, Font, Alignment
+
+    # Tüm mesajları topla ve sırala (bir kez)
+    cols2 = ["Tarih","Kullanıcı ID","Ad","Tür","İçerik / Başlık"]
+    TYPE_COLORS = {"photo":"FFF3E0","video":"FFF3E0","document":"FFF3E0",
+                   "search":"E8F5E9","ai_query":"E3F2FD"}
+    all_msgs = []
+    for uid_, mlist in msgs_d.items():
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", uid_)
+        for m in mlist:
+            all_msgs.append((m.get("time",""), uid_, name,
+                             m.get("type","msg"), m.get("text","")[:120]))
+    all_msgs.sort(key=lambda x: x[0], reverse=True)
+
+    results = []
+
+    # ── DOSYA 1: Ana dosya (tüm sayfalar + mesajlar bölüm 1) ──
     wb = Workbook()
 
     # ── SAYFA 1: Kullanıcılar ─────────────────────────────────
@@ -192,7 +212,6 @@ def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
         note     = notes_d.get(uid_, "")
         name     = u.get("full_name") or u.get("first_name","—")
         un       = f"@{u['username']}" if u.get("username") else "—"
-        # Satır rengi: bloke=kırmızı, admin=mavi, normal=beyaz
         color = "FFE0E0" if is_blk else ("E0EEFF" if is_adm else ("F9F9F9" if row%2==0 else None))
         _excel_row(ws1, row, [uid_, name, un, cls_name,
                                u.get("first_seen","—"), u.get("last_seen","—"),
@@ -200,23 +219,12 @@ def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
         row += 1
     _auto_col_width(ws1)
 
-    # ── SAYFA 2: Mesaj Geçmişi ────────────────────────────────
+    # ── SAYFA 2: Mesaj Geçmişi (Bölüm 1) ─────────────────────
     ws2 = wb.create_sheet("Mesaj Geçmişi")
     ws2.freeze_panes = "A2"
-    cols2 = ["Tarih","Kullanıcı ID","Ad","Tür","İçerik / Başlık"]
     _excel_header(ws2, cols2, "375623")
     row = 2
-    all_msgs = []
-    for uid_, mlist in msgs_d.items():
-        u = users_d.get(uid_, {})
-        name = u.get("full_name") or u.get("first_name", uid_)
-        for m in mlist:
-            all_msgs.append((m.get("time",""), uid_, name,
-                             m.get("type","msg"), m.get("text","")[:120]))
-    all_msgs.sort(key=lambda x: x[0], reverse=True)
-    TYPE_COLORS = {"photo":"FFF3E0","video":"FFF3E0","document":"FFF3E0",
-                   "search":"E8F5E9","ai_query":"E3F2FD"}
-    for t, uid_, name, typ, text in all_msgs[:5000]:
+    for t, uid_, name, typ, text in all_msgs[:chunk_size]:
         color = TYPE_COLORS.get(typ, ("F9F9F9" if row%2==0 else None))
         _excel_row(ws2, row, [t, uid_, name, typ, text], color)
         row += 1
@@ -292,11 +300,28 @@ def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
         _excel_row(ws5, r, [k, v], color)
     _auto_col_width(ws5)
 
-    # Kaydet
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf.getvalue()
+    buf = io.BytesIO(); wb.save(buf)
+    results.append((buf.getvalue(), 1))
+
+    # ── EK DOSYALAR: Mesaj Geçmişi bölüm 2, 3, … ─────────────
+    if len(all_msgs) > chunk_size:
+        for part, start in enumerate(range(chunk_size, len(all_msgs), chunk_size), 2):
+            chunk = all_msgs[start:start + chunk_size]
+            wb_c = Workbook()
+            ws_c = wb_c.active
+            ws_c.title = "Mesaj Geçmişi"
+            ws_c.freeze_panes = "A2"
+            _excel_header(ws_c, cols2, "375623")
+            r = 2
+            for t, uid_, name, typ, text in chunk:
+                color = TYPE_COLORS.get(typ, ("F9F9F9" if r%2==0 else None))
+                _excel_row(ws_c, r, [t, uid_, name, typ, text], color)
+                r += 1
+            _auto_col_width(ws_c)
+            buf_c = io.BytesIO(); wb_c.save(buf_c)
+            results.append((buf_c.getvalue(), part))
+
+    return results
 
 
 def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
@@ -3256,13 +3281,22 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             leaderboard_d= load_leaderboard()
             blocked_list = load_blocked()
             admins_list  = load_admins()
-            data = build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
-                                   polls_d, leaderboard_d, blocked_list, admins_list)
-            fname = f"kullanicilar_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-            await context.bot.send_document(
-                int(uid), io.BytesIO(data), filename=fname,
-                caption=TR["excel_done"].format(len(users_d)))
-            log_admin_action(uid, "EXCEL_ALL", f"{len(users_d)} kullanıcı")
+            files = build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
+                                    polls_d, leaderboard_d, blocked_list, admins_list)
+            ts = datetime.now().strftime('%Y%m%d_%H%M')
+            total_msgs = sum(len(v) for v in msgs_d.values())
+            for data, part in files:
+                if part == 1:
+                    fname   = f"kullanicilar_{ts}.xlsx"
+                    caption = TR["excel_done"].format(len(users_d))
+                    if len(files) > 1:
+                        caption += f"\n📨 Toplam {total_msgs} mesaj → {len(files)} dosyaya bölündü"
+                else:
+                    fname   = f"kullanicilar_{ts}_mesajlar_{part}.xlsx"
+                    caption = f"📊 Mesaj Geçmişi — Bölüm {part}/{len(files)}"
+                await context.bot.send_document(
+                    int(uid), io.BytesIO(data), filename=fname, caption=caption)
+            log_admin_action(uid, "EXCEL_ALL", f"{len(users_d)} kullanıcı, {len(files)} dosya")
         except Exception as e:
             await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
         return ConversationHandler.END
