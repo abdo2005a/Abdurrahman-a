@@ -5591,38 +5591,17 @@ def main():
                 except Exception as e:
                     logger.warning(f"Hatırlatıcı gönderilemedi: {e}")
 
-    # ── Otomatik yedek: gönder + pin ─────────────────
-    async def _auto_backup(ctx):
-        try:
-            data  = create_full_backup()
-            fname = f"tam_yedek_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
-            count = len(json.loads(data.decode())["data"])
-            msg = await ctx.bot.send_document(
-                ADMIN_ID,
-                io.BytesIO(data),
-                filename=fname,
-                caption=f"AUTO_BACKUP | {count} | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-            # Admin sohbetinde pin — bot yeniden başlayınca buradan bulur
-            try:
-                await ctx.bot.pin_chat_message(
-                    ADMIN_ID, msg.message_id, disable_notification=True)
-            except Exception:
-                pass
-        except Exception as e:
-            logger.warning(f"Otomatik yedek hatası: {e}")
-
-    # ── Startup: veri yoksa Telegram'dan otomatik geri yükle ──
+    # ── Startup: veri yoksa pinli mesajdan otomatik geri yükle ──
     async def _startup_check(ctx):
         users = load_users()
         if users:
-            # Veri var — normal başlangıç mesajı
             try:
                 await ctx.bot.send_message(ADMIN_ID, TR["startup_msg"])
             except Exception:
                 pass
             return
 
-        # Veri yok — admin sohbetindeki pinli mesajdan geri yükle
+        # Veri yok — admin sohbetindeki pinli mesajı bul ve geri yükle
         restored = False
         try:
             chat   = await ctx.bot.get_chat(ADMIN_ID)
@@ -5653,11 +5632,9 @@ def main():
 
     job_queue = app.job_queue
     if job_queue:
-        job_queue.run_repeating(_check_reminders, interval=60,   first=10)
-        job_queue.run_repeating(_auto_backup,     interval=21600, first=300)  # 6 saatte bir
-        job_queue.run_once(_startup_check,        when=5)                     # başlangıçta
+        job_queue.run_repeating(_check_reminders, interval=60, first=10)
+        job_queue.run_once(_startup_check,        when=5)
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
-        print("✅ Otomatik yedek job başlatıldı (6 saatte bir, Telegram pinli)")
 
     app.run_polling(drop_pending_updates=True)
 
