@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -58,6 +59,74 @@ ANON_Q_FILE      = os.path.join(BASE_DIR, "anon_questions.json")
 USER_NOTES_FILE  = os.path.join(BASE_DIR, "personal_notes.json")
 QUIZ_FILE        = os.path.join(BASE_DIR, "quizzes.json")
 REPORT_FILE      = os.path.join(BASE_DIR, "file_reports.json")
+
+# ── Yedek sistemi ──────────────────────────────────────────────
+BACKUP_SCHEMA = {
+    "bot_data":        DATA_FILE,
+    "users":           USERS_FILE,
+    "settings":        SETTINGS_FILE,
+    "polls":           POLLS_FILE,
+    "user_classes":    CLASS_FILE,
+    "faq":             FAQ_FILE,
+    "auto_rules":      AUTO_RULES_FILE,
+    "admins":          ADMINS_FILE,
+    "blocked":         BLOCKED_FILE,
+    "view_counts":     VIEW_COUNTS_FILE,
+    "user_notes":      NOTES_FILE,
+    "user_warns":      WARNS_FILE,
+    "favorites":       FAVORITES_FILE,
+    "subscriptions":   SUBS_FILE,
+    "recently_viewed": RECENT_FILE,
+    "folder_descs":    FOLDER_DESC_FILE,
+    "whitelist":       WHITELIST_FILE,
+    "scheduled":       SCHEDULED_FILE,
+    "file_tags":       TAGS_FILE,
+    "leaderboard":     LEADERBOARD_FILE,
+    "quizzes":         QUIZ_FILE,
+    "countdowns":      COUNTDOWN_FILE,
+    "anon_questions":  ANON_Q_FILE,
+    "pinned_msgs":     PINNED_MSG_FILE,
+    "broadcast_log":   BROADCAST_LOG_FILE,
+    "admin_log":       ADMIN_LOG_FILE,
+}
+
+def create_full_backup() -> bytes:
+    """Tüm veri dosyalarını tek JSON baytına çevirir."""
+    backup = {
+        "version": 1,
+        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "data": {}
+    }
+    for key, fpath in BACKUP_SCHEMA.items():
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    backup["data"][key] = json.load(f)
+            except Exception:
+                pass
+    return json.dumps(backup, ensure_ascii=False, indent=2).encode("utf-8")
+
+def restore_full_backup(raw: bytes) -> tuple[bool, int, str]:
+    """
+    Yedek JSON baytlarından tüm veri dosyalarını geri yükler.
+    (başarı, yüklenen dosya sayısı, hata mesajı) döner.
+    """
+    try:
+        backup = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        return False, 0, str(e)
+    if "data" not in backup:
+        return False, 0, "Geçersiz yedek formatı"
+    count = 0
+    for key, fpath in BACKUP_SCHEMA.items():
+        if key in backup["data"]:
+            try:
+                with open(fpath, "w", encoding="utf-8") as f:
+                    json.dump(backup["data"][key], f, ensure_ascii=False, indent=2)
+                count += 1
+            except Exception:
+                pass
+    return True, count, ""
 
 # ── Arama / AI ayarları ──────────────────────────────────────
 SEARCH_TIMEOUT   = 10   # saniye
@@ -347,6 +416,17 @@ TR = {
     "backup_btn":       "💾 Tam Yedek Al",
     "backup_sending":   "💾 Yedek hazırlanıyor...",
     "backup_done":      "✅ Yedek tamamlandı. {} dosya gönderildi.",
+    "full_backup_btn":  "📦 Tek Dosya Yedek",
+    "full_backup_done": "✅ Tam yedek hazır! ({} veri seti)\nGeri yüklemek için bu dosyayı bota gönder.",
+    "restore_start":    "🔄 Geri yükleme başlıyor...",
+    "restore_done":     "✅ Geri yükleme tamamlandı! {} dosya yüklendi.\nBotu yeniden başlatmanı öneririm.",
+    "restore_fail":     "❌ Geri yükleme başarısız: {}",
+    "data_missing_warn": (
+        "⚠️ Bot başladı ama veri bulunamadı!\n\n"
+        "Eğer daha önce yedek aldıysan, bu dosyayı bota gönder.\n"
+        "Gönderirken başlık (caption) olarak: restore\n\n"
+        "Yedek yoksa veriler sıfırlanmış demektir."
+    ),
     "export_users_btn": "📤 Kullanıcıları Dışa Aktar",
     "export_done":      "✅ {} kullanıcı dışa aktarıldı.",
     # ═══ HEDEFLİ DUYURU ═══
@@ -737,6 +817,16 @@ AR = {
     "backup_btn":        "💾 نسخ احتياطي كامل",
     "backup_sending":    "💾 جارٍ تجهيز النسخ الاحتياطية...",
     "backup_done":       "✅ اكتمل النسخ الاحتياطي. {} ملف.",
+    "full_backup_btn":   "📦 نسخة احتياطية موحدة",
+    "full_backup_done":  "✅ النسخة الاحتياطية جاهزة! ({} مجموعة بيانات)\nأرسل هذا الملف للبوت لاستعادة البيانات.",
+    "restore_start":     "🔄 جارٍ الاستعادة...",
+    "restore_done":      "✅ اكتملت الاستعادة! {} ملف.\nيُنصح بإعادة تشغيل البوت.",
+    "restore_fail":      "❌ فشلت الاستعادة: {}",
+    "data_missing_warn": (
+        "⚠️ البوت بدأ لكن لم يُعثر على البيانات!\n\n"
+        "إذا كان لديك نسخة احتياطية، أرسل الملف للبوت مع العنوان: restore\n\n"
+        "إذا لم يكن لديك نسخة، فالبيانات قد تمت إعادة تعيينها."
+    ),
     "export_users_btn":  "📤 تصدير المستخدمين",
     "export_done":       "✅ تم تصدير {} مستخدم.",
     "bcast_targeted":    "🎯 إرسال موجّه",
@@ -2567,7 +2657,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
              InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
             [InlineKeyboardButton(TR["backup_btn"],       callback_data="backup|do"),
-             InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users")],
+             InlineKeyboardButton(TR["full_backup_btn"],  callback_data="backup|full")],
+            [InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users")],
             [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
              InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
             [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
@@ -2862,6 +2953,23 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     logger.warning(f"Yedek gönderilemedi {fname}: {e}")
         await context.bot.send_message(int(uid), TR["backup_done"].format(sent_count))
         log_admin_action(uid, "BACKUP", f"{sent_count} dosya yedeklendi")
+        return ConversationHandler.END
+
+    # ── Tek dosya tam yedek ─────────────────────────
+    if cb == "backup|full" and is_main_admin(uid):
+        await query.answer(TR["backup_sending"], show_alert=False)
+        try:
+            data  = create_full_backup()
+            fname = f"tam_yedek_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+            count = len(json.loads(data.decode())["data"])
+            await context.bot.send_document(
+                int(uid),
+                io.BytesIO(data),
+                filename=fname,
+                caption=TR["full_backup_done"].format(count))
+            log_admin_action(uid, "FULL_BACKUP", f"{count} veri seti")
+        except Exception as e:
+            await context.bot.send_message(int(uid), f"❌ Yedek oluşturulamadı: {e}")
         return ConversationHandler.END
 
     # ── Kullanıcı dışa aktar (admin) ────────────────
@@ -5125,6 +5233,25 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     user = update.effective_user; uid = str(user.id); msg = update.message
     register_user(user)
 
+    # ── Geri Yükleme: admin JSON dosyası gönderince restore et ──
+    if is_main_admin(uid) and msg.document:
+        cap = (msg.caption or "").strip().lower()
+        fname = msg.document.file_name or ""
+        if cap == "restore" or fname.startswith("tam_yedek_"):
+            await msg.reply_text(TR["restore_start"])
+            try:
+                tg_file = await msg.document.get_file()
+                raw = await tg_file.download_as_bytearray()
+                ok, count, err = restore_full_backup(bytes(raw))
+                if ok:
+                    await msg.reply_text(TR["restore_done"].format(count))
+                    log_admin_action(uid, "RESTORE", f"{count} dosya geri yüklendi")
+                else:
+                    await msg.reply_text(TR["restore_fail"].format(err))
+            except Exception as e:
+                await msg.reply_text(TR["restore_fail"].format(str(e)))
+            return ConversationHandler.END
+
     if not is_admin(uid):
         if is_blocked(uid): return ConversationHandler.END
         s = load_settings()
@@ -5457,10 +5584,43 @@ def main():
                 except Exception as e:
                     logger.warning(f"Hatırlatıcı gönderilemedi: {e}")
 
+    # ── Otomatik yedek job'u (24 saatte bir) ─────────
+    async def _auto_backup(ctx):
+        try:
+            data  = create_full_backup()
+            fname = f"tam_yedek_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+            count = len(json.loads(data.decode())["data"])
+            await ctx.bot.send_document(
+                ADMIN_ID,
+                io.BytesIO(data),
+                filename=fname,
+                caption=f"🔄 Otomatik yedek — {count} veri seti\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        except Exception as e:
+            logger.warning(f"Otomatik yedek hatası: {e}")
+
+    # ── Startup: veri kontrolü ────────────────────────
+    async def _startup_notify(ctx):
+        users = load_users()
+        if not users:
+            try:
+                await ctx.bot.send_message(
+                    ADMIN_ID,
+                    TR["data_missing_warn"])
+            except Exception as e:
+                logger.warning(f"Startup uyarısı gönderilemedi: {e}")
+        else:
+            try:
+                await ctx.bot.send_message(ADMIN_ID, TR["startup_msg"])
+            except Exception as e:
+                logger.warning(f"Startup mesajı gönderilemedi: {e}")
+
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(_check_reminders, interval=60, first=10)
+        job_queue.run_repeating(_auto_backup, interval=86400, first=3600)  # 24 saatte bir
+        job_queue.run_once(_startup_notify, when=5)                        # başlangıçta
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
+        print("✅ Otomatik yedek job başlatıldı (24 saatte bir)")
 
     app.run_polling(drop_pending_updates=True)
 
