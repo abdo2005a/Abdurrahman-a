@@ -2955,18 +2955,25 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         log_admin_action(uid, "BACKUP", f"{sent_count} dosya yedeklendi")
         return ConversationHandler.END
 
-    # ── Tek dosya tam yedek ─────────────────────────
+    # ── Tek dosya tam yedek (+ otomatik pin) ────────
     if cb == "backup|full" and is_main_admin(uid):
         await query.answer(TR["backup_sending"], show_alert=False)
         try:
             data  = create_full_backup()
             fname = f"tam_yedek_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
             count = len(json.loads(data.decode())["data"])
-            await context.bot.send_document(
+            msg = await context.bot.send_document(
                 int(uid),
                 io.BytesIO(data),
                 filename=fname,
-                caption=TR["full_backup_done"].format(count))
+                caption=f"AUTO_BACKUP | {count} | {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+                        + TR["full_backup_done"].format(count))
+            # Pin — bot yeniden başlayınca buradan otomatik geri yükler
+            try:
+                await context.bot.pin_chat_message(
+                    int(uid), msg.message_id, disable_notification=True)
+            except Exception:
+                pass
             log_admin_action(uid, "FULL_BACKUP", f"{count} veri seti")
         except Exception as e:
             await context.bot.send_message(int(uid), f"❌ Yedek oluşturulamadı: {e}")
@@ -5584,43 +5591,73 @@ def main():
                 except Exception as e:
                     logger.warning(f"Hatırlatıcı gönderilemedi: {e}")
 
-    # ── Otomatik yedek job'u (24 saatte bir) ─────────
+    # ── Otomatik yedek: gönder + pin ─────────────────
     async def _auto_backup(ctx):
         try:
             data  = create_full_backup()
             fname = f"tam_yedek_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
             count = len(json.loads(data.decode())["data"])
-            await ctx.bot.send_document(
+            msg = await ctx.bot.send_document(
                 ADMIN_ID,
                 io.BytesIO(data),
                 filename=fname,
-                caption=f"🔄 Otomatik yedek — {count} veri seti\n📅 {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+                caption=f"AUTO_BACKUP | {count} | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+            # Admin sohbetinde pin — bot yeniden başlayınca buradan bulur
+            try:
+                await ctx.bot.pin_chat_message(
+                    ADMIN_ID, msg.message_id, disable_notification=True)
+            except Exception:
+                pass
         except Exception as e:
             logger.warning(f"Otomatik yedek hatası: {e}")
 
-    # ── Startup: veri kontrolü ────────────────────────
-    async def _startup_notify(ctx):
+    # ── Startup: veri yoksa Telegram'dan otomatik geri yükle ──
+    async def _startup_check(ctx):
         users = load_users()
-        if not users:
-            try:
-                await ctx.bot.send_message(
-                    ADMIN_ID,
-                    TR["data_missing_warn"])
-            except Exception as e:
-                logger.warning(f"Startup uyarısı gönderilemedi: {e}")
-        else:
+        if users:
+            # Veri var — normal başlangıç mesajı
             try:
                 await ctx.bot.send_message(ADMIN_ID, TR["startup_msg"])
-            except Exception as e:
-                logger.warning(f"Startup mesajı gönderilemedi: {e}")
+            except Exception:
+                pass
+            return
+
+        # Veri yok — admin sohbetindeki pinli mesajdan geri yükle
+        restored = False
+        try:
+            chat   = await ctx.bot.get_chat(ADMIN_ID)
+            pinned = chat.pinned_message
+            if pinned and pinned.document:
+                fname = pinned.document.file_name or ""
+                cap   = pinned.caption or ""
+                if fname.startswith("tam_yedek_") or "AUTO_BACKUP" in cap:
+                    tg_file = await pinned.document.get_file()
+                    raw     = await tg_file.download_as_bytearray()
+                    ok, count, err = restore_full_backup(bytes(raw))
+                    if ok:
+                        await ctx.bot.send_message(
+                            ADMIN_ID,
+                            f"✅ Veriler otomatik geri yüklendi!\n"
+                            f"📦 {count} dosya → Telegram yedeğinden")
+                        restored = True
+                    else:
+                        logger.warning(f"Otomatik geri yükleme başarısız: {err}")
+        except Exception as e:
+            logger.warning(f"Startup geri yükleme hatası: {e}")
+
+        if not restored:
+            try:
+                await ctx.bot.send_message(ADMIN_ID, TR["data_missing_warn"])
+            except Exception:
+                pass
 
     job_queue = app.job_queue
     if job_queue:
-        job_queue.run_repeating(_check_reminders, interval=60, first=10)
-        job_queue.run_repeating(_auto_backup, interval=86400, first=3600)  # 24 saatte bir
-        job_queue.run_once(_startup_notify, when=5)                        # başlangıçta
+        job_queue.run_repeating(_check_reminders, interval=60,   first=10)
+        job_queue.run_repeating(_auto_backup,     interval=21600, first=300)  # 6 saatte bir
+        job_queue.run_once(_startup_check,        when=5)                     # başlangıçta
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
-        print("✅ Otomatik yedek job başlatıldı (24 saatte bir)")
+        print("✅ Otomatik yedek job başlatıldı (6 saatte bir, Telegram pinli)")
 
     app.run_polling(drop_pending_updates=True)
 
