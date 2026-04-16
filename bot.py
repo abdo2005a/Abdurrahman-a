@@ -3475,7 +3475,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             last = u.get("last_seen","—")
             lines.append(f"{uid_},{name},{un},{cls},{last}")
         csv_text = "\n".join(lines).encode("utf-8-sig")
-        import io
         await context.bot.send_document(
             int(uid),
             io.BytesIO(csv_text),
@@ -4690,7 +4689,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             log = load_admin_log()
             if not log:
                 await query.answer("Log boş", show_alert=True); return ConversationHandler.END
-            import io, csv as _csv
+            import csv as _csv
             bio = io.StringIO()
             w = _csv.writer(bio)
             w.writerow(["Zaman", "Admin", "Islem", "Detay"])
@@ -5255,7 +5254,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                         lines.append(f"     Medya: {fid_n[:40]}...")
 
             # ── Excel dosyası oluştur ──────────────────
-            import io
             try:
                 import openpyxl
                 from openpyxl.styles import Font, PatternFill, Alignment
@@ -7948,28 +7946,33 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         s = load_settings()
         if s["maintenance"] and not is_admin(uid):
             await msg.reply_text(s.get("maintenance_text","🔧")); return ConversationHandler.END
-        if   msg.photo:
-            fid = msg.photo[-1].file_id; cap = msg.caption or "(photo)"
-            log_user_message(user,"photo", cap, file_id=fid)
-        elif msg.video:
-            fid = msg.video.file_id; cap = msg.caption or msg.video.file_name or "(video)"
-            log_user_message(user,"video", cap, file_id=fid)
-        elif msg.document:
-            fid = msg.document.file_id; cap = msg.document.file_name or "(doc)"
-            log_user_message(user,"document", cap, file_id=fid)
-        elif msg.audio:
-            fid = msg.audio.file_id; cap = msg.audio.file_name or "(audio)"
-            log_user_message(user,"audio", cap, file_id=fid)
-        elif msg.voice:
-            fid = msg.voice.file_id
-            log_user_message(user,"voice","(voice)", file_id=fid)
-        elif msg.animation:
-            fid = msg.animation.file_id
-            log_user_message(user,"animation","(gif)", file_id=fid)
-        elif msg.sticker:
-            fid = msg.sticker.file_id; emoji = msg.sticker.emoji or "(sticker)"
-            log_user_message(user,"sticker", emoji, file_id=fid)
-        return ConversationHandler.END
+        # Alt admin add_file veya dm_msg modundaysa devam et
+        _a = context.user_data.get("action","")
+        if is_admin(uid) and _a in ("add_file", "dm_msg", "set_photo", "admin_bcast_msg"):
+            pass  # handle_media'nın geri kalanına düş
+        else:
+            if   msg.photo:
+                fid = msg.photo[-1].file_id; cap = msg.caption or "(photo)"
+                log_user_message(user,"photo", cap, file_id=fid)
+            elif msg.video:
+                fid = msg.video.file_id; cap = msg.caption or msg.video.file_name or "(video)"
+                log_user_message(user,"video", cap, file_id=fid)
+            elif msg.document:
+                fid = msg.document.file_id; cap = msg.document.file_name or "(doc)"
+                log_user_message(user,"document", cap, file_id=fid)
+            elif msg.audio:
+                fid = msg.audio.file_id; cap = msg.audio.file_name or "(audio)"
+                log_user_message(user,"audio", cap, file_id=fid)
+            elif msg.voice:
+                fid = msg.voice.file_id
+                log_user_message(user,"voice","(voice)", file_id=fid)
+            elif msg.animation:
+                fid = msg.animation.file_id
+                log_user_message(user,"animation","(gif)", file_id=fid)
+            elif msg.sticker:
+                fid = msg.sticker.file_id; emoji = msg.sticker.emoji or "(sticker)"
+                log_user_message(user,"sticker", emoji, file_id=fid)
+            return ConversationHandler.END
 
     action = context.user_data.get("action","")
 
