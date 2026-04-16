@@ -225,7 +225,6 @@ TR = {
     "poll_no_comments":   "Henüz yorum yok.",
     # (boş)
     "admin_notif":       "🔔 Kullanıcı talebi\n\n👤 {name}{un}\n🆔 {uid}\n📋 {summary}\n🕐 {time}",
-    "new_user_notif":  "🆕 Yeni kullanıcı!\n\n👤 {name}{un}\n🆔 {uid}\n🕐 {time}",
     "reply_btn":     "💬 Yanıtla (ID: {})",
     "dm_prefix":     "📩 Yönetici mesajı:\n\n{}",
     "block_btn":     "🚫 Engelle",
@@ -1977,7 +1976,7 @@ def reply_kb(uid):
         ], resize_keyboard=True)
     elif is_admin(uid):
         return ReplyKeyboardMarkup([
-            [KeyboardButton(AR["btn_content"]),  KeyboardButton(AR["btn_maint"])],
+            [KeyboardButton(AR["btn_content"]),  KeyboardButton(AR["btn_mgmt"])],
             [KeyboardButton(AR["btn_search"]),   KeyboardButton(AR["btn_help"])],
         ], resize_keyboard=True)
     else:
@@ -2037,7 +2036,7 @@ def folder_text(folder, path, uid):
         if cls_ar:
             folds = {
                 name: sub for name, sub in folds.items()
-                if cls_ar in name or name in cls_ar
+                if cls_ar in name
             }
 
     if folds:
@@ -2069,7 +2068,7 @@ def folder_kb(path, folder, uid, page=0):
         if cls_ar:
             raw_folders = {
                 name: sub for name, sub in raw_folders.items()
-                if cls_ar in name or name in cls_ar
+                if cls_ar in name
             }
     all_folders = list(raw_folders.items())
     PAGE_SIZE   = 20
@@ -2537,6 +2536,20 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         durum = L(uid,"maint_on_str") if s["maintenance"] else L(uid,"maint_off_str")
         await update.message.reply_text(L(uid,"maint_toggle").format(durum))
         return
+
+    # ── Yönetim paneli ───────────────────────────────
+    if text in (TR["btn_mgmt"], AR["btn_mgmt"]):
+        if not is_main_admin(uid):
+            # Secondary admin — sınırlı panel (anket + duyuru)
+            kb = [
+                [InlineKeyboardButton(AR["poll_btn"],      callback_data="mgmt|poll"),
+                 InlineKeyboardButton(AR["bcast_targeted"],callback_data="bcast|panel")],
+                [InlineKeyboardButton(AR["broadcast"],     callback_data="mgmt|broadcast")],
+                [InlineKeyboardButton(AR["back"],          callback_data="nav|root")],
+            ]
+            sent = await update.message.reply_text(AR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["last_inline_msg"] = sent.message_id
+            return
 
     # ── Sadece süper admin ───────────────────────────
     if not is_main_admin(uid): return
@@ -3098,7 +3111,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── İçerik işlemleri — pin/move/copy/sort/folder_desc ──
-    if cb.startswith("extra|") and is_main_admin(uid):
+    if cb.startswith("extra|") and is_admin(uid):
         action = cb.split("|")[1]
         folder = get_folder(content, path)
 
@@ -3352,6 +3365,27 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Yönetim (sadece süper admin) ──────────────────
+    # ── Anket ve broadcast — tüm adminler ──────────────
+    if cb.startswith("mgmt|") and is_admin(uid):
+        _mgmt_action = cb.split("|")[1]
+        if _mgmt_action == "broadcast" and not is_main_admin(uid):
+            context.user_data["action"] = "broadcast"
+            await query.edit_message_text(
+                AR["broadcast_enter"],
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(AR["cancel"], callback_data="close")]]))
+            return WAIT_BROADCAST_MSG
+        if _mgmt_action == "poll" and not is_main_admin(uid):
+            polls = load_polls()
+            kb = [[InlineKeyboardButton(AR["poll_create"], callback_data="poll|create")]]
+            if polls:
+                kb.append([InlineKeyboardButton(AR["poll_results"], callback_data="poll|list_results"),
+                           InlineKeyboardButton(AR["poll_delete"],  callback_data="poll|list_delete")])
+            kb.append([InlineKeyboardButton(AR["back"], callback_data="nav|root")])
+            active = sum(1 for p in polls.values() if p.get("active"))
+            txt = f"{AR['poll_panel']}\n\n📊 {len(polls)}\n✅ {active}"
+            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
     if cb.startswith("mgmt|") and is_main_admin(uid):
         action = cb.split("|")[1]
 
@@ -4790,7 +4824,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             return WAIT_POLL_OPTIONS
 
     # ── Anket seçenekleri ─────────────────────────────
-    if action == "poll_options" and is_main_admin(uid):
+    if action == "poll_options" and is_admin(uid):
         opts = [o.strip() for o in text.split("\n") if o.strip()][:6]
         if len(opts) < 2:
             await update.message.reply_text("❌ En az 2 seçenek girin!"); return WAIT_POLL_OPTIONS
@@ -4947,7 +4981,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action",None); context.user_data.pop("dm_target",None)
         return ConversationHandler.END
 
-    if action == "broadcast" and is_main_admin(uid):
+    if action == "broadcast" and is_admin(uid):
         users = load_users(); success = fail = 0
         for uid_,u in users.items():
             if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
@@ -4962,7 +4996,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 )
                 await context.bot.send_message(int(uid_), bcast_msg); success += 1
             except: fail += 1
-        await update.message.reply_text(TR["broadcast_done"].format(success,fail))
+        await update.message.reply_text(L(uid, "broadcast_done").format(success,fail))
         # Log kaydet
         bcast_log = load_bcast_log()
         bcast_log.append({
