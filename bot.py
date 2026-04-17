@@ -1198,7 +1198,8 @@ NOTE_SUBJECTS = [
 #  LABORATUVAR SİSTEMİ
 #  Her haftayı bir gruba atayan sistem (B1/B2/B3 dönüşümlü)
 # ================================================================
-LAB_FILE = os.path.join(BASE_DIR, "lab_schedule.json")
+LAB_FILE       = os.path.join(BASE_DIR, "lab_schedule.json")
+LAB_FIXED_FILE = os.path.join(BASE_DIR, "lab_fixed.json")
 
 
 # ── Grup Yapılandırma ──────────────────────────────────────────
@@ -1258,6 +1259,8 @@ def save_class_channels(d): save_json(CLASS_CHANNELS_FILE, d)
 
 def load_lab_schedule():  return load_json(LAB_FILE, [])
 def save_lab_schedule(d): save_json(LAB_FILE, d)
+def load_lab_fixed():     return load_json(LAB_FIXED_FILE, [])
+def save_lab_fixed(d):    save_json(LAB_FIXED_FILE, d)
 
 def get_current_lab_week():
     """Bu haftanın laboratuvar grubunu döndür."""
@@ -2843,6 +2846,15 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("🚫 تم حظرك من استخدام البوت.")
         return
 
+    # Bakım modu — sadece Lab ve Sınav butonlarına izin ver
+    if not is_admin(uid):
+        s_maint = load_settings()
+        if s_maint.get("maintenance"):
+            allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
+            if text not in allowed_maint:
+                await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+                return
+
     # Kullanıcı/alt-admin buton seçimini kaydet
     if not is_main_admin(uid) and not is_blocked(uid):
         log_user_message(user, "button", text)
@@ -3040,8 +3052,15 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
                     date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
                     note = e.get("note","")
-                    my_labs.append((date_disp, note))
+                    my_labs.append((date_disp, note, False))
             except: pass
+
+        # Fixed/recurring lab entries for user's group
+        fixed_labs = load_lab_fixed()
+        for fl in fixed_labs:
+            if fl.get("group","") == user_grp:
+                day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
+                my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
 
         if not my_labs:
             await update.message.reply_text(
@@ -3049,9 +3068,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         lines = [f"🔬 مواعيد مختبر مجموعة {user_grp}\n"]
-        for date_disp, note in my_labs[:8]:
+        for date_disp, note, is_fixed in my_labs[:8]:
             nt = f"\n     📝 {note}" if note else ""
-            lines.append(f"  📅 {date_disp}{nt}")
+            lines.append(f"  {'📌' if is_fixed else '📅'} {date_disp}{nt}")
 
         await update.message.reply_text("\n".join(lines))
         return
@@ -3262,6 +3281,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
             [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
              InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+            [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
             [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
         sent = await update.message.reply_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
@@ -3322,8 +3342,18 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not adm:
         s = load_settings()
         if s["maintenance"]:
-            await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
-            return ConversationHandler.END
+            _maint_ok = (
+                cb.startswith("countdown|") or
+                cb.startswith("lab|") or
+                cb.startswith("class_pick|") or
+                cb.startswith("shift_pick|") or
+                cb.startswith("group_pick|") or
+                cb == "class_change" or
+                cb == "group_pick_start"
+            )
+            if not _maint_ok:
+                await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
+                return ConversationHandler.END
 
     content = load_content()
     path    = context.user_data.get("path", [])
@@ -4405,14 +4435,30 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             sched = [e for e in sched if e.get("week") != week]
             save_lab_schedule(sched)
             await query.answer(f"✅ {week} silindi", show_alert=True)
-            query.data = "mgmt|lab"; return await callback(update, context)
+            # Rebuild lab panel inline
+            from datetime import date as _date2
+            future2 = get_upcoming_lab_weeks(10)
+            kb_del = []
+            for e2 in future2:
+                g2 = e2.get("group","?"); w2 = e2.get("week","")
+                n2 = f" — {e2['note']}" if e2.get("note") else ""
+                kb_del.append([
+                    InlineKeyboardButton(f"🔬 {w2}: {g2}{n2}", callback_data=f"lab|view|{w2}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|del|{w2}"),
+                ])
+            kb_del.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+            kb_del.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
+            kb_del.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text(
+                f"🔬 Lab Programı\n(Bugün: {_date2.today().strftime('%d/%m/%Y')})",
+                reply_markup=InlineKeyboardMarkup(kb_del))
+            return ConversationHandler.END
 
         if lab_act == "set":
             week  = lab_parts[2]
             group = lab_parts[3]
             lab_name = context.user_data.pop("pending_lab_name", "")
             add_lab_week(week, group, note=lab_name)
-            # Onay mesajı
             from datetime import datetime as _dt2
             try:
                 d2 = _dt2.strptime(week, "%Y-%m-%d")
@@ -4431,8 +4477,121 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.message.reply_text(confirm)
             except: pass
             await query.answer("✅", show_alert=False)
-            query.data = "mgmt|lab"
-            return await callback(update, context)
+            # Rebuild lab panel inline
+            from datetime import date as _date3
+            future3 = get_upcoming_lab_weeks(10)
+            kb_set = []
+            for e3 in future3:
+                g3 = e3.get("group","?"); w3 = e3.get("week","")
+                n3 = f" — {e3['note']}" if e3.get("note") else ""
+                kb_set.append([
+                    InlineKeyboardButton(f"🔬 {w3}: {g3}{n3}", callback_data=f"lab|view|{w3}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|del|{w3}"),
+                ])
+            kb_set.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+            kb_set.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
+            kb_set.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text(
+                f"🔬 Lab Programı\n(Bugün: {_date3.today().strftime('%d/%m/%Y')})",
+                reply_markup=InlineKeyboardMarkup(kb_set))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_panel":
+            fixed = load_lab_fixed()
+            WEEKDAYS_TR = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            kb_fp = []
+            for i, f in enumerate(fixed):
+                day_name = WEEKDAYS_TR.get(f.get("weekday",0),"?")
+                lbl = f"{f.get('name','?')[:20]} — {day_name} [{f.get('group','?')}]"
+                kb_fp.append([
+                    InlineKeyboardButton(f"📌 {lbl}", callback_data=f"lab|fixed_view|{i}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i}"),
+                ])
+            kb_fp.append([InlineKeyboardButton("➕ Yeni Sabit Şablon", callback_data="lab|fixed_add")])
+            kb_fp.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            txt_fp = "📌 Sabit Lab Şablonları\n\nHer hafta tekrar eden lab programları:"
+            await query.edit_message_text(txt_fp, reply_markup=InlineKeyboardMarkup(kb_fp))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_add":
+            context.user_data["action"] = "lab_fixed_name"
+            await query.message.reply_text(
+                "📌 Sabit şablon adı yaz (örn: Fizik Lab, Elektronik Lab):")
+            return ConversationHandler.END
+
+        if lab_act == "fixed_del":
+            idx_fd = int(lab_parts[2]) if len(lab_parts) > 2 else -1
+            fixed_d = load_lab_fixed()
+            if 0 <= idx_fd < len(fixed_d):
+                fixed_d.pop(idx_fd)
+                save_lab_fixed(fixed_d)
+            await query.answer("✅ Silindi", show_alert=True)
+            # Rebuild fixed panel inline
+            WEEKDAYS_TR2 = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            kb_fd2 = []
+            for i2, f2 in enumerate(fixed_d):
+                day_name2 = WEEKDAYS_TR2.get(f2.get("weekday",0),"?")
+                lbl2 = f"{f2.get('name','?')[:20]} — {day_name2} [{f2.get('group','?')}]"
+                kb_fd2.append([
+                    InlineKeyboardButton(f"📌 {lbl2}", callback_data=f"lab|fixed_view|{i2}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i2}"),
+                ])
+            kb_fd2.append([InlineKeyboardButton("➕ Yeni Sabit Şablon", callback_data="lab|fixed_add")])
+            kb_fd2.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            await query.edit_message_text(
+                "📌 Sabit Lab Şablonları\n\nHer hafta tekrar eden lab programları:",
+                reply_markup=InlineKeyboardMarkup(kb_fd2))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_day":
+            day_idx = int(lab_parts[2]) if len(lab_parts) > 2 else 0
+            context.user_data["lab_fixed_weekday"] = day_idx
+            # Şimdi grup seç
+            grps_cfg2 = load_class_groups()
+            all_grps2 = set()
+            for cls_dv in grps_cfg2.values():
+                for sft_dv in cls_dv.values():
+                    if isinstance(sft_dv, dict):
+                        for g_key in sft_dv:
+                            all_grps2.add(g_key)
+                        for subs2 in sft_dv.values():
+                            if isinstance(subs2, list):
+                                all_grps2.update(subs2)
+            kb_fg = []
+            row_fg = []
+            for g_opt in sorted(all_grps2):
+                row_fg.append(InlineKeyboardButton(g_opt, callback_data=f"lab|fixed_grp|{g_opt}"))
+                if len(row_fg) == 4:
+                    kb_fg.append(row_fg); row_fg = []
+            if row_fg: kb_fg.append(row_fg)
+            kb_fg.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            await query.edit_message_text("👥 Lab grubu seç:", reply_markup=InlineKeyboardMarkup(kb_fg))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_grp":
+            grp_val = lab_parts[2] if len(lab_parts) > 2 else ""
+            fname   = context.user_data.pop("lab_fixed_name", "")
+            weekday = context.user_data.pop("lab_fixed_weekday", 0)
+            fixed_new = load_lab_fixed()
+            fixed_new.append({"name": fname, "weekday": weekday, "group": grp_val})
+            save_lab_fixed(fixed_new)
+            WEEKDAYS_TR3 = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            await query.answer(f"✅ {fname} — {WEEKDAYS_TR3.get(weekday,'?')} [{grp_val}]", show_alert=True)
+            # Rebuild fixed panel
+            kb_fg2 = []
+            for i3, f3 in enumerate(fixed_new):
+                day3 = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
+                lbl3 = f"{f3.get('name','?')[:20]} — {day3} [{f3.get('group','?')}]"
+                kb_fg2.append([
+                    InlineKeyboardButton(f"📌 {lbl3}", callback_data=f"lab|fixed_view|{i3}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i3}"),
+                ])
+            kb_fg2.append([InlineKeyboardButton("➕ Yeni Sabit Şablon", callback_data="lab|fixed_add")])
+            kb_fg2.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            await query.edit_message_text(
+                "📌 Sabit Lab Şablonları\n\nHer hafta tekrar eden lab programları:",
+                reply_markup=InlineKeyboardMarkup(kb_fg2))
+            return ConversationHandler.END
 
     # ── Arama sonucu dosya/klasör aç ─────────────────
     if cb.startswith("goto_folder|"):
@@ -4872,6 +5031,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
                     [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
                      InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                    [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
                 ]
                 await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
@@ -5021,6 +5181,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     InlineKeyboardButton("🗑", callback_data=f"lab|del|{week}"),
                 ])
             kb.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+            kb.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
             kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
                 f"🔬 Lab Programı\n(Bugün: {today_str})",
@@ -5866,7 +6027,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             set_user_class(target, new_cls)
             log_admin_action(uid, "CHANGE_CLS", f"user:{target} {old_cls}→{new_cls}")
             await query.answer(f"✅ {CLASS_DEFS[new_cls]['ar']}", show_alert=True)
-            query.data = f"user|info|{target}"; return await callback(update, context)
+            u_c = load_users().get(target, {})
+            name_c = u_c.get("full_name") or u_c.get("first_name") or target
+            kb_back = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                        InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            await query.edit_message_text(
+                f"✅ {name_c} → {CLASS_DEFS[new_cls]['ar']}",
+                reply_markup=InlineKeyboardMarkup(kb_back))
+            return ConversationHandler.END
 
         if action == "change_grp":
             target = parts[2]
@@ -5894,7 +6062,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             set_user_group(target, new_grp)
             log_admin_action(uid, "CHANGE_GRP", f"user:{target} {old_grp}→{new_grp}")
             await query.answer(f"✅ {new_grp}", show_alert=True)
-            query.data = f"user|info|{target}"; return await callback(update, context)
+            u_c2 = load_users().get(target, {})
+            name_c2 = u_c2.get("full_name") or u_c2.get("first_name") or target
+            kb_back2 = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                         InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            await query.edit_message_text(
+                f"✅ {name_c2} → Grup: {new_grp}",
+                reply_markup=InlineKeyboardMarkup(kb_back2))
+            return ConversationHandler.END
 
         if action == "warn":
             target = parts[2]
@@ -6689,7 +6864,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             admins_list = load_admins()
             context.user_data["msgsel_targets"] = [str(a) for a in admins_list]
             await query.answer(f"✅ {len(admins_list)} admin seçildi", show_alert=True)
-            query.data = "msgsel|panel"; return await callback(update, context)
+            selected = context.user_data.get("msgsel_targets", [])
+            n = len(selected)
+            kb_ao = [
+                [InlineKeyboardButton("👮 Sadece Adminler", callback_data="msgsel|admins_only")],
+                [InlineKeyboardButton("👥 Kullanıcıdan Seç", callback_data="msgsel|pick_users")],
+                [InlineKeyboardButton(f"✅ {n} kişi seçildi — Mesaj Gönder", callback_data="msgsel|send")],
+                [InlineKeyboardButton("🗑 Seçimi Temizle", callback_data="msgsel|clear")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")],
+            ]
+            await query.edit_message_text("📨 Seçili Kişilere Mesaj", reply_markup=InlineKeyboardMarkup(kb_ao))
+            return ConversationHandler.END
 
         if ms_act == "pick_users":
             u_d = load_users()
@@ -6713,11 +6898,30 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             else:
                 sel.append(target_id)
             context.user_data["msgsel_targets"] = sel
-            query.data = "msgsel|pick_users"; return await callback(update, context)
+            # Rebuild pick_users inline — no recursive callback
+            u_d2 = load_users()
+            selected2 = sel
+            kb_tog = []
+            for uid2_, u2 in list(u_d2.items())[:50]:
+                if int(uid2_) == ADMIN_ID: continue
+                name2 = u2.get("full_name") or u2.get("first_name") or f"ID:{uid2_}"
+                un2   = f" @{u2['username']}" if u2.get("username") else ""
+                tick2 = "✅ " if uid2_ in selected2 else ""
+                kb_tog.append([InlineKeyboardButton(f"{tick2}👤 {name2}{un2}", callback_data=f"msgsel|toggle|{uid2_}")])
+            kb_tog.append([InlineKeyboardButton("◀️ Geri", callback_data="msgsel|panel")])
+            await query.edit_message_text("👥 Mesaj gönderilecek kişileri seç:", reply_markup=InlineKeyboardMarkup(kb_tog))
+            return ConversationHandler.END
 
         if ms_act == "clear":
             context.user_data["msgsel_targets"] = []
-            query.data = "msgsel|panel"; return await callback(update, context)
+            # Rebuild panel inline — no recursive callback
+            kb_cl = [
+                [InlineKeyboardButton("👮 Sadece Adminler", callback_data="msgsel|admins_only")],
+                [InlineKeyboardButton("👥 Kullanıcıdan Seç", callback_data="msgsel|pick_users")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")],
+            ]
+            await query.edit_message_text("📨 Seçili Kişilere Mesaj", reply_markup=InlineKeyboardMarkup(kb_cl))
+            return ConversationHandler.END
 
         if ms_act == "send":
             sel = context.user_data.get("msgsel_targets", [])
@@ -7816,6 +8020,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
+    if action == "lab_fixed_name" and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        context.user_data["lab_fixed_name"] = text.strip()[:60]
+        context.user_data.pop("action", None)
+        WEEKDAYS_TR4 = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"]
+        kb_wd = []
+        for i_wd, wd_name in enumerate(WEEKDAYS_TR4):
+            kb_wd.append([InlineKeyboardButton(wd_name, callback_data=f"lab|fixed_day|{i_wd}")])
+        kb_wd.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+        await update.message.reply_text("📅 Hangi gün tekrar eder?", reply_markup=InlineKeyboardMarkup(kb_wd))
+        return WAIT_FOLDER
+
     if action == "countdown_name" and is_admin(uid):
         context.user_data["countdown_name"] = text
         context.user_data.pop("action", None)
@@ -7979,6 +8194,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 }
                 save_polls(polls)
                 await update.message.reply_text(L(uid, "poll_comment_saved"))
+                # Admin bildirimi
+                q_text = poll.get("question", "")[:60]
+                notif = (
+                    f"📊 *إجابة سؤال مفتوح*\n"
+                    f"❓ {q_text}\n"
+                    f"👤 {name} {un}\n"
+                    f"✍️ {text[:300]}"
+                )
+                try:
+                    await context.bot.send_message(ADMIN_ID, notif, parse_mode="Markdown")
+                except Exception:
+                    pass
+                for adm_id in load_admins():
+                    if get_admin_perm(str(adm_id), "can_poll"):
+                        try:
+                            await context.bot.send_message(int(adm_id), notif, parse_mode="Markdown")
+                        except Exception:
+                            pass
         return ConversationHandler.END
 
     # ── Anket yorumu (kullanıcıdan) ───────────────────
