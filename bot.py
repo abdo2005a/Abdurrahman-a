@@ -3089,7 +3089,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown")])
                 kb.append([InlineKeyboardButton("🔬 إضافة موعد مختبر", callback_data="lab|add_new")])
             if get_admin_perm(uid, "can_poll"):
-                kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="sadmin|poll")])
+                kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
             if get_admin_perm(uid, "can_broadcast"):
                 kb.append([InlineKeyboardButton("📢 إرسال إعلان", callback_data="sadmin|broadcast")])
             if not kb:
@@ -4113,43 +4113,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
             return WAIT_BROADCAST_MSG
 
-        # ── Poll ──
+        # ── Poll — doğrudan ana admin akışına yönlendir ──
         if sadmin_act == "poll":
             if not get_admin_perm(uid, "can_poll"):
                 await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
-            await safe_edit(query, "📊 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("pcls")))
-            return WAIT_POLL_QUESTION
-
-        if sadmin_act == "pcls":
-            cls_val = parts[2] if len(parts) > 2 else "all"
-            await safe_edit(query, "📊 الفترة الدراسية:",
-                reply_markup=InlineKeyboardMarkup(_sft_kb("psft", cls_val, "sadmin|poll")))
-            return WAIT_POLL_QUESTION
-
-        if sadmin_act == "psft":
-            cls_val = parts[2] if len(parts) > 2 else "all"
-            sft_val = parts[3] if len(parts) > 3 else "all"
-            await safe_edit(query, "📊 المجموعة:",
-                reply_markup=InlineKeyboardMarkup(_grp_kb("pgrp", cls_val, sft_val, f"sadmin|pcls|{cls_val}")))
-            return WAIT_POLL_QUESTION
-
-        if sadmin_act == "pgrp":
-            cls_val = parts[2] if len(parts) > 2 else "all"
-            sft_val = parts[3] if len(parts) > 3 else "all"
-            grp_val = parts[4] if len(parts) > 4 else "all"
-            tgt_parts = []
-            if cls_val != "all": tgt_parts.append(f"cls_{cls_val}")
-            if sft_val != "all": tgt_parts.append(f"sft_{sft_val}")
-            if grp_val != "all": tgt_parts.append(f"grp_{grp_val}")
-            context.user_data["poll_target"] = "|".join(tgt_parts) or "all"
-            lbl = target_label(context.user_data["poll_target"])
-            kb = [
-                [InlineKeyboardButton("📋 اختيار متعدد", callback_data="poll|type|choice")],
-                [InlineKeyboardButton("✍️ إجابة مفتوحة",  callback_data="poll|type|open")],
-                [InlineKeyboardButton("◀️ إلغاء",         callback_data="nav|root")],
-            ]
-            await safe_edit(query, f"📊 {lbl}\n\nنوع الاستطلاع:", reply_markup=InlineKeyboardMarkup(kb))
-            return WAIT_POLL_QUESTION
+            query.data = "poll|create"
+            return await callback(update, context)
 
         return ConversationHandler.END
 
