@@ -1513,6 +1513,12 @@ def get_admin_grp(admin_uid: str):
     perms = load_admin_perms()
     return perms.get(str(admin_uid), {}).get("grp", None)
 
+def get_admin_shift(admin_uid: str):
+    """Admin hangi vardiyayı yönetiyor? None=hepsi."""
+    if is_main_admin(admin_uid): return None
+    perms = load_admin_perms()
+    return perms.get(str(admin_uid), {}).get("shift", None)
+
 def get_admin_subgrp(admin_uid: str):
     """Admin hangi alt grubu yönetiyor? None=hepsi (A1/A2/A3 vb.)."""
     if is_main_admin(admin_uid): return None
@@ -2744,9 +2750,38 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
 
-    # ── Profil (kullanıcılar) ────────────────────────
+    # ── Profil (kullanıcılar + alt adminler) ─────────
     if text in (TR["profile_btn"], AR["profile_btn"]):
-        if not is_admin(uid):
+        if is_admin(uid) and not is_main_admin(uid):
+            u_adm = load_users().get(uid, {})
+            name  = u_adm.get("full_name") or u_adm.get("first_name") or "—"
+            un    = f"@{u_adm['username']}" if u_adm.get("username") else "—"
+            adm_cls = get_admin_cls(uid) or "الكل"
+            adm_grp = get_admin_grp(uid) or "الكل"
+            adm_sft = get_admin_shift(uid) or "الكل"
+            perms = load_admin_perms().get(uid, {})
+            perm_lines = []
+            perm_map = {
+                "can_add_folder": "📁 إضافة مجلد", "can_del_folder": "🗑 حذف مجلد",
+                "can_add_file": "📎 إضافة ملف",   "can_del_file": "🗑 حذف ملف",
+                "can_rename_file": "✏️ إعادة تسمية","can_broadcast": "📢 إعلان",
+                "can_poll": "📊 استطلاع",          "can_warn": "⚠️ تحذير",
+                "can_block": "🚫 حظر",             "can_view_users": "👥 رؤية الطلاب",
+                "can_countdown": "📅 امتحانات",
+            }
+            for key, lbl in perm_map.items():
+                if perms.get(key): perm_lines.append(f"  ✅ {lbl}")
+            txt = (
+                f"👤 *{name}*\n"
+                f"🔗 {un}\n"
+                f"🆔 {uid}\n"
+                f"🎓 الصف: {adm_cls}\n"
+                f"👥 المجموعة: {adm_grp}\n"
+                f"⏰ الفترة: {adm_sft}\n"
+                f"\n📋 الصلاحيات:\n" + ("\n".join(perm_lines) if perm_lines else "  — لا توجد صلاحيات")
+            )
+            await update.message.reply_text(txt, parse_mode="Markdown")
+        elif not is_admin(uid):
             u    = load_users().get(uid, {})
             name = u.get("full_name") or u.get("first_name") or "—"
             cls  = class_label(uid)
@@ -5679,7 +5714,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # Öğrencilere sınav hatırlatması gönder
             idx_r  = int(cb.split("|")[2])
             adm_cls = get_admin_cls(uid) or ""
-            adm_sft = get_admin_shift(uid) if hasattr(__import__("builtins"), "get_admin_shift") else ""
+            adm_sft = get_admin_shift(uid) or ""
             cds_r  = get_countdowns(adm_cls, uid=uid)
             if idx_r >= len(cds_r):
                 await query.answer("Sınav bulunamadı", show_alert=True); return ConversationHandler.END
@@ -7173,9 +7208,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if action == "admin_msg_to_super" and is_admin(uid) and not is_main_admin(uid):
         identity = context.user_data.pop("admin_identity","")
         context.user_data.pop("action", None)
+        u_adm2 = load_users().get(uid, {})
+        un_adm2 = f" @{u_adm2['username']}" if u_adm2.get("username") else ""
         notif = (
             f"📨 رسالة من مسؤول\n\n"
-            f"{identity}\n\n"
+            f"{identity}\n"
+            f"🆔 {uid}{un_adm2}\n\n"
             f"📝 {text}\n"
             f"🕐 {datetime.now(IRAQ_TZ).strftime('%H:%M')}"
         )
@@ -8309,6 +8347,7 @@ def main():
             CallbackQueryHandler(callback),
         ],
         allow_reentry=True,
+        conversation_timeout=259200,  # 3 gün (saniye)
     )
 
     app.add_handler(CommandHandler("start", start))
