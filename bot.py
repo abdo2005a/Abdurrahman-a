@@ -2127,6 +2127,17 @@ def get_file_view_count(f: dict) -> int:
 def make_poll_id():
     return datetime.now(IRAQ_TZ).strftime("%Y%m%d%H%M%S")
 
+def _build_poll_target(context, uid):
+    """Assembles poll_target string from poll_tgt_cls/sft/grp in user_data."""
+    cls_val = context.user_data.get("poll_tgt_cls", "")
+    sft_val = context.user_data.get("poll_tgt_sft", "")
+    grp_val = context.user_data.get("poll_tgt_grp", "")
+    parts = []
+    if cls_val: parts.append(f"cls_{cls_val}")
+    if sft_val: parts.append(f"sft_{sft_val}")
+    if grp_val: parts.append(f"grp_{grp_val}")
+    context.user_data["poll_target"] = "|".join(parts) or "all"
+
 def poll_bar(count, total):
     """Görsel oy barı."""
     if total == 0: pct = 0
@@ -4113,12 +4124,28 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
             return WAIT_BROADCAST_MSG
 
-        # ── Poll — doğrudan ana admin akışına yönlendir ──
+        # ── Poll — yeni anket oluştur (recursive callback yok) ──
         if sadmin_act == "poll":
             if not get_admin_perm(uid, "can_poll"):
                 await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
-            query.data = "poll|create"
-            return await callback(update, context)
+            adm_cls = get_admin_cls(uid)
+            context.user_data["poll_tgt_cls"] = adm_cls or ""
+            if adm_cls:
+                kb = [
+                    [InlineKeyboardButton("☀️ صباحي", callback_data="poll|tgt_sft|sabahi"),
+                     InlineKeyboardButton("🌙 مسائي",  callback_data="poll|tgt_sft|masaiy"),
+                     InlineKeyboardButton("📋 الكل",   callback_data="poll|tgt_sft|all")],
+                    [InlineKeyboardButton("◀️ إلغاء",  callback_data="close")],
+                ]
+                await safe_edit(query, "📊 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                kb = []
+                for cls_id, cls_def in CLASS_DEFS.items():
+                    kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"poll|tgt_cls|{cls_id}")])
+                kb.append([InlineKeyboardButton("📋 الكل", callback_data="poll|tgt_cls|all")])
+                kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
+                await safe_edit(query, "📊 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         return ConversationHandler.END
 
@@ -4737,7 +4764,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.message.reply_text(f"👥 طلاب صفي ({len(kb)}):", reply_markup=InlineKeyboardMarkup(kb[:30]))
         return ConversationHandler.END
 
-    if cb.startswith("mgmt|") and is_main_admin(uid):
+    if cb.startswith("mgmt|") and is_admin(uid) and (is_main_admin(uid) or cb == "mgmt|poll"):
         parts  = cb.split("|")
         action = parts[1]
 
@@ -5014,13 +5041,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "poll":
             polls = load_polls()
             kb = [[InlineKeyboardButton(TR["poll_create"], callback_data="poll|create")]]
-            if polls:
+            if polls and is_main_admin(uid):
                 kb.append([InlineKeyboardButton(TR["poll_results"], callback_data="poll|list_results"),
                            InlineKeyboardButton(TR["poll_delete"],  callback_data="poll|list_delete")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            back_cb = "nav|mgmt_panel" if is_main_admin(uid) else "close"
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=back_cb)])
             active = sum(1 for p in polls.values() if p.get("active"))
             txt = f"{TR['poll_panel']}\n\n📊 Toplam anket: {len(polls)}\n✅ Aktif: {active}"
-            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            try:
+                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            except Exception:
+                await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
     if cb.startswith("rem_admin|") and is_main_admin(uid):
@@ -6748,7 +6779,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(TR["poll_no_polls"], show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📊 {p['question'][:40]}", callback_data=f"poll|show_result|{pid}")]
                   for pid, p in polls.items()]
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")])
             await query.message.reply_text(TR["poll_select"], reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
 
@@ -6779,13 +6810,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                         )
                 else:
                     lines.append("Henüz cevap yok.")
-                kb = [[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]
+                kb = [[InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")]]
                 await query.message.reply_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
             else:
                 txt = build_poll_results_text(poll, uid, show_voters=False)
                 kb  = [
                     [InlineKeyboardButton("👥 Kim Ne Seçti?", callback_data=f"poll|voter_detail|{poll_id}")],
-                    [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                    [InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")],
                 ]
                 await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
@@ -6800,7 +6831,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb  = [
                 [InlineKeyboardButton("💬 Yorumlar", callback_data=f"poll|comments|{poll_id}")],
                 [InlineKeyboardButton("📊 Genel Sonuç", callback_data=f"poll|show_result|{poll_id}")],
-                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")],
             ]
             await query.message.reply_text(txt[:4000], reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
@@ -6830,7 +6861,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 )
             kb = [
                 [InlineKeyboardButton("◀️ Geri", callback_data=f"poll|voter_detail|{poll_id}")],
-                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Anket Paneli", callback_data="mgmt|poll")],
             ]
             await query.message.reply_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
@@ -6841,7 +6872,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(TR["poll_no_polls"], show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"🗑 {p['question'][:40]}", callback_data=f"poll|confirm_delete|{pid}")]
                   for pid, p in polls.items()]
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")])
             await query.message.reply_text(TR["poll_select"], reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
 
@@ -6852,12 +6883,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 del polls[poll_id]
                 save_polls(polls)
             await query.answer(TR["poll_deleted"], show_alert=True)
-            # Panele dön
             kb = [[InlineKeyboardButton(TR["poll_create"], callback_data="poll|create")]]
             if polls:
                 kb.append([InlineKeyboardButton(TR["poll_results"], callback_data="poll|list_results"),
                            InlineKeyboardButton(TR["poll_delete"],  callback_data="poll|list_delete")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")])
             active = sum(1 for p in polls.values() if p.get("active"))
             txt = f"{TR['poll_panel']}\n\n📊 Toplam anket: {len(polls)}\n✅ Aktif: {active}"
             await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
@@ -6908,7 +6938,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             save_polls(polls)
             await query.message.reply_text(
                 TR["poll_sent"].format(s=success, f=fail),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")]]))
             return ConversationHandler.END
 
     # ── Açık uçlu anket cevap butonu ─────────────────
@@ -7764,7 +7794,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         poll_id = make_poll_id()
         # Anketi kaydet (henüz gönderilmedi)
         polls = load_polls()
-        polls[poll_id] = {"question": q, "options": opts, "votes": {}, "active": False, "target": context.user_data.get("poll_target","all")}
+        polls[poll_id] = {"question": q, "type": "choice", "options": opts, "votes": {}, "active": False, "target": context.user_data.get("poll_target","all")}
         save_polls(polls)
         opts_text = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(opts))
         kb = [
