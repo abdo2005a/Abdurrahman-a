@@ -44,6 +44,7 @@ FAVORITES_FILE   = os.path.join(BASE_DIR, "favorites.json")
 NOTES_FILE       = os.path.join(BASE_DIR, "user_notes.json")
 WARNS_FILE       = os.path.join(BASE_DIR, "user_warns.json")
 ADMIN_LOG_FILE   = os.path.join(BASE_DIR, "admin_log.json")
+ADMIN_ACTIVITY_FILE = os.path.join(BASE_DIR, "admin_activity.json")
 SUBS_FILE        = os.path.join(BASE_DIR, "subscriptions.json")
 RECENT_FILE      = os.path.join(BASE_DIR, "recently_viewed.json")
 FOLDER_DESC_FILE = os.path.join(BASE_DIR, "folder_descs.json")
@@ -82,6 +83,7 @@ BACKUP_SCHEMA = {
     "notes":         NOTES_FILE,
     "warns":         WARNS_FILE,
     "admin_log":     ADMIN_LOG_FILE,
+    "admin_activity": ADMIN_ACTIVITY_FILE,
     "subs":          SUBS_FILE,
     "recent":        RECENT_FILE,
     "folder_descs":  FOLDER_DESC_FILE,
@@ -3956,7 +3958,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "D. Seçenek 4\n"
             "CEVAP: A",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ İptal", callback_data="nav|root")
+                InlineKeyboardButton("◀️ İptal", callback_data="nav|mgmt_panel")
             ]]))
         return WAIT_FOLDER
 
@@ -3981,7 +3983,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text(
             "\n".join(lines)[:4000],
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Geri", callback_data="nav|root")
+                InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")
             ]]))
         return ConversationHandler.END
 
@@ -4001,7 +4003,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         lines.append(f"❓ Seçmemiş: {none_c} kişi")
         await query.edit_message_text(
             "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
     # ── İçerik işlemleri — pin/move/copy/sort/folder_desc ──
@@ -4212,7 +4214,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             context.user_data["action"] = "sadmin_bcast"
             lbl = target_label(context.user_data["sb_target"])
             await safe_edit(query, f"📢 {lbl}\n\nاكتب نص الإعلان:",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="close")]]))
             return WAIT_BROADCAST_MSG
 
         # ── Poll — yeni anket oluştur (recursive callback yok) ──
@@ -6561,7 +6563,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         await query.edit_message_text(
             "\n".join(lines)[:4000],
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
     # ── Seçili kişilere mesaj ────────────────────────
