@@ -4616,6 +4616,37 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     await context.bot.delete_message(chat_id=query.message.chat_id, message_id=mid)
                 except: pass
             path.pop()
+        elif action == "mgmt_panel":
+            # Yönetim panelini inline göster (süper admin)
+            if is_main_admin(uid):
+                kb = [
+                    [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
+                     InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+                    [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+                    [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export")],
+                    [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
+                    [InlineKeyboardButton("✉️ Anonim Mesaj Grubu",callback_data="set|anon_group")],
+                    [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
+                     InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
+                    [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
+                     InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
+                    [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
+                     InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                    [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
+                     InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
+                    [InlineKeyboardButton(TR["backup_btn"],       callback_data="backup|do"),
+                     InlineKeyboardButton(TR["full_backup_btn"],  callback_data="backup|full")],
+                    [InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users"),
+                     InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all")],
+                    [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
+                     InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
+                    [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add")],
+                    [InlineKeyboardButton("📝 Quiz Oluştur",     callback_data="admin|quiz_create"),
+                     InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                ]
+                await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
         elif action == "root":
             # Ana sayfaya dönünce tüm klasör mesajlarını temizle
             folder_msgs = context.user_data.get("folder_msgs", {})
@@ -6019,28 +6050,48 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.delete_message()
             return ConversationHandler.END
 
-        if action == "remind_cfg":
+        if action in ("remind_cfg", "toggle_exam_day", "toggle_lab_day"):
             s = load_settings()
+            # Toggle güncelleme
+            if action == "toggle_exam_day":
+                d = int(cb.split("|")[2])
+                days = s.get("exam_remind_days", [1])
+                if isinstance(days, int): days = [days]
+                if d in days:
+                    days.remove(d)
+                    if not days: days = [1]
+                else:
+                    days.append(d)
+                s["exam_remind_days"] = sorted(days)
+                save_settings(s)
+            elif action == "toggle_lab_day":
+                d = int(cb.split("|")[2])
+                days = s.get("lab_remind_days", [1])
+                if isinstance(days, int): days = [days]
+                if d in days:
+                    days.remove(d)
+                    if not days: days = [1]
+                else:
+                    days.append(d)
+                s["lab_remind_days"] = sorted(days)
+                save_settings(s)
+            # Panel yeniden çiz (doğrudan — recursive yok)
             exam_days = s.get("exam_remind_days", [1])
             if isinstance(exam_days, int): exam_days = [exam_days]
             lab_days  = s.get("lab_remind_days",  [1])
             if isinstance(lab_days, int):  lab_days  = [lab_days]
             exam_lbl = ", ".join(f"{d}g" for d in sorted(exam_days))
             lab_lbl  = ", ".join(f"{d}g" for d in sorted(lab_days))
-            # Exam toggle buttons
-            exam_row = []
-            for d in [1, 2, 3, 5, 7]:
-                mark = "✅" if d in exam_days else "⬜"
-                exam_row.append(InlineKeyboardButton(f"{mark} {d}g", callback_data=f"set|toggle_exam_day|{d}"))
-            # Lab toggle buttons
-            lab_row = []
-            for d in [1, 2, 3]:
-                mark = "✅" if d in lab_days else "⬜"
-                lab_row.append(InlineKeyboardButton(f"{mark} {d}g", callback_data=f"set|toggle_lab_day|{d}"))
+            exam_row = [InlineKeyboardButton(
+                f"{'✅' if d in exam_days else '⬜'} {d}g",
+                callback_data=f"set|toggle_exam_day|{d}") for d in [1, 2, 3, 5, 7]]
+            lab_row = [InlineKeyboardButton(
+                f"{'✅' if d in lab_days else '⬜'} {d}g",
+                callback_data=f"set|toggle_lab_day|{d}") for d in [1, 2, 3]]
             kb = [
                 exam_row,
                 lab_row,
-                [InlineKeyboardButton("◀️ Geri", callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ رجوع", callback_data="nav|mgmt_panel")],
             ]
             await query.edit_message_text(
                 f"⏰ إعدادات التذكيرات\n\n"
@@ -6049,32 +6100,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f"اضغط على الأرقام لتفعيل/إلغاء كل تذكير",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
-
-        if action == "toggle_exam_day":
-            d = int(cb.split("|")[2])
-            s = load_settings()
-            days = s.get("exam_remind_days", [1])
-            if isinstance(days, int): days = [days]
-            if d in days:
-                days.remove(d)
-                if not days: days = [1]  # En az 1 gün kalmalı
-            else:
-                days.append(d)
-            s["exam_remind_days"] = sorted(days); save_settings(s)
-            query.data = "set|remind_cfg"; return await callback(update, context)
-
-        if action == "toggle_lab_day":
-            d = int(cb.split("|")[2])
-            s = load_settings()
-            days = s.get("lab_remind_days", [1])
-            if isinstance(days, int): days = [days]
-            if d in days:
-                days.remove(d)
-                if not days: days = [1]
-            else:
-                days.append(d)
-            s["lab_remind_days"] = sorted(days); save_settings(s)
-            query.data = "set|remind_cfg"; return await callback(update, context)
 
         if action == "anon_group":
             s = load_settings()
