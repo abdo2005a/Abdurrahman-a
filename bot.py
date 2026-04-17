@@ -3159,7 +3159,6 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
             [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export")],
             [InlineKeyboardButton("⏰ Bildirim Ayarları",    callback_data="set|remind_cfg")],
-            [InlineKeyboardButton("✉️ Anonim Mesaj Grubu",   callback_data="set|anon_group")],
             [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
              InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
             [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
@@ -3174,11 +3173,10 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all")],
             [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
              InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
-            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
-],
+            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add")],
             [InlineKeyboardButton("📝 Quiz Oluştur",     callback_data="admin|quiz_create"),
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
-            [InlineKeyboardButton("◀️ Geri",              callback_data="nav|root")],
+            [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
         sent = await update.message.reply_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
         context.user_data["last_inline_msg"] = sent.message_id
@@ -4674,7 +4672,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
                     [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export")],
                     [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
-                    [InlineKeyboardButton("✉️ Anonim Mesaj Grubu",callback_data="set|anon_group")],
                     [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
                      InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
                     [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
@@ -4695,6 +4692,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 ]
                 await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
+
+        elif action == "cur":
+            # İptal → bulunduğun klasöre dön (nav|root yerine)
+            pass  # path değişmez, aşağıda show_folder çağrılır
 
         elif action == "root":
             # Ana sayfaya dönünce tüm klasör mesajlarını temizle
@@ -4769,14 +4770,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         kb = []
         for uid_, u in users_d.items():
             if int(uid_) == ADMIN_ID: continue
-            if is_admin(uid_): continue  # Diğer adminleri gösterme
             if adm_cls and get_user_class(uid_) != adm_cls: continue
             if adm_grp and not grps_d.get(uid_,"").startswith(adm_grp): continue
-            name  = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
-            un    = f" @{u['username']}" if u.get("username") else ""
-            grp_s = grps_d.get(uid_,"?")
-            sft_s = "☀️" if shfts.get(uid_,"") in ("sabahi","sabah") else ("🌙" if shfts.get(uid_,"") in ("masaiy","gece") else "")
-            kb.append([InlineKeyboardButton(f"👤 {name}{un} {sft_s}[{grp_s}]", callback_data=f"user|info|{uid_}")])
+            name   = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+            un     = f" @{u['username']}" if u.get("username") else ""
+            grp_s  = grps_d.get(uid_,"?")
+            sft_s  = "☀️" if shfts.get(uid_,"") in ("sabahi","sabah") else ("🌙" if shfts.get(uid_,"") in ("masaiy","gece") else "")
+            adm_mk = "👑 " if is_admin(uid_) else ""
+            kb.append([InlineKeyboardButton(f"{adm_mk}👤 {name}{un} {sft_s}[{grp_s}]", callback_data=f"user|info|{uid_}")])
         if not kb:
             await query.answer("لا يوجد طلاب في فئتك", show_alert=True)
             return ConversationHandler.END
@@ -4988,7 +4989,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             result = []
             for uid_, u in u_d.items():
                 if int(uid_) == ADMIN_ID: continue
-                if is_admin(uid_): continue  # Admin profilleri gizle
                 if cls_f not in ("all","search"):
                     if get_user_class(uid_) != cls_f: continue
                 if sft_f not in ("_","all"):
@@ -5005,13 +5005,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
             kb = []
             for uid_, u in result[:40]:
-                name  = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
-                un    = f" @{u['username']}" if u.get("username") else ""
-                grp_s = grps_d.get(uid_,"?")
-                sft_s = "☀️" if shfts.get(uid_,"") in ("sabahi","sabah") else ("🌙" if shfts.get(uid_,"") in ("masaiy","gece") else "")
-                cls_s = get_user_class(uid_) or "?"
+                name   = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+                un     = f" @{u['username']}" if u.get("username") else ""
+                grp_s  = grps_d.get(uid_,"?")
+                sft_s  = "☀️" if shfts.get(uid_,"") in ("sabahi","sabah") else ("🌙" if shfts.get(uid_,"") in ("masaiy","gece") else "")
+                cls_s  = get_user_class(uid_) or "?"
+                adm_mk = "👑 " if is_admin(uid_) else ""
                 kb.append([InlineKeyboardButton(
-                    f"👤 {name}{un} {sft_s}[{cls_s}/{grp_s}]",
+                    f"{adm_mk}👤 {name}{un} {sft_s}[{cls_s}/{grp_s}]",
                     callback_data=f"user|info|{uid_}")])
             back_cb = f"mgmt|ulist|{cls_f}|{sft_f}|_" if grp_f not in ("_","all") else f"mgmt|ulist|{cls_f}|_|_" if sft_f != "_" else "mgmt|users"
             kb.append([InlineKeyboardButton("◀️ Geri", callback_data=back_cb)])
@@ -5082,6 +5083,23 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if target in admins:
             admins.remove(target); save_admins(admins)
             log_admin_action(uid, "REMOVE_ADMIN", f"ID:{target} cikartildi")
+            # Reset class so they go through class selection again
+            classes = load_classes()
+            classes.pop(str(target), None)
+            save_classes(classes)
+            # Notify removed admin + show class selection
+            cls_kb = [
+                [InlineKeyboardButton(CLASS_DEFS["1"]["ar"], callback_data="class_pick|1"),
+                 InlineKeyboardButton(CLASS_DEFS["2"]["ar"], callback_data="class_pick|2")],
+                [InlineKeyboardButton(CLASS_DEFS["3"]["ar"], callback_data="class_pick|3"),
+                 InlineKeyboardButton(CLASS_DEFS["4"]["ar"], callback_data="class_pick|4")],
+            ]
+            try:
+                await context.bot.send_message(
+                    target,
+                    "تم إلغاء صلاحياتك كمسؤول.\n\nالرجاء اختيار سنتك الدراسية:",
+                    reply_markup=InlineKeyboardMarkup(cls_kb))
+            except: pass
         await query.answer(TR["admin_removed"].format(target), show_alert=True)
         if admins:
             kb = [[InlineKeyboardButton(f"🚫 {a}", callback_data=f"rem_admin|{a}")] for a in admins]
@@ -5089,7 +5107,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text(TR["del_admin_lbl"], reply_markup=InlineKeyboardMarkup(kb))
         else:
             await query.edit_message_text(TR["no_admins"],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
     if cb.startswith("dm_pick|") and is_main_admin(uid):
@@ -5795,7 +5813,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.edit_message_text(
                     L(uid, "countdown_prompt"),
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|root")
+                        InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|cur")
                     ]]))
                 return WAIT_FOLDER
             else:
@@ -5816,7 +5834,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
             await query.edit_message_text(
                 hint,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")]]))
             return WAIT_FOLDER
 
         if action == "add_file":
@@ -5831,7 +5849,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             else:
                 prompt = L(uid,"add_file_prompt_empty")
             await query.edit_message_text(prompt,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")]]))
             return WAIT_FILE
 
         # Sil/Düzenle — yetki kontrolü (süper admin her şeye, alt admin izinlerine göre)
@@ -5854,7 +5872,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Klasörü Sil", callback_data="do|bulk_del_folder"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             await query.edit_message_text(
                 f"🗑 {'Silmek istediğin klasörleri seç:' if is_main_admin(uid) else 'اختر المجلدات للحذف:'}\n",
@@ -5874,7 +5892,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Dosyayı Sil", callback_data="do|bulk_del_file"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             await query.edit_message_text(
                 f"🗑 {'Silmek istediğin dosyaları seç:' if is_main_admin(uid) else 'اختر الملفات للحذف:'}\n",
@@ -5886,7 +5904,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if not folds:
                 await query.answer(L(uid,"no_folders"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"✏️ {f}", callback_data=f"do|pick_folder|{f}")] for f in folds]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")])
             await query.edit_message_text(L(uid,"rename_folder_select"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -5896,7 +5914,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"✏️ {f.get('caption','?')}", callback_data=f"do|pick_file|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")])
             await query.edit_message_text(L(uid,"rename_file_select"), reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
 
@@ -5928,7 +5946,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Klasörü Sil", callback_data="do|bulk_del_folder"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             try:
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
@@ -5950,7 +5968,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Dosyayı Sil", callback_data="do|bulk_del_file"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             try:
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
