@@ -2187,8 +2187,8 @@ def load_settings():
         "bot_name":          "بوت مهندسي المستقبل",
         "welcome_msg":       DEFAULT_WELCOME_AR,
         "bot_photo_id":      None,
-        "exam_remind_days":  1,   # Sınavdan kaç gün önce bildirim
-        "lab_remind_days":   1,   # Lab'dan kaç gün önce bildirim
+        "exam_remind_days":  [1],  # Sınavdan kaç gün önce bildirim (liste)
+        "lab_remind_days":   [1],  # Lab'dan kaç gün önce bildirim (liste)
         "anon_group_id":     None, # Anonim mesaj gönderilecek grup ID
         "lab_remind_hour":   20,  # Laboratuvar bildiriminin saati (20:00)
         "user_buttons": {
@@ -6052,50 +6052,59 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         if action == "remind_cfg":
             s = load_settings()
-            days = s.get("exam_remind_days", 1)
-            lab_days = s.get("lab_remind_days", 1)
+            exam_days = s.get("exam_remind_days", [1])
+            if isinstance(exam_days, int): exam_days = [exam_days]
+            lab_days  = s.get("lab_remind_days",  [1])
+            if isinstance(lab_days, int):  lab_days  = [lab_days]
+            exam_lbl = ", ".join(f"{d}g" for d in sorted(exam_days))
+            lab_lbl  = ", ".join(f"{d}g" for d in sorted(lab_days))
+            # Exam toggle buttons
+            exam_row = []
+            for d in [1, 2, 3, 5, 7]:
+                mark = "✅" if d in exam_days else "⬜"
+                exam_row.append(InlineKeyboardButton(f"{mark} {d}g", callback_data=f"set|toggle_exam_day|{d}"))
+            # Lab toggle buttons
+            lab_row = []
+            for d in [1, 2, 3]:
+                mark = "✅" if d in lab_days else "⬜"
+                lab_row.append(InlineKeyboardButton(f"{mark} {d}g", callback_data=f"set|toggle_lab_day|{d}"))
             kb = [
-                [InlineKeyboardButton(f"📚 Sinav: {days} gun once", callback_data="set|remind_exam_days")],
-                [InlineKeyboardButton(f"🔬 Lab: {lab_days} gun once",  callback_data="set|remind_lab_days")],
+                exam_row,
+                lab_row,
                 [InlineKeyboardButton("◀️ Geri", callback_data="nav|root")],
             ]
             await query.edit_message_text(
-                f"Bildirim Ayarlari\nSinav: {days} gun once\nLab: {lab_days} gun once",
+                f"⏰ إعدادات التذكيرات\n\n"
+                f"📚 الامتحانات — التذكير قبل: {exam_lbl}\n"
+                f"🔬 المختبر — التذكير قبل: {lab_lbl}\n\n"
+                f"اضغط على الأرقام لتفعيل/إلغاء كل تذكير",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
-        if action == "remind_exam_days":
-            kb = [[
-                InlineKeyboardButton("1", callback_data="set|set_exam_days|1"),
-                InlineKeyboardButton("2", callback_data="set|set_exam_days|2"),
-                InlineKeyboardButton("3", callback_data="set|set_exam_days|3"),
-                InlineKeyboardButton("5", callback_data="set|set_exam_days|5"),
-                InlineKeyboardButton("7", callback_data="set|set_exam_days|7"),
-            ]]
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="set|remind_cfg")])
-            await query.edit_message_text("Kac gun once bildirim?", reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
-
-        if action == "set_exam_days":
-            days = int(cb.split("|")[2])
-            s = load_settings(); s["exam_remind_days"] = days; save_settings(s)
-            await query.answer(f"✅ {days} gun", show_alert=True)
+        if action == "toggle_exam_day":
+            d = int(cb.split("|")[2])
+            s = load_settings()
+            days = s.get("exam_remind_days", [1])
+            if isinstance(days, int): days = [days]
+            if d in days:
+                days.remove(d)
+                if not days: days = [1]  # En az 1 gün kalmalı
+            else:
+                days.append(d)
+            s["exam_remind_days"] = sorted(days); save_settings(s)
             query.data = "set|remind_cfg"; return await callback(update, context)
 
-        if action == "remind_lab_days":
-            kb = [[
-                InlineKeyboardButton("1", callback_data="set|set_lab_days|1"),
-                InlineKeyboardButton("2", callback_data="set|set_lab_days|2"),
-                InlineKeyboardButton("3", callback_data="set|set_lab_days|3"),
-            ]]
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="set|remind_cfg")])
-            await query.edit_message_text("🔬 Lab bildirimi kac gun once?", reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
-
-        if action == "set_lab_days":
-            days = int(cb.split("|")[2])
-            s = load_settings(); s["lab_remind_days"] = days; save_settings(s)
-            await query.answer(f"✅ {days} gun", show_alert=True)
+        if action == "toggle_lab_day":
+            d = int(cb.split("|")[2])
+            s = load_settings()
+            days = s.get("lab_remind_days", [1])
+            if isinstance(days, int): days = [days]
+            if d in days:
+                days.remove(d)
+                if not days: days = [1]
+            else:
+                days.append(d)
+            s["lab_remind_days"] = sorted(days); save_settings(s)
             query.data = "set|remind_cfg"; return await callback(update, context)
 
         if action == "anon_group":
@@ -8397,15 +8406,24 @@ def main():
                     logger.warning(f"Hatırlatıcı gönderilemedi: {e}")
 
     async def _check_exam_reminders(ctx):
-        """Sınavdan N gün önce kullanıcılara bildirim gönder."""
+        """Sınavdan N gün önce kullanıcılara bildirim gönder (çoklu gün destekli)."""
         from datetime import datetime as _dt, timedelta
         s = load_settings()
-        remind_days = int(s.get("exam_remind_days", 1))
-        target_date = (_dt.now() + timedelta(days=remind_days)).strftime("%d/%m/%Y")
+        remind_days_cfg = s.get("exam_remind_days", [1])
+        if isinstance(remind_days_cfg, int): remind_days_cfg = [remind_days_cfg]
         cds = load_countdowns()
         changed = False
         for cd in cds:
-            if cd.get("date","") == target_date and not cd.get("notified"):
+            notified_days = cd.get("notified_days", [])
+            # Eski tek-flag sistemini geçişe uğrat
+            if cd.get("notified") and not notified_days:
+                notified_days = [1]
+            for remind_days in remind_days_cfg:
+                if remind_days in notified_days:
+                    continue
+                target_date = (_dt.now() + timedelta(days=remind_days)).strftime("%d/%m/%Y")
+                if cd.get("date","") != target_date:
+                    continue
                 name_cd = cd.get("name","Sinav")
                 cls_cd  = cd.get("cls","")
                 shft_cd = cd.get("shift","")
@@ -8419,46 +8437,58 @@ def main():
                 for uid_ in targets:
                     try: await ctx.bot.send_message(int(uid_), msg)
                     except: pass
-                # Süper admin'e de bildir
                 try:
                     await ctx.bot.send_message(ADMIN_ID,
                         f"📋 Sinav bildirimi gönderildi\nSinav: {name_cd}\nTarih: {target_date}\nKisi: {len(targets)}")
                 except: pass
+                notified_days.append(remind_days)
+                cd["notified_days"] = notified_days
                 cd["notified"] = True
                 changed = True
         if changed: save_countdowns(cds)
 
     async def _check_lab_reminders(ctx):
-        """Laboratuvar gününden N gün önce grubu bildir."""
+        """Laboratuvar gününden N gün önce grubu bildir (çoklu gün destekli)."""
         from datetime import datetime as _dt, timedelta, date as _date
         s_r = load_settings()
-        lab_days = int(s_r.get("lab_remind_days", 1))
-        tomorrow = (_dt.now() + timedelta(days=lab_days)).strftime("%Y-%m-%d")
+        lab_days_cfg = s_r.get("lab_remind_days", [1])
+        if isinstance(lab_days_cfg, int): lab_days_cfg = [lab_days_cfg]
         schedule = load_lab_schedule()
+        changed = False
         for entry in schedule:
-            if entry.get("week") == tomorrow and not entry.get("notified"):
-                grp    = entry.get("group","?")
-                note   = entry.get("note","")
+            notified_days = entry.get("notified_days", [])
+            if entry.get("notified") and not notified_days:
+                notified_days = [1]
+            for lab_days in lab_days_cfg:
+                if lab_days in notified_days:
+                    continue
+                target_week = (_dt.now() + timedelta(days=lab_days)).strftime("%Y-%m-%d")
+                if entry.get("week") != target_week:
+                    continue
+                grp  = entry.get("group","?")
+                note = entry.get("note","")
+                day_lbl = "غداً" if lab_days == 1 else f"بعد {lab_days} أيام"
                 msg = (f"🔬 تذكير المختبر\n\n"
-                       f"📅 غداً يدخل: {grp}\n"
+                       f"📅 {day_lbl} يدخل: {grp}\n"
                        + (f"📝 {note}" if note else ""))
-                # Bu gruba ait kullanıcılara gönder
-                grps_d = load_groups()
+                grps_d  = load_groups()
                 users_d = load_users()
                 for uid_, u in users_d.items():
                     if is_blocked(uid_): continue
                     if grps_d.get(uid_,"") == grp:
                         try: await ctx.bot.send_message(int(uid_), msg)
                         except: pass
-                # Süper admin + adminlere bildir
-                try: await ctx.bot.send_message(ADMIN_ID, f"🔬 Lab yarın: {grp}\n{msg}")
+                try: await ctx.bot.send_message(ADMIN_ID, f"🔬 Lab {day_lbl}: {grp}")
                 except: pass
                 admins_list = load_admins()
                 for adm in admins_list:
-                    try: await ctx.bot.send_message(adm, f"🔬 Lab yarın: {grp}")
+                    try: await ctx.bot.send_message(adm, f"🔬 Lab {day_lbl}: {grp}")
                     except: pass
+                notified_days.append(lab_days)
+                entry["notified_days"] = notified_days
                 entry["notified"] = True
-        save_lab_schedule(schedule)
+                changed = True
+        if changed: save_lab_schedule(schedule)
 
     job_queue = app.job_queue
     if job_queue:
