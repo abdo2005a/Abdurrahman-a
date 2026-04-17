@@ -2030,6 +2030,45 @@ def log_admin_action(admin_uid: str, action: str, detail: str = ""):
     })
     save_admin_log(log[-500:])
 
+def load_admin_activity():
+    return load_json(ADMIN_ACTIVITY_FILE, {})
+
+def save_admin_activity(d):
+    save_json(ADMIN_ACTIVITY_FILE, d)
+
+def log_admin_activity(admin_uid: str, action_type: str, detail: dict):
+    """Detailed admin activity log. detail contains action-specific fields."""
+    data = load_admin_activity()
+    uid_str = str(admin_uid)
+    if uid_str not in data:
+        data[uid_str] = []
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Baghdad")
+    except Exception:
+        import pytz
+        tz = pytz.timezone("Asia/Baghdad")
+    entry = {
+        "time": datetime.now(tz).strftime("%Y-%m-%d %H:%M"),
+        "type": action_type,
+        **detail
+    }
+    data[uid_str].append(entry)
+    # Keep last 200 per admin
+    if len(data[uid_str]) > 200:
+        data[uid_str] = data[uid_str][-200:]
+    save_admin_activity(data)
+
+def get_sender_label(sender_uid: str) -> str:
+    """Returns display label for poll/broadcast sender."""
+    if str(sender_uid) == str(ADMIN_ID):
+        return "مشرف البوت"  # Bot supervisor
+    users_d = load_users()
+    u = users_d.get(str(sender_uid), {})
+    name = u.get("full_name") or u.get("first_name") or f"ID:{sender_uid}"
+    un = f" @{u['username']}" if u.get("username") else ""
+    return f"مسؤول الفصل: {name}{un}"
+
 # ── Uyarı Sistemi ─────────────────────────────────────────────
 def get_warns(uid: str) -> list:
     return load_warns().get(str(uid), [])
@@ -3206,7 +3245,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
              InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
             [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
-            [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export")],
+            [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+             InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
             [InlineKeyboardButton("⏰ Bildirim Ayarları",    callback_data="set|remind_cfg")],
             [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
              InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
@@ -3793,6 +3833,65 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
+    # ── Admin Aktivite Logu (admin) ───────────────────
+    if cb.startswith("admin_activity|") and is_main_admin(uid):
+        act_parts = cb.split("|")
+        aa_act = act_parts[1]
+
+        if aa_act == "panel":
+            # Show list of secondary admins to view their activity
+            admins = load_admins()
+            users_d = load_users()
+            kb = []
+            for adm_id in admins:
+                u = users_d.get(str(adm_id), {})
+                name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
+                data = load_admin_activity()
+                cnt = len(data.get(str(adm_id), []))
+                kb.append([InlineKeyboardButton(f"👮 {name[:20]} ({cnt} işlem)", callback_data=f"admin_activity|show|{adm_id}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text("📋 Admin Aktivite Logları:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if aa_act == "show":
+            adm_id = act_parts[2]
+            data = load_admin_activity()
+            entries = data.get(str(adm_id), [])
+            users_d = load_users()
+            u = users_d.get(str(adm_id), {})
+            name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
+            lines = [f"👮 {name} — Son 30 İşlem\n"]
+            for e in reversed(entries[-30:]):
+                t = e.get("time","")
+                etype = e.get("type","?")
+                if etype == "POLL_CREATED":
+                    q = e.get("question","?")[:40]
+                    opts = e.get("options",[])
+                    correct = e.get("correct")
+                    lines.append(f"\n📊 Anket | {t}\n  ❓ {q}\n  🗂 {len(opts)} seçenek")
+                    if correct is not None and 0 <= correct < len(opts):
+                        lines.append(f"  ✅ Doğru: {opts[correct]}")
+                elif etype == "BROADCAST":
+                    txt = e.get("text","")[:50]
+                    target = e.get("target","all")
+                    sent = e.get("sent",0)
+                    lines.append(f"\n📢 Duyuru | {t}\n  👥 {sent} kişi | Hedef: {target}\n  📝 {txt}")
+                elif etype == "DM_SENT":
+                    txt = e.get("text","")[:50]
+                    target_uid = e.get("target_uid","?")
+                    tu = users_d.get(str(target_uid),{})
+                    tname = tu.get("full_name") or tu.get("first_name") or f"ID:{target_uid}"
+                    lines.append(f"\n💬 Mesaj | {t}\n  👤 → {tname}\n  📝 {txt}")
+                else:
+                    lines.append(f"\n⚙️ {etype} | {t}")
+            if not entries:
+                lines.append("Henüz aktivite yok.")
+            kb = [[InlineKeyboardButton("◀️ Geri", callback_data="admin_activity|panel")]]
+            try:
+                await query.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            except Exception:
+                await query.message.reply_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
 
     # ── Admin Yetki Yönetimi ──────────────────────────
     if cb.startswith("adminperm|") and is_main_admin(uid):
@@ -4756,7 +4855,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                      InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
                     [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
-                    [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export")],
+                    [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+                     InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
                     [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
                     [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
                      InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
@@ -7175,6 +7275,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 base_uids = get_target_users(poll_target)
             target_uids = include_admins_in_targets(base_uids)
 
+            sender_lbl = get_sender_label(uid)
             for uid_ in target_uids:
                 if int(uid_) == ADMIN_ID: continue
                 try:
@@ -7185,7 +7286,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                             callback_data=f"open_ans|{poll_id}")]]
                         await context.bot.send_message(
                             int(uid_),
-                            f"✍️ سؤال مفتوح!\n\n❓ {q}",
+                            f"✍️ سؤال مفتوح!\n\n❓ {q}\n\n📤 {sender_lbl}",
                             reply_markup=InlineKeyboardMarkup(kb_u))
                     else:
                         opts   = poll["options"]
@@ -7193,7 +7294,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                                    for i, o in enumerate(opts)]
                         await context.bot.send_message(
                             int(uid_),
-                            f"📊 استطلاع جديد!\n\n❓ {q}",
+                            f"📊 {q}\n\n📤 {sender_lbl}",
                             reply_markup=InlineKeyboardMarkup(poll_kb))
                     success += 1
                 except: fail += 1
@@ -7502,7 +7603,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         else:
             targets = [u for u in load_users() if int(u) != ADMIN_ID]
         targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
-        btext = f"📢 إعلان\n\n{text}\n\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        _sadmin_sender_lbl = get_sender_label(uid)
+        btext = f"📢 إعلان\n\n{text}\n\n👤 {_sadmin_sender_lbl}\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
         success = 0
         for uid_ in targets:
             try: await context.bot.send_message(int(uid_), btext); success += 1
@@ -7516,6 +7618,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 f"📢 إعلان من مسؤول\n👤 {aname} ({uid})\n🎯 {lbl}\n📊 أُرسل إلى {success} مستخدم\n\n{text[:200]}")
         except: pass
         log_admin_action(uid, "BROADCAST", f"sadmin:{uid} tgt:{sb_target} n:{success}")
+        log_admin_activity(uid, "BROADCAST", {
+            "text": text[:200],
+            "target": context.user_data.get("sb_target", sb_target) or "all",
+            "sent": success
+        })
         await update.message.reply_text(f"✅ تم الإرسال إلى {success} مستخدم")
         return ConversationHandler.END
 
@@ -8060,6 +8167,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 "target": context.user_data.get("poll_target","all")
             }
             save_polls(polls)
+            log_admin_activity(uid, "POLL_CREATED", {
+                "poll_id": poll_id,
+                "question": q,
+                "type": "open",
+                "options": [],
+                "correct": None,
+                "target": context.user_data.get("poll_target", "all")
+            })
             kb = [
                 [InlineKeyboardButton(TR["poll_send_btn"],   callback_data=f"poll|send|{poll_id}")],
                 [InlineKeyboardButton(TR["poll_cancel_btn"], callback_data="close")],
@@ -8098,6 +8213,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         polls = load_polls()
         polls[poll_id] = {"question": q, "type": "choice", "options": opts, "votes": {}, "active": False, "target": context.user_data.get("poll_target","all")}
         save_polls(polls)
+        log_admin_activity(uid, "POLL_CREATED", {
+            "poll_id": poll_id,
+            "question": q,
+            "type": "choice",
+            "options": opts,
+            "correct": None,
+            "target": context.user_data.get("poll_target", "all")
+        })
         opts_text = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(opts))
         kb = [
             [InlineKeyboardButton(TR["poll_send_btn"],   callback_data=f"poll|send|{poll_id}")],
@@ -8130,6 +8253,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             "target": context.user_data.get("poll_target", "all")
         }
         save_polls(polls)
+        log_admin_activity(uid, "POLL_CREATED", {
+            "poll_id": poll_id,
+            "question": q,
+            "type": "quiz",
+            "options": opts,
+            "correct": correct_idx,
+            "target": context.user_data.get("poll_target", "all")
+        })
         opts_text = "\n".join(
             f"  {i+1}. {'✅ ' if i == correct_idx else ''}{o}"
             for i, o in enumerate(opts))
@@ -8228,6 +8359,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             await update.message.reply_text(TR["dm_sent"].format(target))
         except Exception as e:
             await update.message.reply_text(TR["dm_fail"].format(e))
+        log_admin_activity(uid, "DM_SENT", {
+            "target_uid": context.user_data.get("dm_target", "?"),
+            "text": text[:200]
+        })
         context.user_data.pop("action",None); context.user_data.pop("dm_target",None)
         return ConversationHandler.END
 
@@ -8235,6 +8370,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         users = load_users(); success = fail = 0
         all_targets = include_admins_in_targets(
             [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)])
+        sender_lbl = get_sender_label(uid)
         for uid_ in all_targets:
             if int(uid_) == ADMIN_ID: continue
             try:
@@ -8244,6 +8380,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                     f"╠══════════════════════╣\n\n"
                     f"{text}\n\n"
                     f"╚══════════════════════╝\n"
+                    f"  👤  {sender_lbl}\n"
                     f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
                 )
                 await context.bot.send_message(int(uid_), bcast_msg); success += 1
@@ -8259,17 +8396,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         })
         save_bcast_log(bcast_log)
         log_admin_action(uid, "BROADCAST_ALL", f"{success} gönderildi")
+        log_admin_activity(uid, "BROADCAST", {
+            "text": text[:200],
+            "target": "all",
+            "sent": success
+        })
         context.user_data.pop("action",None); return ConversationHandler.END
 
     if action == "msgsel_send" and is_main_admin(uid):
         sel = context.user_data.pop("msgsel_targets", [])
         success = fail = 0
+        _msgsel_sender_lbl = get_sender_label(uid)
         bcast_msg = (
             f"╔══════════════════════╗\n"
             f"  📨  رسالة مخصصة\n"
             f"╠══════════════════════╣\n\n"
             f"{text}\n\n"
             f"╚══════════════════════╝\n"
+            f"  👤  {_msgsel_sender_lbl}\n"
             f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
         )
         for uid_ in sel:
