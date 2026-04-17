@@ -245,6 +245,10 @@ TR = {
     "poll_type_select":   "📊 Anket türünü seç:",
     "poll_type_choice":   "🔘 Çoktan Seçmeli\n(Kullanıcılar şıklar arasından seçer)",
     "poll_type_open":     "✍️ Açık Uçlu\n(Kullanıcılar yazılı cevap verir)",
+    "poll_type_quiz":     "🎯 Quiz (Doğru Cevaplı)\n(Bir şık doğru, geri kalanlar yanlış)",
+    "poll_correct_prompt":"✅ Doğru cevap kaçıncı şık? (1-{n} arası sayı yaz)",
+    "quiz_correct_toast": "✅ Doğru cevap! Tebrikler!",
+    "quiz_wrong_toast":   "❌ Yanlış! Doğru cevap: {ans}",
     "poll_results":       "📈 Sonuçlar",
     "poll_delete":        "🗑 Anketi Sil",
     "poll_panel":         "📊 Anket Yönetimi",
@@ -649,6 +653,10 @@ AR = {
     "poll_type_select":   "📊 اختر نوع الاستطلاع:",
     "poll_type_choice":   "🔘 اختيار من متعدد\n(المستخدمون يختارون من الخيارات)",
     "poll_type_open":     "✍️ سؤال مفتوح\n(المستخدمون يكتبون إجابتهم)",
+    "poll_type_quiz":     "🎯 كويز (بجواب صحيح)\n(خيار واحد صحيح والباقي خاطئ)",
+    "poll_correct_prompt":"✅ ما رقم الخيار الصحيح؟ (اكتب رقماً من 1 إلى {n})",
+    "quiz_correct_toast": "✅ إجابة صحيحة! أحسنت!",
+    "quiz_wrong_toast":   "❌ إجابة خاطئة! الإجابة الصحيحة: {ans}",
     "poll_results":       "📈 النتائج",
     "poll_delete":        "🗑 حذف الاستطلاع",
     "poll_panel":         "📊 إدارة الاستطلاعات",
@@ -1640,6 +1648,14 @@ def target_label(target_val: str) -> str:
     if t["subgrp"]: parts.append(t["subgrp"])
     return " / ".join(parts) if parts else "الجميع"
 
+def include_admins_in_targets(target_uids: list) -> list:
+    """Secondary admins are always included in broadcast/poll targets."""
+    target_set = set(str(u) for u in target_uids)
+    for adm_id in load_admins():
+        if not is_blocked(str(adm_id)):
+            target_set.add(str(adm_id))
+    return list(target_set)
+
 def get_user_group(uid: str) -> str:
     """A1/A2/A3/B1/B2/B3/C1/C2/C3 formatında grup döndür."""
     return load_groups().get(str(uid), "")
@@ -2175,11 +2191,17 @@ def build_poll_results_text(poll, uid, show_voters=False):
         "",
     ]
 
-    for o in opts:
-        lines.append(f"\n🔹 {o}")
+    poll_type   = poll.get("type", "choice")
+    correct_idx = poll.get("correct", -1)
+    if poll_type == "quiz" and 0 <= correct_idx < len(opts):
+        lines.append(f"✅ {'الإجابة الصحيحة' if not is_main_admin(uid) else 'Doğru Cevap'}: {opts[correct_idx]}\n")
+
+    for i, o in enumerate(opts):
+        prefix = "✅ " if (poll_type == "quiz" and i == correct_idx) else "🔹 "
+        lines.append(f"\n{prefix}{o}")
         lines.append(f"   {poll_bar(counts[o], total)}")
         if show_voters and voters[o]:
-            for v in voters[o][:10]:  # max 10 isim göster
+            for v in voters[o][:10]:
                 lines.append(f"   ├ 👤 {v}")
             if len(voters[o]) > 10:
                 lines.append(f"   └ ... +{len(voters[o])-10} kişi daha")
@@ -2308,7 +2330,7 @@ async def download_file(context, file_id: str, filename: str) -> Optional[str]:
  WAIT_FAQ_Q, WAIT_FAQ_A,
  WAIT_RULE_KW, WAIT_RULE_RESP,
  WAIT_SCHEDULE_HOURS, WAIT_SCHEDULE_MSG,
- WAIT_TAG, WAIT_SECRET_ID) = range(27)
+ WAIT_TAG, WAIT_SECRET_ID, WAIT_POLL_CORRECT) = range(28)
 
 ALL_BTNS = {
     TR["btn_content"],   AR["btn_content"],
@@ -6702,6 +6724,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb = [
                     [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
                     [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                    [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
                     [InlineKeyboardButton("◀️ إلغاء",            callback_data="close")],
                 ]
                 lbl = target_label(context.user_data.get("poll_target",""))
@@ -6724,6 +6747,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb = [
                 [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
                 [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
                 [InlineKeyboardButton("◀️ إلغاء",            callback_data="close")],
             ]
             lbl = target_label(context.user_data.get("poll_target",""))
@@ -6740,6 +6764,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb = [
                     [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
                     [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                    [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
                     [InlineKeyboardButton(TR["cancel"],           callback_data="close")],
                 ]
                 await query.message.reply_text(
@@ -6758,6 +6783,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb = [
                 [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
                 [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
                 [InlineKeyboardButton(TR["cancel"],           callback_data="close")],
             ]
             await query.message.reply_text(TR["poll_type_select"], reply_markup=InlineKeyboardMarkup(kb))
@@ -6904,12 +6930,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             q         = poll["question"]
             poll_type = poll.get("type", "choice")
 
-            # Hedef kullanıcıları belirle
+            # Hedef kullanıcıları belirle (adminler her zaman dahil)
             poll_target = poll.get("target", "all")
             if not poll_target or poll_target == "all":
-                target_uids = [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)]
+                base_uids = [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)]
             else:
-                target_uids = get_target_users(poll_target)
+                base_uids = get_target_users(poll_target)
+            target_uids = include_admins_in_targets(base_uids)
 
             for uid_ in target_uids:
                 if int(uid_) == ADMIN_ID: continue
@@ -6976,9 +7003,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         # Oyu kaydet
         votes[uid] = poll["options"][opt_idx]
         save_polls(polls)
-        await query.answer(AR["poll_voted"], show_alert=True)
 
-        # Anket butonlarını güncel oy sayılarıyla güncelle
+        # Quiz: doğru/yanlış bildirimi
+        poll_type   = poll.get("type", "choice")
+        correct_idx = poll.get("correct", -1)
+        if poll_type == "quiz":
+            if opt_idx == correct_idx:
+                await query.answer(L(uid, "quiz_correct_toast"), show_alert=True)
+            else:
+                correct_ans = poll["options"][correct_idx] if 0 <= correct_idx < len(poll["options"]) else "?"
+                await query.answer(L(uid, "quiz_wrong_toast").format(ans=correct_ans), show_alert=True)
+        else:
+            await query.answer(AR["poll_voted"], show_alert=True)
+
+        # Butonları güncelle — quiz ise doğru cevabı ✅ ile işaretle
         opts   = poll["options"]
         total  = len(votes)
         counts = {o: 0 for o in opts}
@@ -6987,18 +7025,24 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         poll_kb = []
         for i, o in enumerate(opts):
-            pct   = int(counts[o] / total * 100) if total else 0
-            label = f"✅ {o}  {pct}%" if i == opt_idx else f"  {o}  {pct}%"
+            pct = int(counts[o] / total * 100) if total else 0
+            if poll_type == "quiz":
+                marker = "✅ " if i == correct_idx else ("☑️ " if i == opt_idx else "  ")
+            else:
+                marker = "✅ " if i == opt_idx else "  "
+            label = f"{marker}{o}  {pct}%"
             poll_kb.append([InlineKeyboardButton(label, callback_data=f"vote|{poll_id}|{i}")])
         try:
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(poll_kb))
         except: pass
 
-        # Yorum iste — isteğe bağlı
-        context.user_data["poll_comment_id"] = poll_id
-        context.user_data["action"] = "poll_comment"
-        await query.message.reply_text(L(uid, "poll_comment_prompt"))
-        return WAIT_POLL_COMMENT
+        # Yorum sadece normal anket için
+        if poll_type != "quiz":
+            context.user_data["poll_comment_id"] = poll_id
+            context.user_data["action"] = "poll_comment"
+            await query.message.reply_text(L(uid, "poll_comment_prompt"))
+            return WAIT_POLL_COMMENT
+        return ConversationHandler.END
 
     return ConversationHandler.END
 
@@ -7722,7 +7766,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     # ── Hedefli Broadcast (admin) ────────────────────
     if action == "broadcast_targeted" and is_main_admin(uid):
-        targets = context.user_data.pop("broadcast_targets", [])
+        targets = include_admins_in_targets(context.user_data.pop("bcast_targets", []))
         success = fail = 0
         for uid_ in targets:
             try:
@@ -7790,9 +7834,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         opts = [o.strip() for o in text.split("\n") if o.strip()][:6]
         if len(opts) < 2:
             await update.message.reply_text("❌ En az 2 seçenek girin!"); return WAIT_POLL_OPTIONS
+        poll_type = context.user_data.get("poll_type", "choice")
+        context.user_data["poll_opts_temp"] = opts
+        if poll_type == "quiz":
+            # Quiz: doğru cevabı sor
+            opts_text = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(opts))
+            context.user_data["action"] = "poll_correct_answer"
+            await update.message.reply_text(
+                f"📋 Seçenekler:\n{opts_text}\n\n" +
+                TR["poll_correct_prompt"].format(n=len(opts)))
+            return WAIT_POLL_CORRECT
+        # choice: direkt kaydet ve önizle
         q       = context.user_data.get("poll_question", "?")
         poll_id = make_poll_id()
-        # Anketi kaydet (henüz gönderilmedi)
         polls = load_polls()
         polls[poll_id] = {"question": q, "type": "choice", "options": opts, "votes": {}, "active": False, "target": context.user_data.get("poll_target","all")}
         save_polls(polls)
@@ -7806,6 +7860,41 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             reply_markup=InlineKeyboardMarkup(kb))
         context.user_data.pop("action", None)
         context.user_data.pop("poll_question", None)
+        context.user_data.pop("poll_opts_temp", None)
+        return ConversationHandler.END
+
+    # ── Quiz doğru cevap numarası ─────────────────────
+    if action == "poll_correct_answer" and is_admin(uid):
+        opts = context.user_data.get("poll_opts_temp", [])
+        try:
+            correct_idx = int(text.strip()) - 1
+            if not (0 <= correct_idx < len(opts)):
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(f"❌ Lütfen 1 ile {len(opts)} arasında bir sayı girin!")
+            return WAIT_POLL_CORRECT
+        q       = context.user_data.get("poll_question", "?")
+        poll_id = make_poll_id()
+        polls   = load_polls()
+        polls[poll_id] = {
+            "question": q, "type": "quiz", "options": opts,
+            "correct": correct_idx, "votes": {}, "active": False,
+            "target": context.user_data.get("poll_target", "all")
+        }
+        save_polls(polls)
+        opts_text = "\n".join(
+            f"  {i+1}. {'✅ ' if i == correct_idx else ''}{o}"
+            for i, o in enumerate(opts))
+        kb = [
+            [InlineKeyboardButton(TR["poll_send_btn"],   callback_data=f"poll|send|{poll_id}")],
+            [InlineKeyboardButton(TR["poll_cancel_btn"], callback_data="close")],
+        ]
+        await update.message.reply_text(
+            f"🎯 Quiz Önizleme:\n\n❓ {q}\n\n{opts_text}\n\n✅ Doğru: {opts[correct_idx]}\n\nGönderilsin mi?",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data.pop("action", None)
+        context.user_data.pop("poll_question", None)
+        context.user_data.pop("poll_opts_temp", None)
         return ConversationHandler.END
 
     # ── Admin değilse: AI motorunu çalıştır ─────────────────
@@ -7896,8 +7985,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     if action == "broadcast" and is_main_admin(uid):
         users = load_users(); success = fail = 0
-        for uid_,u in users.items():
-            if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
+        all_targets = include_admins_in_targets(
+            [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)])
+        for uid_ in all_targets:
+            if int(uid_) == ADMIN_ID: continue
             try:
                 bcast_msg = (
                     f"╔══════════════════════╗\n"
@@ -8371,6 +8462,7 @@ def main():
             WAIT_SCHEDULE_MSG:  [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
             WAIT_TAG:           [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
             WAIT_SECRET_ID:     [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
+            WAIT_POLL_CORRECT:  [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
         },
         fallbacks=[
             CommandHandler("start", start),
