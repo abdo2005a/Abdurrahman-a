@@ -538,6 +538,7 @@ TR = {
     "btn_reminder":       "⏰ Hatırlatıcım",
     "anon_q_btn":         "❓ Anonim Soru",
     "countdown_btn":      "⏳ Yaklaşan Sınavlar",
+    "rules_btn":          "📜 Kurallar",
     "quiz_btn":           "📝 Mini Test",
     "notes_empty":        "Henüz not yok.",
     "notes_saved":        "✅ Not kaydedildi.",
@@ -918,6 +919,7 @@ AR = {
     "btn_reminder":       "⏰ تذكيراتي",
     "anon_q_btn":         "❓ سؤال مجهول",
     "countdown_btn":      "⏳ الامتحانات القادمة",
+    "rules_btn":          "📜 القواعد",
     "quiz_btn":           "📝 اختبار قصير",
     "notes_empty":        "لا توجد ملاحظات بعد.",
     "notes_saved":        "✅ تم حفظ الملاحظة.",
@@ -1201,21 +1203,47 @@ LAB_FILE = os.path.join(BASE_DIR, "lab_schedule.json")
 CLASS_GROUPS_FILE = os.path.join(BASE_DIR, "class_groups.json")
 
 def load_class_groups() -> dict:
-    """Sınıf grup yapılandırması. {cls: {grp: [sub1, sub2, ...]}}"""
+    """Sınıf grup yapılandırması.
+    Yeni format: {cls: {shift: {grp: [sub1, sub2, ...]}}}
+    Eski format (geriye uyum): {cls: {grp: [sub1, sub2, ...]}} → shift="all" kabul edilir"""
     default = {
-        "1": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
-        "2": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
-        "3": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
-        "4": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+        "1": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+        "2": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+        "3": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+        "4": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
     }
     d = load_json(CLASS_GROUPS_FILE, {})
-    return d if d else default
+    if not d:
+        return default
+    # Geriye uyum: eski format tespiti (value'su dict-of-list)
+    for cls_id, cls_val in d.items():
+        if isinstance(cls_val, dict):
+            first_v = next(iter(cls_val.values()), None)
+            if isinstance(first_v, list):
+                # Eski format — her iki vardiyaya kopyala
+                d[cls_id] = {"sabahi": dict(cls_val), "masaiy": dict(cls_val)}
+    return d
 
 def save_class_groups(d): save_json(CLASS_GROUPS_FILE, d)
 
-def get_class_groups(cls_id: str) -> dict:
-    """Bir sınıfın gruplarını döndür. {grp: [subs]}"""
-    return load_class_groups().get(str(cls_id), {})
+def get_class_groups(cls_id: str, shift: str = None) -> dict:
+    """Bir sınıfın gruplarını döndür.
+    shift belirtilirse o vardiyaya ait {grp: [subs]}, yoksa tüm gruplar birleşik."""
+    cls_data = load_class_groups().get(str(cls_id), {})
+    if shift and shift in cls_data:
+        return cls_data[shift]
+    # Tüm grupları birleştir (geriye uyum)
+    merged = {}
+    for sft_data in cls_data.values():
+        if isinstance(sft_data, dict):
+            for grp, subs in sft_data.items():
+                if grp not in merged:
+                    merged[grp] = subs
+    return merged
 
 # ── Sınıf Kanalları ───────────────────────────────────────────
 CLASS_CHANNELS_FILE = os.path.join(BASE_DIR, "class_channels.json")
@@ -2462,6 +2490,8 @@ def reply_kb(uid):
         if ub.get("btn_leaderboard",True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
         if ub.get("quiz_btn",     True): row6.append(KeyboardButton(AR["quiz_btn"]))
         if row6: rows.append(row6)
+        # Satır 7: Kurallar
+        rows.append([KeyboardButton(AR["rules_btn"])])
         # Admin özel: İçerik + Bakım
         rows.append([KeyboardButton(AR["btn_content"]), KeyboardButton(AR["btn_maint"])])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -2474,10 +2504,8 @@ def reply_kb(uid):
         if ub.get("btn_search",   True): row1.append(KeyboardButton(AR["btn_search"]))
         if ub.get("btn_help",     True): row1.append(KeyboardButton(AR["btn_help"]))
         if row1: rows.append(row1)
-        # Satır 2: AI Asistan + Profilim
-        row2 = []
-        row2.append(KeyboardButton(AR["profile_btn"]))
-        if row2: rows.append(row2)
+        # Satır 2: Profilim
+        rows.append([KeyboardButton(AR["profile_btn"])])
         # Satır 3: Favoriler + Son Görüntülenen
         row3 = []
         if ub.get("btn_favorites",True): row3.append(KeyboardButton(AR["btn_favorites"]))
@@ -2488,7 +2516,7 @@ def reply_kb(uid):
         if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
         if row4: rows.append(row4)
-        # Satır 5: Anonim Soru + Geri Sayım
+        # Satır 5: Sınavlar + Lab
         row5 = []
         if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
         row5.append(KeyboardButton("🔬 المختبر"))
@@ -2498,6 +2526,8 @@ def reply_kb(uid):
         if ub.get("btn_leaderboard", True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
         if ub.get("quiz_btn",     True): row6.append(KeyboardButton(AR["quiz_btn"]))
         if row6: rows.append(row6)
+        # Satır 7: Kurallar
+        rows.append([KeyboardButton(AR["rules_btn"])])
         if not rows: rows = [[]]
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
@@ -3035,6 +3065,23 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     reply_markup=InlineKeyboardMarkup(kb))
         return
 
+    if text in (TR["rules_btn"], AR["rules_btn"]):
+        rules = load_auto_rules()
+        s_rules = load_settings().get("rules_text", "")
+        if s_rules:
+            await update.message.reply_text(f"📜 {L(uid,'rules_btn')}\n\n{s_rules}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
+        elif rules:
+            lines = [f"📜 {L(uid,'rules_btn')}\n"]
+            for i, r in enumerate(rules, 1):
+                kws = " / ".join(r.get("keywords", []))
+                lines.append(f"{i}. {kws}")
+            await update.message.reply_text("\n".join(lines),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
+        else:
+            await update.message.reply_text("📜 " + ("Henüz kural eklenmemiş." if is_main_admin(uid) else "لا توجد قواعد بعد."))
+        return
+
     # ── Mesaj Gönder / Yardım (herkes) ──────────────
     if text in (TR["btn_help"], AR["btn_help"]):
         if is_admin(uid) and not is_main_admin(uid):
@@ -3167,15 +3214,12 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
             [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
              InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
-            [InlineKeyboardButton(TR["backup_btn"],        callback_data="backup|do"),
-             InlineKeyboardButton(TR["full_backup_btn"],  callback_data="backup|full")],
-            [InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users"),
-             InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all")],
-            [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
-             InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
-            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add")],
-            [InlineKeyboardButton("📝 Quiz Oluştur",     callback_data="admin|quiz_create"),
+            [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+             InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+            [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+             InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
             [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
         sent = await update.message.reply_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
@@ -3204,12 +3248,11 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🎓 Sınıf İsimleri",   callback_data="set|class_names")],
             [InlineKeyboardButton("👥 Grup Yapılandırma", callback_data="set|class_groups"),
              InlineKeyboardButton("👮 Admin Yetkileri",   callback_data="set|admin_perms")],
-            [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
             [InlineKeyboardButton("❓ FAQ Yönetimi",     callback_data="faqmgmt|panel"),
              InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
             [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
-             InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
-            [InlineKeyboardButton("◀️ Geri",             callback_data="nav|root")],
+             InlineKeyboardButton("📜 Kural Metni",     callback_data="set|rules_text")],
+            [InlineKeyboardButton("◀️ Geri",             callback_data="close")],
         ]
         sent = await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
         context.user_data["last_inline_msg"] = sent.message_id
@@ -3413,7 +3456,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton(TR["faq_add_btn"],  callback_data="faqmgmt|add"),
                  InlineKeyboardButton(TR["faq_list_btn"], callback_data="faqmgmt|list")],
                 [InlineKeyboardButton(TR["faq_del_btn"],  callback_data="faqmgmt|del")],
-                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|settings_panel")],
             ]
             await query.edit_message_text(
                 f"{TR['faq_panel']}\n\n📋 Toplam: {len(faqs)} soru",
@@ -3435,7 +3478,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 lines.append(f"\n{i+1}. ❓ {q}\n   💬 {a}")
             await query.edit_message_text(
                 "\n".join(lines)[:4000],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")]]))
             return ConversationHandler.END
         if action == "del":
             faqs = load_faq()
@@ -3466,7 +3509,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton(TR["rule_add_btn"],  callback_data="rulemgmt|add"),
                  InlineKeyboardButton(TR["rule_list_btn"], callback_data="rulemgmt|list")],
                 [InlineKeyboardButton(TR["rule_del_btn"],  callback_data="rulemgmt|del")],
-                [InlineKeyboardButton("◀️ Geri",           callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",           callback_data="nav|settings_panel")],
             ]
             await query.edit_message_text(
                 f"{TR['rule_panel']}\n\n⚡ Toplam: {len(rules)} kural",
@@ -3488,7 +3531,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 lines.append(f"\n{i+1}. 🔍 {kws}\n   💬 {resp}")
             await query.edit_message_text(
                 "\n".join(lines)[:4000],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")]]))
             return ConversationHandler.END
         if action == "del":
             rules = load_auto_rules()
@@ -3647,7 +3690,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton(TR["bcast_active"], callback_data="bcast|target|active")],
                 [InlineKeyboardButton(TR["bcast_new"],    callback_data="bcast|target|new")],
                 [InlineKeyboardButton("🎯 " + TR["bcast_targeted"], callback_data="bcast|tgt_start")],
-                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|mgmt_panel")],
             ]
             await query.edit_message_text(TR["bcast_targeted"], reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
@@ -3745,7 +3788,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         await query.edit_message_text(
             "\n".join(lines)[:4000],
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
 
@@ -3809,10 +3852,41 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             adm_perms[pkey] = not adm_perms.get(pkey, DEFAULT_ADMIN_PERMS.get(pkey, False))
             perms[str(adm_id)] = adm_perms
             save_admin_perms(perms)
-            # Ekranı güncelle
-            cb_new = f"adminperm|show|{adm_id}"
-            query.data = cb_new
-            return await callback(update, context)
+            # Ekranı anında güncelle (recursion yok)
+            perm_labels = [
+                ("can_add_folder",  "📁 Klasör Ekle"),
+                ("can_del_folder",  "🗑 Klasör Sil"),
+                ("can_add_file",    "📎 Dosya Ekle"),
+                ("can_del_file",    "🗑 Dosya Sil"),
+                ("can_rename_file", "✏️ Yeniden Adlandır"),
+                ("can_countdown",   "📅 Sınav Ekle"),
+                ("can_poll",        "📊 Anket Kur"),
+                ("can_quiz",        "📝 Quiz"),
+                ("can_broadcast",   "📢 Duyuru Gönder"),
+                ("can_reply",       "💬 Kullanıcıya Cevap"),
+                ("can_warn",        "⚠️ Uyarı Ver"),
+                ("can_block",       "🚫 Engelle"),
+                ("can_view_users",  "👥 Kullanıcı Görme"),
+            ]
+            u2 = load_users().get(str(adm_id), {})
+            name2 = u2.get("full_name") or u2.get("first_name") or f"ID:{adm_id}"
+            kb2 = []
+            for pk, pl in perm_labels:
+                v = adm_perms.get(pk, DEFAULT_ADMIN_PERMS.get(pk, False))
+                kb2.append([InlineKeyboardButton(
+                    f"{'✅' if v else '❌'} {pl}",
+                    callback_data=f"adminperm|toggle|{adm_id}|{pk}")])
+            cls_v = adm_perms.get("cls", None)
+            grp_v = adm_perms.get("grp", None)
+            kb2.append([
+                InlineKeyboardButton(f"Sinif: {cls_v or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"),
+                InlineKeyboardButton(f"Grup: {grp_v or 'Hepsi'}",  callback_data=f"adminperm|grp|{adm_id}"),
+            ])
+            kb2.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(
+                f"👮 {name2}\n\nYetkilerini düzenle:",
+                reply_markup=InlineKeyboardMarkup(kb2))
+            return ConversationHandler.END
 
         if act_p == "cls":
             kb = [
@@ -3828,46 +3902,43 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if act_p == "setcls":
             cls_val = None if parts_p[3] == "all" else parts_p[3]
             set_admin_perm(adm_id, "cls", cls_val)
-            await query.answer("Kaydedildi", show_alert=True)
-            query.data = f"adminperm|show|{adm_id}"
-            return await callback(update, context)
+            await query.answer("✅ Kaydedildi", show_alert=False)
+            # Geri dön — show paneline
+            query.data = f"adminperm|show|{adm_id}"; return await callback(update, context)
 
         if act_p == "grp":
-            # Grup kısıtı — A/B/C + None
-            kb = [
-                [InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setgrp|{adm_id}|all")],
-                [InlineKeyboardButton("A",     callback_data=f"adminperm|setgrp|{adm_id}|A"),
-                 InlineKeyboardButton("B",     callback_data=f"adminperm|setgrp|{adm_id}|B"),
-                 InlineKeyboardButton("C",     callback_data=f"adminperm|setgrp|{adm_id}|C")],
-            ]
+            cls_grps = load_class_groups()
+            adm_cls_r = load_admin_perms().get(str(adm_id),{}).get("cls","")
+            grp_keys = list(cls_grps.get(adm_cls_r,{}).keys()) if adm_cls_r else ["A","B","C"]
+            kb = [[InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setgrp|{adm_id}|all")]]
+            row = [InlineKeyboardButton(g, callback_data=f"adminperm|setgrp|{adm_id}|{g}") for g in grp_keys]
+            if row: kb.append(row)
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"adminperm|show|{adm_id}")])
             await query.edit_message_text("Grup kisiti:", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if act_p == "setgrp":
             grp_val = None if parts_p[3] == "all" else parts_p[3]
             set_admin_perm(adm_id, "grp", grp_val)
-            await query.answer("Kaydedildi", show_alert=True)
-            query.data = f"adminperm|show|{adm_id}"
-            return await callback(update, context)
+            await query.answer("✅ Kaydedildi", show_alert=False)
+            query.data = f"adminperm|show|{adm_id}"; return await callback(update, context)
 
         if act_p == "subgrp":
-            # Alt grup kısıtı — A1/A2/A3 vb.
             grp_main = parts_p[3] if len(parts_p) > 3 else "A"
-            kb = [
-                [InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setsubgrp|{adm_id}|all")],
-                [InlineKeyboardButton(f"{grp_main}1", callback_data=f"adminperm|setsubgrp|{adm_id}|{grp_main}1"),
-                 InlineKeyboardButton(f"{grp_main}2", callback_data=f"adminperm|setsubgrp|{adm_id}|{grp_main}2"),
-                 InlineKeyboardButton(f"{grp_main}3", callback_data=f"adminperm|setsubgrp|{adm_id}|{grp_main}3")],
-            ]
+            cls_for_sub = load_admin_perms().get(str(adm_id),{}).get("cls","")
+            subs = list(load_class_groups().get(cls_for_sub,{}).get(grp_main,[])) or [f"{grp_main}1",f"{grp_main}2",f"{grp_main}3"]
+            kb = [[InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setsubgrp|{adm_id}|all")]]
+            row2 = [InlineKeyboardButton(s, callback_data=f"adminperm|setsubgrp|{adm_id}|{s}") for s in subs]
+            if row2: kb.append(row2)
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"adminperm|show|{adm_id}")])
             await query.edit_message_text(f"Alt grup ({grp_main}):", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if act_p == "setsubgrp":
             subgrp_val = None if parts_p[3] == "all" else parts_p[3]
             set_admin_perm(adm_id, "subgrp", subgrp_val)
-            await query.answer("Kaydedildi", show_alert=True)
-            query.data = f"adminperm|show|{adm_id}"
-            return await callback(update, context)
+            await query.answer("✅ Kaydedildi", show_alert=False)
+            query.data = f"adminperm|show|{adm_id}"; return await callback(update, context)
 
         return ConversationHandler.END
 
@@ -3961,7 +4032,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if desc:
                 prompt += f"\n\nMevcut: {desc[:100]}"
             await query.edit_message_text(prompt,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")]]))
             return WAIT_FOLDER_DESC
 
         if action == "pin":
@@ -3970,7 +4041,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📌 {f.get('caption','?')[:35]}", callback_data=f"extra|do_pin|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(L(uid,"pin_select"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -3993,7 +4064,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📂 {f.get('caption','?')[:35]}", callback_data=f"extra|do_move_sel|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(L(uid,"move_select_file"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -4007,7 +4078,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 label = " › ".join(p)
                 penc  = "~~".join(p)
                 kb.append([InlineKeyboardButton(f"📁 {label}", callback_data=f"extra|do_move_dest|{penc}")])
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
                 L(uid,"move_select_dest").format(" › ".join(path) or "🏠"),
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -4042,7 +4113,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📋 {f.get('caption','?')[:35]}", callback_data=f"extra|do_copy_sel|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(L(uid,"copy_select_file"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -4054,7 +4125,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 label = " › ".join(p)
                 penc  = "~~".join(p)
                 kb.append([InlineKeyboardButton(f"📁 {label}", callback_data=f"extra|do_copy_dest|{penc}")])
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
                 L(uid,"move_select_dest").format(" › ".join(path) or "🏠"),
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -4091,7 +4162,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     kb.append(row); row = []
             if row: kb.append(row)
             kb.append([InlineKeyboardButton("📋 الكل", callback_data=f"sadmin|{prefix}|all")])
-            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="nav|mgmt_panel")])
             return kb
 
         def _sft_kb(prefix, cls_val, back_cb):
@@ -4186,8 +4257,21 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if lab_act == "lab_cls":
             cls_val = lab_parts[2] if len(lab_parts) > 2 else "all"
             context.user_data["pending_lab_cls"] = "" if cls_val == "all" else cls_val
+            # Sınıf seçildi → vardiya seç
+            kb = [
+                [InlineKeyboardButton("☀️ صباحي", callback_data="lab|lab_sft|sabahi"),
+                 InlineKeyboardButton("🌙 مسائي",  callback_data="lab|lab_sft|masaiy"),
+                 InlineKeyboardButton("📋 الكل",   callback_data="lab|lab_sft|all")],
+                [InlineKeyboardButton("◀️ إلغاء",  callback_data="mgmt|lab")],
+            ]
+            await query.edit_message_text("🔬 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if lab_act == "lab_sft":
+            sft_val = lab_parts[2] if len(lab_parts) > 2 else "all"
+            context.user_data["pending_lab_sft"] = "" if sft_val == "all" else sft_val
             context.user_data["action"] = "lab_add_date"
-            await query.message.reply_text("📅 Tarih yaz (DD/MM/YYYY):\nÖrn: 22/04/2026")
+            await query.edit_message_text("📅 Tarih yaz (DD/MM/YYYY):\nÖrn: 22/04/2026")
             return WAIT_FOLDER
 
         if lab_act == "view":
@@ -4680,17 +4764,44 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
                     [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
                      InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
-                    [InlineKeyboardButton(TR["backup_btn"],       callback_data="backup|do"),
-                     InlineKeyboardButton(TR["full_backup_btn"],  callback_data="backup|full")],
-                    [InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users"),
-                     InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all")],
-                    [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
-                     InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
-                    [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add")],
-                    [InlineKeyboardButton("📝 Quiz Oluştur",     callback_data="admin|quiz_create"),
+                    [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+                     InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+                    [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
                      InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                    [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+                     InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
                 ]
                 await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        elif action == "settings_panel":
+            # Ayarlar panelini inline göster
+            if is_main_admin(uid):
+                s = load_settings()
+                txt = (
+                    f"{TR['settings_title']}\n\n"
+                    f"📝 Ad: {s.get('bot_name','—')}\n"
+                    f"🖼 Fotoğraf: {'✅' if s.get('bot_photo_id') else '❌'}\n"
+                    f"🚫 Engellenenler: {len(load_blocked())} kişi"
+                )
+                kb = [
+                    [InlineKeyboardButton("📝 Bot Adı",          callback_data="set|name"),
+                     InlineKeyboardButton("💬 Karşılama",         callback_data="set|welcome")],
+                    [InlineKeyboardButton("🖼 Bot Fotoğrafı",    callback_data="set|photo"),
+                     InlineKeyboardButton("📄 Bot Açıklaması",   callback_data="set|set_description")],
+                    [InlineKeyboardButton("🔧 Bakım Metni",      callback_data="set|maint_text"),
+                     InlineKeyboardButton(TR["set_blocked_btn"], callback_data="set|blocked")],
+                    [InlineKeyboardButton(TR["btn_mgmt_btn"],    callback_data="set|btn_mgmt"),
+                     InlineKeyboardButton("🎓 Sınıf İsimleri",   callback_data="set|class_names")],
+                    [InlineKeyboardButton("👥 Grup Yapılandırma", callback_data="set|class_groups"),
+                     InlineKeyboardButton("👮 Admin Yetkileri",   callback_data="set|admin_perms")],
+                    [InlineKeyboardButton("❓ FAQ Yönetimi",     callback_data="faqmgmt|panel"),
+                     InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
+                    [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
+                     InlineKeyboardButton("📜 Kural Metni",     callback_data="set|rules_text")],
+                    [InlineKeyboardButton("◀️ Geri",             callback_data="close")],
+                ]
+                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         elif action == "cur":
@@ -4808,7 +4919,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     InlineKeyboardButton("🗑", callback_data=f"lab|del|{week}"),
                 ])
             kb.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
                 f"🔬 Lab Programı\n(Bugün: {today_str})",
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -4910,7 +5021,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
             kb = [
                 [InlineKeyboardButton("📊 Kullanıcı Listesi", callback_data="mgmt|users")],
-                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")],
             ]
             await query.edit_message_text(txt[:4000], reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
@@ -4924,7 +5035,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     f"{cls_def['tr']}  ({cnt})",
                     callback_data=f"mgmt|ulist|{cls_id}|_|_")])
             kb.append([InlineKeyboardButton("🔍 Ara", callback_data="mgmt|ulist|search")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
             await query.edit_message_text("👥 Kullanıcılar — Sınıf Seç:", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -5141,10 +5252,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         # Alt admin yetki kontrolü
         if not is_main_admin(uid):
-            # Admin profili görüntüleme yasak
             target_uid = parts[2] if len(parts) > 2 else ""
-            if target_uid and is_admin(target_uid) and action == "info":
-                await query.answer("لا يمكنك عرض ملف مسؤول آخر", show_alert=True)
+            # Ana admin profilini görme yasak; diğer admin profilleri görülebilir (read-only)
+            if target_uid and int(target_uid) == ADMIN_ID and action == "info":
+                await query.answer("لا يمكنك عرض ملف المشرف الرئيسي", show_alert=True)
                 return ConversationHandler.END
             # Profil görme yetkisi
             view_actions = {"info", "extra_cls", "toggle_xcls"}
@@ -5252,7 +5363,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb.append([InlineKeyboardButton("📥 Aktivite İndir", callback_data=f"user|export|{target}")])
             if is_main_admin(uid):
                 kb.append([InlineKeyboardButton(TR["excel_user_btn"], callback_data=f"export|excel_user|{target}")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")])
             # Alt admin — sadece isim + kullanıcıadı + 2 buton
             if not is_main_admin(uid):
                 simple_info = (
@@ -5699,7 +5810,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.edit_message_text(
                     f"⚠️ Uyari sebebini yaz:\n{name}",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("Iptal", callback_data="nav|root")
+                        InlineKeyboardButton("Iptal", callback_data="nav|mgmt_panel")
                     ]]))
                 return WAIT_FOLDER
             context.user_data["warn_target"] = target
@@ -5763,7 +5874,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.edit_message_text(
                     f"🚫 Engelleme sebebini yaz:\n{name}",
                     reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("Iptal", callback_data="nav|root")
+                        InlineKeyboardButton("Iptal", callback_data="nav|mgmt_panel")
                     ]]))
                 return WAIT_FOLDER
             blocked=load_blocked()
@@ -6006,7 +6117,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "confirm_del_folder":
             kb = [
                 [InlineKeyboardButton(TR["confirm_yes"], callback_data=f"do|del_folder|{arg}"),
-                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|root")]
+                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|mgmt_panel")]
             ]
             await query.edit_message_text(
                 L(uid,"del_folder_confirm").format(arg),
@@ -6022,7 +6133,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             fname = files[idx].get("caption","?")
             kb = [
                 [InlineKeyboardButton(TR["confirm_yes"], callback_data=f"do|del_file|{idx}"),
-                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|root")]
+                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|mgmt_panel")]
             ]
             await query.edit_message_text(
                 L(uid,"del_file_confirm").format(fname),
@@ -6039,7 +6150,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "pick_folder":
             context.user_data["action"] = "rename_folder"; context.user_data["target"] = arg
             await query.edit_message_text(L(uid,"new_folder_name").format(arg),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")]]))
             return WAIT_RENAME_FOLDER
 
         if action == "del_file":
@@ -6052,7 +6163,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "pick_file":
             context.user_data["action"] = "rename_file"; context.user_data["target"] = int(arg)
             await query.edit_message_text(L(uid,"new_file_name"),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")]]))
             return WAIT_RENAME_FILE
 
     # ── Ayarlar (sadece süper admin) ──────────────────
@@ -6093,7 +6204,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(
                     f"✏️ {cls_def['ar']} → {cur_name}",
                     callback_data=f"set|edit_clsname|{cls_id}")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
             await query.edit_message_text(
                 "🎓 Sinif Isimleri\n\nHer sinifa ozel isim ver:",
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -6178,7 +6289,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             context.user_data["action"] = "set_anon_group"
             await query.edit_message_text(
                 f"Anonim Mesaj Grubu\nMevcut: {cur}\n\nGrup ID yaz (ornek: -1001234567890)\nKapatmak icin 0:",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Iptal","nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Iptal","nav|settings_panel")]]))
             return WAIT_FOLDER
 
         if action == "class_groups":
@@ -6189,43 +6300,58 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(
                     f"🎓 {cls_def['tr']}: {', '.join(grps_this)}",
                     callback_data=f"set|cgrp_cls|{cls_id}")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
             await query.edit_message_text("Sinif Grup Yapılandırmasi:", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if action == "cgrp_cls":
             parts = cb.split("|")
             cls_id = parts[2]
-            cls_grps = load_class_groups()
-            grps_this = cls_grps.get(cls_id, {})
             cls_name = CLASS_DEFS.get(cls_id,{}).get("tr","?")
+            # Önce vardiya seç
+            kb = [
+                [InlineKeyboardButton("☀️ Sabahcı", callback_data=f"set|cgrp_sft|{cls_id}|sabahi"),
+                 InlineKeyboardButton("🌙 Masaici",  callback_data=f"set|cgrp_sft|{cls_id}|masaiy")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="set|class_groups")],
+            ]
+            await query.edit_message_text(f"🎓 {cls_name} — Vardiya Seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "cgrp_sft":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3]
+            cls_grps = load_class_groups()
+            grps_this = cls_grps.get(cls_id, {}).get(shift, {})
+            cls_name = CLASS_DEFS.get(cls_id,{}).get("tr","?")
+            sft_lbl = "☀️ Sabahcı" if shift == "sabahi" else "🌙 Masaici"
             kb = []
             for g, subs in grps_this.items():
                 subs_str = "/".join(subs)
                 kb.append([
-                    InlineKeyboardButton(f"👥 {g} ({subs_str})", callback_data=f"set|cgrp_edit|{cls_id}|{g}"),
-                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_del|{cls_id}|{g}"),
+                    InlineKeyboardButton(f"👥 {g} ({subs_str})", callback_data=f"set|cgrp_edit|{cls_id}|{shift}|{g}"),
+                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_del|{cls_id}|{shift}|{g}"),
                 ])
-            kb.append([InlineKeyboardButton("➕ Grup Ekle", callback_data=f"set|cgrp_add|{cls_id}")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="set|class_groups")])
-            await query.edit_message_text(f"👥 {cls_name} Gruplari:", reply_markup=InlineKeyboardMarkup(kb))
+            kb.append([InlineKeyboardButton("➕ Grup Ekle", callback_data=f"set|cgrp_add|{cls_id}|{shift}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_cls|{cls_id}")])
+            await query.edit_message_text(f"👥 {cls_name} / {sft_lbl}:", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if action == "cgrp_del":
             parts = cb.split("|")
-            cls_id = parts[2]; grp = parts[3]
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]
             cls_grps = load_class_groups()
-            if cls_id in cls_grps and grp in cls_grps[cls_id]:
-                del cls_grps[cls_id][grp]
+            if cls_id in cls_grps and shift in cls_grps[cls_id] and grp in cls_grps[cls_id][shift]:
+                del cls_grps[cls_id][shift][grp]
                 save_class_groups(cls_grps)
                 await query.answer(f"✅ {grp} silindi", show_alert=True)
-            query.data = f"set|cgrp_cls|{cls_id}"; return await callback(update, context)
+            query.data = f"set|cgrp_sft|{cls_id}|{shift}"; return await callback(update, context)
 
         if action == "cgrp_add":
             parts = cb.split("|")
-            cls_id = parts[2]
+            cls_id = parts[2]; shift = parts[3] if len(parts) > 3 else "sabahi"
             context.user_data["action"] = "cgrp_add_name"
             context.user_data["cgrp_add_cls"] = cls_id
+            context.user_data["cgrp_add_sft"] = shift
             await query.edit_message_text(
                 "Yeni grup adi (ornek: D):",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️","close")]]))
@@ -6233,40 +6359,43 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         if action == "cgrp_edit":
             parts = cb.split("|")
-            cls_id = parts[2]; grp = parts[3]
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]
             cls_grps = load_class_groups()
-            subs = cls_grps.get(cls_id,{}).get(grp, [])
+            subs = cls_grps.get(cls_id,{}).get(shift,{}).get(grp, [])
+            sft_lbl = "☀️" if shift == "sabahi" else "🌙"
             kb = []
             for sub in subs:
                 kb.append([
-                    InlineKeyboardButton(sub, callback_data=f"set|cgrp_sub_view|{cls_id}|{grp}|{sub}"),
-                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_sub_del|{cls_id}|{grp}|{sub}"),
+                    InlineKeyboardButton(sub, callback_data=f"set|cgrp_sub_view|{cls_id}|{shift}|{grp}|{sub}"),
+                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_sub_del|{cls_id}|{shift}|{grp}|{sub}"),
                 ])
-            kb.append([InlineKeyboardButton("➕ Alt Bolum Ekle", callback_data=f"set|cgrp_sub_add|{cls_id}|{grp}")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_cls|{cls_id}")])
+            kb.append([InlineKeyboardButton("➕ Alt Bölüm Ekle", callback_data=f"set|cgrp_sub_add|{cls_id}|{shift}|{grp}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_sft|{cls_id}|{shift}")])
             await query.edit_message_text(
-                f"Grup {grp}: {', '.join(subs)}",
+                f"{sft_lbl} Grup {grp}: {', '.join(subs)}",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if action == "cgrp_sub_del":
             parts = cb.split("|")
-            cls_id = parts[2]; grp = parts[3]; sub = parts[4]
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]; sub = parts[5]
             cls_grps = load_class_groups()
-            if cls_id in cls_grps and grp in cls_grps[cls_id] and sub in cls_grps[cls_id][grp]:
-                cls_grps[cls_id][grp].remove(sub)
+            try:
+                cls_grps[cls_id][shift][grp].remove(sub)
                 save_class_groups(cls_grps)
                 await query.answer(f"✅ {sub} silindi", show_alert=True)
-            query.data = f"set|cgrp_edit|{cls_id}|{grp}"; return await callback(update, context)
+            except: pass
+            query.data = f"set|cgrp_edit|{cls_id}|{shift}|{grp}"; return await callback(update, context)
 
         if action == "cgrp_sub_add":
             parts = cb.split("|")
-            cls_id = parts[2]; grp = parts[3]
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]
             context.user_data["action"] = "cgrp_sub_add_name"
             context.user_data["cgrp_cls"] = cls_id
+            context.user_data["cgrp_sft"] = shift
             context.user_data["cgrp_grp"] = grp
             await query.edit_message_text(
-                f"Alt bolum adi (ornek: {grp}4):",
+                f"Alt bölüm adi (örnek: {grp}4):",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️","close")]]))
             return WAIT_FOLDER
 
@@ -6282,7 +6411,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 u = users_d.get(str(adm_id), {})
                 name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
                 kb.append([InlineKeyboardButton(f"👮 {name[:25]}", callback_data=f"adminperm|show|{adm_id}")])
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
             await query.edit_message_text("👮 Admin Yetki Yönetimi", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -6298,7 +6427,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             txt  = TR["blocked_list"].format(len(blocked)) + "\n\n"
             txt += "\n".join(f"🆔 {b}" for b in blocked) if blocked else TR["no_blocked"]
             await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                [[InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")]]))
             return ConversationHandler.END
 
         if action == "btn_mgmt":
@@ -6316,7 +6445,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set|toggle_btn|{key}")])
             track_icon = "✅" if track else "❌"
             kb.append([InlineKeyboardButton(f"{track_icon} 👁 Aktivite Takibi", callback_data="set|toggle_track")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")])
             await query.edit_message_text(
                 TR["btn_mgmt_title"] + "\n\n✅ = Açık  |  ❌ = Kapalı\n"
                 "Kullanıcıların göreceği butonları buradan yönet.",
@@ -6340,7 +6469,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set|toggle_btn|{key}")])
             track_icon = "✅" if track else "❌"
             kb.append([InlineKeyboardButton(f"{track_icon} 👁 Aktivite Takibi", callback_data="set|toggle_track")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")])
             status = "✅ AÇIK" if track else "❌ KAPALI"
             await query.edit_message_text(
                 TR["btn_mgmt_title"] + f"\n\n👁 Aktivite Takibi → {status}\n\n✅ = Açık  |  ❌ = Kapalı",
@@ -6365,7 +6494,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set|toggle_btn|{k}")])
             track_icon = "✅" if track else "❌"
             kb.append([InlineKeyboardButton(f"{track_icon} 👁 Aktivite Takibi", callback_data="set|toggle_track")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")])
             await query.edit_message_text(
                 TR["btn_mgmt_title"] + "\n\n✅ = Açık  |  ❌ = Kapalı",
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -6409,6 +6538,15 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
         return WAIT_WELCOME   # aynı state kullan
 
+    if cb == "set|rules_text" and is_main_admin(uid):
+        s = load_settings()
+        cur = s.get("rules_text","")
+        context.user_data["action"] = "set_rules_text"
+        prompt = f"📜 Kural metnini girin (kullanıcılara gösterilecek):\n\nMevcut: {cur[:100] if cur else '—'}"
+        await query.edit_message_text(prompt,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")]]))
+        return WAIT_WELCOME
+
     # ── Duyuru Geçmişi (admin) ───────────────────────
     if cb == "bcast|history" and is_main_admin(uid):
         log_ = load_bcast_log()
@@ -6424,6 +6562,72 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text(
             "\n".join(lines)[:4000],
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+        return ConversationHandler.END
+
+    # ── Seçili kişilere mesaj ────────────────────────
+    if cb.startswith("msgsel|") and is_main_admin(uid):
+        ms_parts = cb.split("|")
+        ms_act   = ms_parts[1]
+
+        if ms_act == "panel":
+            selected = context.user_data.get("msgsel_targets", [])
+            kb = [
+                [InlineKeyboardButton("👮 Sadece Adminler", callback_data="msgsel|admins_only")],
+                [InlineKeyboardButton("👥 Kullanıcıdan Seç", callback_data="msgsel|pick_users")],
+            ]
+            if selected:
+                n = len(selected)
+                kb.append([InlineKeyboardButton(f"✅ {n} kişi seçildi — Mesaj Gönder", callback_data="msgsel|send")])
+                kb.append([InlineKeyboardButton("🗑 Seçimi Temizle", callback_data="msgsel|clear")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text("📨 Seçili Kişilere Mesaj", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if ms_act == "admins_only":
+            admins_list = load_admins()
+            context.user_data["msgsel_targets"] = [str(a) for a in admins_list]
+            await query.answer(f"✅ {len(admins_list)} admin seçildi", show_alert=True)
+            query.data = "msgsel|panel"; return await callback(update, context)
+
+        if ms_act == "pick_users":
+            u_d = load_users()
+            selected = context.user_data.get("msgsel_targets", [])
+            kb = []
+            for uid_, u in list(u_d.items())[:50]:
+                if int(uid_) == ADMIN_ID: continue
+                name = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+                un   = f" @{u['username']}" if u.get("username") else ""
+                tick = "✅ " if uid_ in selected else ""
+                kb.append([InlineKeyboardButton(f"{tick}👤 {name}{un}", callback_data=f"msgsel|toggle|{uid_}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="msgsel|panel")])
+            await query.edit_message_text("👥 Mesaj gönderilecek kişileri seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if ms_act == "toggle":
+            target_id = ms_parts[2]
+            sel = context.user_data.get("msgsel_targets", [])
+            if target_id in sel:
+                sel.remove(target_id)
+            else:
+                sel.append(target_id)
+            context.user_data["msgsel_targets"] = sel
+            query.data = "msgsel|pick_users"; return await callback(update, context)
+
+        if ms_act == "clear":
+            context.user_data["msgsel_targets"] = []
+            query.data = "msgsel|panel"; return await callback(update, context)
+
+        if ms_act == "send":
+            sel = context.user_data.get("msgsel_targets", [])
+            if not sel:
+                await query.answer("❌ Kişi seçilmedi", show_alert=True)
+                return ConversationHandler.END
+            context.user_data["action"] = "msgsel_send"
+            await query.edit_message_text(
+                f"✍️ {len(sel)} kişiye gönderilecek mesajı yazın:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ İptal", callback_data="msgsel|panel")]]))
+            return WAIT_BROADCAST_MSG
+
         return ConversationHandler.END
 
     if cb == "close":
@@ -6717,27 +6921,40 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return WAIT_FOLDER
 
         if action == "tgt_cls":
-            # Sınıf seçildi → vardiya seç
+            # Sınıf seçildi → "all" ise direkt tip seç, değilse vardiya seç
             cls_val = cb.split("|")[2] if len(cb.split("|")) > 2 else "all"
             context.user_data["poll_tgt_cls"] = "" if cls_val == "all" else cls_val
-            kb = [
-                [InlineKeyboardButton("☀️ صباحي", callback_data="poll|tgt_sft|sabahi"),
-                 InlineKeyboardButton("🌙 مسائي",  callback_data="poll|tgt_sft|masaiy"),
-                 InlineKeyboardButton("📋 الكل",   callback_data="poll|tgt_sft|all")],
-                [InlineKeyboardButton("◀️ رجوع",   callback_data="poll|create")],
-            ]
-            await query.message.reply_text("📊 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            if cls_val == "all":
+                # Hepsi seçildi → hedef "all", tip seçimine geç
+                context.user_data["poll_tgt_sft"] = ""
+                context.user_data["poll_tgt_grp"] = ""
+                context.user_data["poll_target"] = "all"
+                kb = [
+                    [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
+                    [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                    [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
+                    [InlineKeyboardButton("◀️ إلغاء",            callback_data="close")],
+                ]
+                await query.message.reply_text(f"📊 الكل\n{TR['poll_type_select']}", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                kb = [
+                    [InlineKeyboardButton("☀️ صباحي", callback_data="poll|tgt_sft|sabahi"),
+                     InlineKeyboardButton("🌙 مسائي",  callback_data="poll|tgt_sft|masaiy"),
+                     InlineKeyboardButton("📋 الكل",   callback_data="poll|tgt_sft|all")],
+                    [InlineKeyboardButton("◀️ رجوع",   callback_data="poll|create")],
+                ]
+                await query.message.reply_text("📊 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
 
         if action == "tgt_sft":
-            # Vardiya seçildi → grup seç
+            # Vardiya seçildi → "all" ise grup atla, değilse grup seç
             sft_val = cb.split("|")[2] if len(cb.split("|")) > 2 else "all"
             context.user_data["poll_tgt_sft"] = "" if sft_val == "all" else sft_val
             tgt_cls = context.user_data.get("poll_tgt_cls","")
             adm_grp = get_admin_grp(uid) if not is_main_admin(uid) else None
-            if adm_grp:
-                context.user_data["poll_tgt_grp"] = adm_grp
-                # Hedefi oluştur ve tip seç
+            if adm_grp or sft_val == "all":
+                # Grup kısıtı varsa veya "hepsi" seçildiyse grup seçimini atla
+                context.user_data["poll_tgt_grp"] = adm_grp or ""
                 _build_poll_target(context, uid)
                 kb = [
                     [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
@@ -7401,18 +7618,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if action == "cgrp_add_name" and is_main_admin(uid):
         grp_name = text.strip().upper()[:3]
         cls_id   = context.user_data.pop("cgrp_add_cls","1")
+        shift    = context.user_data.pop("cgrp_add_sft","sabahi")
         cls_grps = load_class_groups()
-        cls_grps.setdefault(cls_id, {})[grp_name] = [f"{grp_name}1",f"{grp_name}2",f"{grp_name}3"]
+        cls_grps.setdefault(cls_id, {}).setdefault(shift, {})[grp_name] = [f"{grp_name}1",f"{grp_name}2",f"{grp_name}3"]
         save_class_groups(cls_grps)
-        await update.message.reply_text(f"✅ Grup {grp_name} eklendi ({grp_name}1/{grp_name}2/{grp_name}3)")
+        sft_lbl = "☀️ Sabahcı" if shift == "sabahi" else "🌙 Masaici"
+        await update.message.reply_text(f"✅ {sft_lbl} — Grup {grp_name} eklendi ({grp_name}1/{grp_name}2/{grp_name}3)")
         context.user_data.pop("action",None); return ConversationHandler.END
 
     if action == "cgrp_sub_add_name" and is_main_admin(uid):
         sub_name = text.strip().upper()[:4]
         cls_id   = context.user_data.pop("cgrp_cls","1")
+        shift    = context.user_data.pop("cgrp_sft","sabahi")
         grp      = context.user_data.pop("cgrp_grp","A")
         cls_grps = load_class_groups()
-        cls_grps.setdefault(cls_id,{}).setdefault(grp,[]).append(sub_name)
+        cls_grps.setdefault(cls_id,{}).setdefault(shift,{}).setdefault(grp,[]).append(sub_name)
         save_class_groups(cls_grps)
         await update.message.reply_text(f"✅ {sub_name} eklendi")
         context.user_data.pop("action",None); return ConversationHandler.END
@@ -7422,16 +7642,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         adm_cls = get_admin_cls(uid)
         if adm_cls:
             context.user_data["pending_lab_cls"] = adm_cls
-        if not adm_cls and not is_main_admin(uid):
-            # Sınıf seç
+            # Sınıf sabit — vardiya seç
+            kb = [
+                [InlineKeyboardButton("☀️ صباحي", callback_data="lab|lab_sft|sabahi"),
+                 InlineKeyboardButton("🌙 مسائي",  callback_data="lab|lab_sft|masaiy"),
+                 InlineKeyboardButton("📋 الكل",   callback_data="lab|lab_sft|all")],
+                [InlineKeyboardButton("◀️ إلغاء",  callback_data="mgmt|lab")],
+            ]
+            await update.message.reply_text("🔬 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            # Her admin (ana admin dahil) için sınıf seç
             kb = []
             for cls_id, cls_def in CLASS_DEFS.items():
                 kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"lab|lab_cls|{cls_id}")])
             kb.append([InlineKeyboardButton("الكل", callback_data="lab|lab_cls|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="mgmt|lab")])
             await update.message.reply_text("🔬 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
-            return WAIT_FOLDER
-        context.user_data["action"] = "lab_add_date"
-        await update.message.reply_text("📅 Tarih yaz (DD/MM/YYYY):\nÖrn: 22/04/2026")
         return WAIT_FOLDER
 
     if action == "lab_add_date" and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
@@ -7485,16 +7711,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data["countdown_name"] = text
         context.user_data.pop("action", None)
         adm_cls = get_admin_cls(uid)
-        if not adm_cls and not is_main_admin(uid):
-            # Sınıf seç
+        if adm_cls:
+            context.user_data["countdown_cls"] = adm_cls
+            # Sınıf sabit — vardiya seç
+        else:
+            # Her admin (ana admin dahil) için sınıf seç
             kb = []
             for cls_id, cls_def in CLASS_DEFS.items():
                 kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"cd_cls|{cls_id}")])
             kb.append([InlineKeyboardButton("الكل", callback_data="cd_cls|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
             await update.message.reply_text("📅 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
             return WAIT_FOLDER
-        if adm_cls:
-            context.user_data["countdown_cls"] = adm_cls
         # Vardiya seç
         kb = [
             [InlineKeyboardButton("الكل",   callback_data="cd_shift|all"),
@@ -8031,6 +8259,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         log_admin_action(uid, "BROADCAST_ALL", f"{success} gönderildi")
         context.user_data.pop("action",None); return ConversationHandler.END
 
+    if action == "msgsel_send" and is_main_admin(uid):
+        sel = context.user_data.pop("msgsel_targets", [])
+        success = fail = 0
+        bcast_msg = (
+            f"╔══════════════════════╗\n"
+            f"  📨  رسالة مخصصة\n"
+            f"╠══════════════════════╣\n\n"
+            f"{text}\n\n"
+            f"╚══════════════════════╝\n"
+            f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        )
+        for uid_ in sel:
+            try:
+                await context.bot.send_message(int(uid_), bcast_msg)
+                success += 1
+            except: fail += 1
+        await update.message.reply_text(f"✅ {success} kişiye gönderildi. ❌ {fail} başarısız.")
+        log_admin_action(uid, "MSGSEL_SEND", f"{success} kişi, '{text[:40]}'")
+        context.user_data.pop("action",None); return ConversationHandler.END
+
     if action == "set_name" and is_main_admin(uid):
         if not text: await update.message.reply_text(TR["folder_empty"]); return WAIT_BOT_NAME
         s = load_settings(); s["bot_name"] = text; save_settings(s)
@@ -8058,6 +8306,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         msg_txt = TR["pin_msg_saved"] if text.strip() else "✅ Sabit mesaj silindi."
         await update.message.reply_text(msg_txt)
         log_admin_action(uid, "PIN_MSG", text[:50])
+        context.user_data.pop("action",None); return ConversationHandler.END
+
+    if action == "set_rules_text" and is_main_admin(uid):
+        s = load_settings()
+        s["rules_text"] = text.strip()
+        save_settings(s)
+        await update.message.reply_text("✅ Kural metni kaydedildi.")
+        log_admin_action(uid, "SET_RULES", text[:50])
         context.user_data.pop("action",None); return ConversationHandler.END
 
     if action == "add_folder":
