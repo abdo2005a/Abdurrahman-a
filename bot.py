@@ -2421,8 +2421,11 @@ ALL_BTNS = {
     TR["btn_reminder"],  AR["btn_reminder"],
     TR["countdown_btn"], AR["countdown_btn"],
     TR["quiz_btn"],      AR["quiz_btn"],
+    TR["rules_btn"],     AR["rules_btn"],
     "\U0001f52c \u0627\u0644\u0645\u062e\u062a\u0628\u0631",
     "🔬 المختبر",
+    "🔄 وضع التحديث",
+    "🔄 إيقاف التحديث ✅",
 }
 
 # ================================================================
@@ -7255,9 +7258,15 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return WAIT_FOLDER
 
         if action_n == "pick_subject":
-            # eski uyumluluk — yeni akışa yönlendir
-            query.data = "notes|new"
-            return await callback(update, context)
+            context.user_data["action"] = "note_subject_input"
+            context.user_data.pop("note_subject", None)
+            context.user_data.pop("note_mode", None)
+            await query.edit_message_text(
+                "📝 اكتب اسم الدرس (أو . للتخطي):",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+                ]]))
+            return WAIT_FOLDER
 
         if action_n == "sel_subj":
             subject = "|".join(parts_n[2:]) if len(parts_n) > 2 else ""
