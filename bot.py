@@ -3,6 +3,8 @@ import json
 import logging
 import os
 from datetime import datetime
+from datetime import timezone, timedelta
+IRAQ_TZ = timezone(timedelta(hours=3))  # UTC+3
 from typing import Optional
 from telegram import (
     Update,
@@ -17,6 +19,7 @@ from telegram.ext import (
 # ======================= KONFIGURASYON =======================
 TOKEN          = "8574020136:AAEaxD4fk9DPQQPsZ0y0lkhdKZXVrONxQJU"
 ADMIN_ID       = 7731559022
+ANON_GROUP_ID  = None  # Anonim mesaj grubu — Ayarlar'dan set edilir
 
 
 _default_dir = "/data/bot_data" if os.path.exists("/data") else os.path.join(
@@ -41,6 +44,7 @@ FAVORITES_FILE   = os.path.join(BASE_DIR, "favorites.json")
 NOTES_FILE       = os.path.join(BASE_DIR, "user_notes.json")
 WARNS_FILE       = os.path.join(BASE_DIR, "user_warns.json")
 ADMIN_LOG_FILE   = os.path.join(BASE_DIR, "admin_log.json")
+ADMIN_ACTIVITY_FILE = os.path.join(BASE_DIR, "admin_activity.json")
 SUBS_FILE        = os.path.join(BASE_DIR, "subscriptions.json")
 RECENT_FILE      = os.path.join(BASE_DIR, "recently_viewed.json")
 FOLDER_DESC_FILE = os.path.join(BASE_DIR, "folder_descs.json")
@@ -55,340 +59,51 @@ FEEDBACK_FILE    = os.path.join(BASE_DIR, "feedback.json")
 PINNED_MSG_FILE  = os.path.join(BASE_DIR, "pinned_msgs.json")
 BROADCAST_LOG_FILE=os.path.join(BASE_DIR, "broadcast_log.json")
 COUNTDOWN_FILE   = os.path.join(BASE_DIR, "countdowns.json")
+GROUP_FILE       = os.path.join(BASE_DIR, "user_groups.json")
 ANON_Q_FILE      = os.path.join(BASE_DIR, "anon_questions.json")
 USER_NOTES_FILE  = os.path.join(BASE_DIR, "personal_notes.json")
 QUIZ_FILE        = os.path.join(BASE_DIR, "quizzes.json")
 REPORT_FILE      = os.path.join(BASE_DIR, "file_reports.json")
+ADMIN_PERMS_FILE = os.path.join(BASE_DIR, "admin_perms.json")
 
-# ── Yedek sistemi ──────────────────────────────────────────────
+# ── Tam Yedek Şeması ─────────────────────────────────────────
 BACKUP_SCHEMA = {
-    "bot_data":        DATA_FILE,
-    "users":           USERS_FILE,
-    "settings":        SETTINGS_FILE,
-    "polls":           POLLS_FILE,
-    "user_classes":    CLASS_FILE,
-    "faq":             FAQ_FILE,
-    "auto_rules":      AUTO_RULES_FILE,
-    "admins":          ADMINS_FILE,
-    "blocked":         BLOCKED_FILE,
-    "view_counts":     VIEW_COUNTS_FILE,
-    "user_notes":      NOTES_FILE,
-    "user_warns":      WARNS_FILE,
-    "favorites":       FAVORITES_FILE,
-    "subscriptions":   SUBS_FILE,
-    "recently_viewed": RECENT_FILE,
-    "folder_descs":    FOLDER_DESC_FILE,
-    "whitelist":       WHITELIST_FILE,
-    "scheduled":       SCHEDULED_FILE,
-    "file_tags":       TAGS_FILE,
-    "leaderboard":     LEADERBOARD_FILE,
-    "quizzes":         QUIZ_FILE,
-    "countdowns":      COUNTDOWN_FILE,
-    "anon_questions":  ANON_Q_FILE,
-    "pinned_msgs":     PINNED_MSG_FILE,
-    "broadcast_log":   BROADCAST_LOG_FILE,
-    "admin_log":       ADMIN_LOG_FILE,
+    "bot_data":      DATA_FILE,
+    "users":         USERS_FILE,
+    "messages":      MESSAGES_FILE,
+    "settings":      SETTINGS_FILE,
+    "admins":        ADMINS_FILE,
+    "blocked":       BLOCKED_FILE,
+    "view_counts":   VIEW_COUNTS_FILE,
+    "polls":         POLLS_FILE,
+    "classes":       CLASS_FILE,
+    "faq":           FAQ_FILE,
+    "auto_rules":    AUTO_RULES_FILE,
+    "favorites":     FAVORITES_FILE,
+    "notes":         NOTES_FILE,
+    "warns":         WARNS_FILE,
+    "admin_log":     ADMIN_LOG_FILE,
+    "admin_activity": ADMIN_ACTIVITY_FILE,
+    "subs":          SUBS_FILE,
+    "recent":        RECENT_FILE,
+    "folder_descs":  FOLDER_DESC_FILE,
+    "whitelist":     WHITELIST_FILE,
+    "scheduled":     SCHEDULED_FILE,
+    "tags":          TAGS_FILE,
+    "reminders":     REMINDERS_FILE,
+    "leaderboard":   LEADERBOARD_FILE,
+    "achievements":  ACHIEVEMENTS_FILE,
+    "feedback":      FEEDBACK_FILE,
+    "pinned_msgs":   PINNED_MSG_FILE,
+    "broadcast_log": BROADCAST_LOG_FILE,
+    "countdowns":    COUNTDOWN_FILE,
+    "groups":        GROUP_FILE,
+    "anon_q":        ANON_Q_FILE,
+    "user_notes":    USER_NOTES_FILE,
+    "quizzes":       QUIZ_FILE,
+    "reports":       REPORT_FILE,
+    "admin_perms":   ADMIN_PERMS_FILE,
 }
-
-def create_full_backup() -> bytes:
-    """Tüm veri dosyalarını tek JSON baytına çevirir."""
-    backup = {
-        "version": 1,
-        "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "data": {}
-    }
-    for key, fpath in BACKUP_SCHEMA.items():
-        if os.path.exists(fpath):
-            try:
-                with open(fpath, "r", encoding="utf-8") as f:
-                    backup["data"][key] = json.load(f)
-            except Exception:
-                pass
-    return json.dumps(backup, ensure_ascii=False, indent=2).encode("utf-8")
-
-def restore_full_backup(raw: bytes) -> tuple[bool, int, str]:
-    """
-    Yedek JSON baytlarından tüm veri dosyalarını geri yükler.
-    (başarı, yüklenen dosya sayısı, hata mesajı) döner.
-    """
-    try:
-        backup = json.loads(raw.decode("utf-8"))
-    except Exception as e:
-        return False, 0, str(e)
-    if "data" not in backup:
-        return False, 0, "Geçersiz yedek formatı"
-    count = 0
-    for key, fpath in BACKUP_SCHEMA.items():
-        if key in backup["data"]:
-            try:
-                with open(fpath, "w", encoding="utf-8") as f:
-                    json.dump(backup["data"][key], f, ensure_ascii=False, indent=2)
-                count += 1
-            except Exception:
-                pass
-    return True, count, ""
-
-# ================================================================
-#  EXCEL EXPORT
-# ================================================================
-
-def _excel_header(ws, cols, color="1F4E79"):
-    """Başlık satırı yazar, renklendirir."""
-    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-    fill = PatternFill("solid", fgColor=color)
-    font = Font(bold=True, color="FFFFFF", size=11)
-    border_side = Side(style="thin", color="AAAAAA")
-    border = Border(left=border_side, right=border_side,
-                    top=border_side, bottom=border_side)
-    for col_idx, col_name in enumerate(cols, 1):
-        cell = ws.cell(row=1, column=col_idx, value=col_name)
-        cell.fill = fill; cell.font = font
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = border
-    ws.row_dimensions[1].height = 22
-
-def _excel_row(ws, row_idx, values, fill_color=None):
-    """Veri satırı yazar."""
-    from openpyxl.styles import PatternFill, Alignment, Border, Side
-    border_side = Side(style="thin", color="DDDDDD")
-    border = Border(left=border_side, right=border_side,
-                    top=border_side, bottom=border_side)
-    fill = PatternFill("solid", fgColor=fill_color) if fill_color else None
-    for col_idx, val in enumerate(values, 1):
-        cell = ws.cell(row=row_idx, column=col_idx, value=str(val) if val is not None else "")
-        cell.alignment = Alignment(vertical="center", wrap_text=False)
-        cell.border = border
-        if fill: cell.fill = fill
-
-def _auto_col_width(ws):
-    """Sütun genişliklerini otomatik ayarlar."""
-    for col in ws.columns:
-        max_len = max((len(str(c.value or "")) for c in col), default=8)
-        ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 40)
-
-def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
-                    polls_d, leaderboard_d, blocked_list, admins_list,
-                    chunk_size: int = 5000):
-    """Tüm kullanıcılar için kapsamlı Excel dosyası oluşturur.
-    Returns list of (bytes, part_number) tuples.
-    Part 1 has all sheets; extra parts have only Mesaj Geçmişi sheet."""
-    from openpyxl import Workbook
-    from openpyxl.styles import PatternFill, Font, Alignment
-
-    # Tüm mesajları topla ve sırala (bir kez)
-    cols2 = ["Tarih","Kullanıcı ID","Ad","Tür","İçerik / Başlık"]
-    TYPE_COLORS = {"photo":"FFF3E0","video":"FFF3E0","document":"FFF3E0",
-                   "search":"E8F5E9","ai_query":"E3F2FD"}
-    all_msgs = []
-    for uid_, mlist in msgs_d.items():
-        u = users_d.get(uid_, {})
-        name = u.get("full_name") or u.get("first_name", uid_)
-        for m in mlist:
-            all_msgs.append((m.get("time",""), uid_, name,
-                             m.get("type","msg"), m.get("text","")[:120]))
-    all_msgs.sort(key=lambda x: x[0], reverse=True)
-
-    results = []
-
-    # ── DOSYA 1: Ana dosya (tüm sayfalar + mesajlar bölüm 1) ──
-    wb = Workbook()
-
-    # ── SAYFA 1: Kullanıcılar ─────────────────────────────────
-    ws1 = wb.active; ws1.title = "Kullanıcılar"
-    ws1.freeze_panes = "A2"
-    cols1 = ["ID","Ad Soyad","Kullanıcı Adı","Sınıf","Kayıt Tarihi",
-             "Son Görülme","Mesaj Sayısı","Uyarı Sayısı","Puan",
-             "Admin","Bloke","Not"]
-    _excel_header(ws1, cols1, "1F4E79")
-    row = 2
-    for uid_, u in sorted(users_d.items(), key=lambda x: x[1].get("first_seen",""), reverse=True):
-        cls_key  = classes_d.get(uid_, "")
-        cls_name = CLASS_DEFS.get(cls_key, {}).get("tr", "—")
-        msg_count= len(msgs_d.get(uid_, []))
-        warns    = len(warns_d.get(uid_, []))
-        score    = leaderboard_d.get(uid_, 0)
-        is_adm   = "✅" if int(uid_) in admins_list or int(uid_) == ADMIN_ID else ""
-        is_blk   = "🚫" if int(uid_) in blocked_list else ""
-        note     = notes_d.get(uid_, "")
-        name     = u.get("full_name") or u.get("first_name","—")
-        un       = f"@{u['username']}" if u.get("username") else "—"
-        color = "FFE0E0" if is_blk else ("E0EEFF" if is_adm else ("F9F9F9" if row%2==0 else None))
-        _excel_row(ws1, row, [uid_, name, un, cls_name,
-                               u.get("first_seen","—"), u.get("last_seen","—"),
-                               msg_count, warns, score, is_adm, is_blk, note], color)
-        row += 1
-    _auto_col_width(ws1)
-
-    # ── SAYFA 2: Mesaj Geçmişi (Bölüm 1) ─────────────────────
-    ws2 = wb.create_sheet("Mesaj Geçmişi")
-    ws2.freeze_panes = "A2"
-    _excel_header(ws2, cols2, "375623")
-    row = 2
-    for t, uid_, name, typ, text in all_msgs[:chunk_size]:
-        color = TYPE_COLORS.get(typ, ("F9F9F9" if row%2==0 else None))
-        _excel_row(ws2, row, [t, uid_, name, typ, text], color)
-        row += 1
-    _auto_col_width(ws2)
-
-    # ── SAYFA 3: Uyarılar & Notlar ────────────────────────────
-    ws3 = wb.create_sheet("Uyarılar & Notlar")
-    ws3.freeze_panes = "A2"
-    cols3 = ["Kullanıcı ID","Ad","Kullanıcı Adı","Sınıf","Uyarı Sayısı","Uyarı Detayları","Admin Notu"]
-    _excel_header(ws3, cols3, "833C00")
-    row = 2
-    warned_uids = set(warns_d.keys()) | set(notes_d.keys())
-    for uid_ in warned_uids:
-        u        = users_d.get(uid_, {})
-        name     = u.get("full_name") or u.get("first_name","—")
-        un       = f"@{u['username']}" if u.get("username") else "—"
-        cls_key  = classes_d.get(uid_, "")
-        cls_name = CLASS_DEFS.get(cls_key, {}).get("tr","—")
-        wlist    = warns_d.get(uid_, [])
-        details  = " | ".join(w.get("reason","") for w in wlist)
-        note     = notes_d.get(uid_, "")
-        color    = "FFE0E0" if len(wlist) >= 3 else ("FFF3CD" if wlist else None)
-        _excel_row(ws3, row, [uid_, name, un, cls_name,
-                               len(wlist), details[:200], note], color)
-        row += 1
-    _auto_col_width(ws3)
-
-    # ── SAYFA 4: Anket Sonuçları ──────────────────────────────
-    ws4 = wb.create_sheet("Anket Sonuçları")
-    ws4.freeze_panes = "A2"
-    cols4 = ["Anket ID","Soru","Tür","Aktif","Toplam Oy","Seçenekler & Oylar"]
-    _excel_header(ws4, cols4, "7B2C9E")
-    row = 2
-    for pid, poll in polls_d.items():
-        q        = poll.get("question","—")
-        typ      = "Açık Uçlu" if poll.get("type")=="open" else "Çoktan Seçmeli"
-        active   = "✅" if poll.get("active") else "❌"
-        votes    = poll.get("votes",{})
-        total    = len(votes)
-        opts     = poll.get("options",[])
-        if opts:
-            counts = {}
-            for v in votes.values():
-                counts[v] = counts.get(v, 0) + 1
-            opts_str = " | ".join(f"{o}:{counts.get(o,0)}" for o in opts)
-        else:
-            opts_str = f"{total} yazılı cevap"
-        _excel_row(ws4, row, [pid, q, typ, active, total, opts_str],
-                   "F3E8FF" if row%2==0 else None)
-        row += 1
-    _auto_col_width(ws4)
-
-    # ── SAYFA 5: İstatistikler ────────────────────────────────
-    ws5 = wb.create_sheet("İstatistikler")
-    _excel_header(ws5, ["Metrik","Değer"], "2E4057")
-    stats = [
-        ("Toplam Kullanıcı",        len(users_d)),
-        ("Toplam Admin",             len([u for u in users_d if int(u) in admins_list])+1),
-        ("Bloke Kullanıcı",         len(blocked_list)),
-        ("Toplam Mesaj (log)",       sum(len(v) for v in msgs_d.values())),
-        ("Toplam Anket",             len(polls_d)),
-        ("Aktif Anket",              sum(1 for p in polls_d.values() if p.get("active"))),
-        ("Toplam Uyarı",             sum(len(v) for v in warns_d.values())),
-        ("Rapor Tarihi",             datetime.now().strftime("%Y-%m-%d %H:%M")),
-    ]
-    lb_sorted = sorted(leaderboard_d.items(), key=lambda x: x[1], reverse=True)[:5]
-    for i,(uid_,sc) in enumerate(lb_sorted, 1):
-        u = users_d.get(uid_,{})
-        name = u.get("full_name") or u.get("first_name", uid_)
-        stats.append((f"Top {i}: {name}", f"{sc} puan"))
-    for r, (k, v) in enumerate(stats, 2):
-        color = "EBF5FB" if r%2==0 else None
-        _excel_row(ws5, r, [k, v], color)
-    _auto_col_width(ws5)
-
-    buf = io.BytesIO(); wb.save(buf)
-    results.append((buf.getvalue(), 1))
-
-    # ── EK DOSYALAR: Mesaj Geçmişi bölüm 2, 3, … ─────────────
-    if len(all_msgs) > chunk_size:
-        for part, start in enumerate(range(chunk_size, len(all_msgs), chunk_size), 2):
-            chunk = all_msgs[start:start + chunk_size]
-            wb_c = Workbook()
-            ws_c = wb_c.active
-            ws_c.title = "Mesaj Geçmişi"
-            ws_c.freeze_panes = "A2"
-            _excel_header(ws_c, cols2, "375623")
-            r = 2
-            for t, uid_, name, typ, text in chunk:
-                color = TYPE_COLORS.get(typ, ("F9F9F9" if r%2==0 else None))
-                _excel_row(ws_c, r, [t, uid_, name, typ, text], color)
-                r += 1
-            _auto_col_width(ws_c)
-            buf_c = io.BytesIO(); wb_c.save(buf_c)
-            results.append((buf_c.getvalue(), part))
-
-    return results
-
-
-def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
-                     warns_d, notes_d, polls_d, leaderboard_d,
-                     favorites_d, recent_d) -> bytes:
-    """Tek kullanıcı için detaylı Excel dosyası oluşturur."""
-    from openpyxl import Workbook
-    wb = Workbook()
-    u        = users_d.get(uid_, {})
-    name     = u.get("full_name") or u.get("first_name","—")
-    cls_key  = classes_d.get(uid_, "")
-    cls_name = CLASS_DEFS.get(cls_key, {}).get("tr","—")
-
-    # ── SAYFA 1: Profil ───────────────────────────────────────
-    ws1 = wb.active; ws1.title = "Profil"
-    _excel_header(ws1, ["Alan","Değer"], "1F4E79")
-    profile = [
-        ("Kullanıcı ID",     uid_),
-        ("Ad Soyad",         name),
-        ("Kullanıcı Adı",    f"@{u['username']}" if u.get("username") else "—"),
-        ("Sınıf",            cls_name),
-        ("Kayıt Tarihi",     u.get("first_seen","—")),
-        ("Son Görülme",      u.get("last_seen","—")),
-        ("Toplam Mesaj",     len(msgs_d.get(uid_,[]))),
-        ("Toplam Uyarı",     len(warns_d.get(uid_,[]))),
-        ("Puan",             leaderboard_d.get(uid_,0)),
-        ("Admin Notu",       notes_d.get(uid_,"")),
-    ]
-    for r,(k,v) in enumerate(profile, 2):
-        _excel_row(ws1, r, [k, v], "EBF5FB" if r%2==0 else None)
-    _auto_col_width(ws1)
-
-    # ── SAYFA 2: Mesaj Geçmişi ────────────────────────────────
-    ws2 = wb.create_sheet("Mesaj Geçmişi")
-    ws2.freeze_panes = "A2"
-    _excel_header(ws2, ["Tarih","Tür","İçerik"], "375623")
-    for r, m in enumerate(sorted(msgs_d.get(uid_,[]),
-                                  key=lambda x: x.get("time",""), reverse=True), 2):
-        _excel_row(ws2, r, [m.get("time",""), m.get("type",""), m.get("text","")[:200]],
-                   "F9FFF9" if r%2==0 else None)
-    _auto_col_width(ws2)
-
-    # ── SAYFA 3: Uyarılar ─────────────────────────────────────
-    ws3 = wb.create_sheet("Uyarılar")
-    _excel_header(ws3, ["Tarih","Neden","Veren Admin"], "833C00")
-    for r, w in enumerate(warns_d.get(uid_,[]), 2):
-        _excel_row(ws3, r, [w.get("time",""), w.get("reason",""), w.get("by","")],
-                   "FFE0E0" if r%2==0 else None)
-    _auto_col_width(ws3)
-
-    # ── SAYFA 4: Anket Katılımı ────────────────────────────────
-    ws4 = wb.create_sheet("Anket Katılımı")
-    _excel_header(ws4, ["Anket Sorusu","Verilen Cevap"], "7B2C9E")
-    r = 2
-    for pid, poll in polls_d.items():
-        vote = poll.get("votes",{}).get(uid_)
-        ans  = poll.get("answers",{}).get(uid_)
-        if vote or ans:
-            _excel_row(ws4, r, [poll.get("question","—"), vote or ans or ""],
-                       "F3E8FF" if r%2==0 else None)
-            r += 1
-    _auto_col_width(ws4)
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    return buf.getvalue()
 
 # ── Arama / AI ayarları ──────────────────────────────────────
 SEARCH_TIMEOUT   = 10   # saniye
@@ -511,7 +226,7 @@ TR = {
     "user_list":     "👥 Kullanıcılar — birini seçin:",
     "no_users":      "Henüz kullanıcı yok.",
     "no_admins":     "Eklenmiş admin yok.",
-    "admin_enter_id": "Admin eklenecek kullanıcı ID'sini yazın:",
+    "admin_enter_id": "Admin ID veya @kullanıcı adı yazın:",
     "admin_added":   "✅ Admin eklendi: {}",
     "admin_exists":  "❌ Zaten admin.",
     "invalid_id":    "❌ Geçersiz ID.",
@@ -532,6 +247,10 @@ TR = {
     "poll_type_select":   "📊 Anket türünü seç:",
     "poll_type_choice":   "🔘 Çoktan Seçmeli\n(Kullanıcılar şıklar arasından seçer)",
     "poll_type_open":     "✍️ Açık Uçlu\n(Kullanıcılar yazılı cevap verir)",
+    "poll_type_quiz":     "🎯 Quiz (Doğru Cevaplı)\n(Bir şık doğru, geri kalanlar yanlış)",
+    "poll_correct_prompt":"✅ Doğru cevap kaçıncı şık? (1-{n} arası sayı yaz)",
+    "quiz_correct_toast": "✅ Doğru cevap! Tebrikler!",
+    "quiz_wrong_toast":   "❌ Yanlış! Doğru cevap: {ans}",
     "poll_results":       "📈 Sonuçlar",
     "poll_delete":        "🗑 Anketi Sil",
     "poll_panel":         "📊 Anket Yönetimi",
@@ -556,6 +275,7 @@ TR = {
     "poll_no_comments":   "Henüz yorum yok.",
     # (boş)
     "admin_notif":       "🔔 Kullanıcı talebi\n\n👤 {name}{un}\n🆔 {uid}\n📋 {summary}\n🕐 {time}",
+    "new_user_notif":  "🆕 Yeni kullanıcı!\n\n👤 {name}{un}\n🆔 {uid}\n🕐 {time}",
     "reply_btn":     "💬 Yanıtla (ID: {})",
     "dm_prefix":     "📩 Yönetici mesajı:\n\n{}",
     "block_btn":     "🚫 Engelle",
@@ -679,23 +399,18 @@ TR = {
     "backup_sending":   "💾 Yedek hazırlanıyor...",
     "backup_done":      "✅ Yedek tamamlandı. {} dosya gönderildi.",
     "full_backup_btn":  "📦 Tek Dosya Yedek",
-    "excel_all_btn":    "📊 Tüm Kullanıcılar Excel",
-    "excel_user_btn":   "📊 Kullanıcı Excel",
-    "excel_building":   "📊 Excel hazırlanıyor...",
-    "excel_done":       "✅ Excel hazır! ({} kullanıcı)",
-    "excel_user_done":  "✅ Kullanıcı raporu hazır!",
-    "full_backup_done": "✅ Tam yedek hazır! ({} veri seti)\nGeri yüklemek için bu dosyayı bota gönder.",
-    "restore_start":    "🔄 Geri yükleme başlıyor...",
-    "restore_done":     "✅ Geri yükleme tamamlandı! {} dosya yüklendi.\nBotu yeniden başlatmanı öneririm.",
-    "restore_fail":     "❌ Geri yükleme başarısız: {}",
-    "data_missing_warn": (
-        "⚠️ Bot başladı ama veri bulunamadı!\n\n"
-        "Eğer daha önce yedek aldıysan, bu dosyayı bota gönder.\n"
-        "Gönderirken başlık (caption) olarak: restore\n\n"
-        "Yedek yoksa veriler sıfırlanmış demektir."
-    ),
+    "full_backup_ok":   "✅ Tam yedek hazırlandı ve pinlendi!",
+    "restore_start":    "🔄 Yedekten geri yükleniyor...",
+    "restore_done":     "✅ {count} dosya geri yüklendi!",
+    "restore_fail":     "❌ Geri yükleme başarısız: {err}",
     "export_users_btn": "📤 Kullanıcıları Dışa Aktar",
     "export_done":      "✅ {} kullanıcı dışa aktarıldı.",
+    # ═══ EXCEL ═══
+    "excel_all_btn":    "📊 Excel (Tüm Kullanıcılar)",
+    "excel_user_btn":   "📊 Excel (Bu Kullanıcı)",
+    "excel_building":   "📊 Excel hazırlanıyor...",
+    "excel_done":       "✅ Excel hazır — {} kullanıcı",
+    "excel_user_done":  "✅ Kullanıcı Excel'i hazır!",
     # ═══ HEDEFLİ DUYURU ═══
     "bcast_targeted":   "🎯 Hedefli Duyuru",
     "bcast_all":        "📢 Tüm Kullanıcılar",
@@ -769,15 +484,12 @@ TR = {
     "secret_enter_id":    "Whitelist'e eklenecek kullanıcı ID'sini yazın:",
     "secret_added":       "✅ {} whitelist'e eklendi.",
     "secret_removed":     "✅ {} whitelist'ten çıkarıldı.",
-    "secret_deny":        "🔒 Bu bot şu an gizli modda. Yöneticiyle iletişime geç.",
     "secret_list":        "🔒 Whitelist ({} kullanıcı):",
     # ═══ KULLANICI PROFİL ═══
     "profile_btn":        "👤 Profilim",
     "profile_title":      "👤 PROFİLİM",
     # ═══ SPAM KORUMA ═══
     "spam_warning":       "⚠️ Çok hızlı mesaj gönderiyorsun. Lütfen bekle.",
-    # ═══ SELAMLAMA ═══
-    "greeting_reply":     "👋 Merhaba! Ana menüye dönmek için /start yazabilirsin.",
     # ═══ STARTUP ═══
     "startup_msg":        "✅ Bot yeniden başladı! Tüm servisler aktif.",
     # ═══ WEB ARAMA YAPAY ZEKASI ═══
@@ -823,9 +535,13 @@ TR = {
     # ═══ HIZLI CEVAP ═══
     "quick_reply_btn":    "⚡ Hızlı Cevap",
     "quick_reply_saved":  "✅ Hızlı cevap şablonu kaydedildi.",
-    # ═══ YENİ ÖZELLİKLER ═══
+    # ═══ YENİ BUTONLAR ═══
     "btn_notes":          "📝 Notlarım",
     "btn_reminder":       "⏰ Hatırlatıcım",
+    "anon_q_btn":         "❓ Anonim Soru",
+    "countdown_btn":      "⏳ Yaklaşan Sınavlar",
+    "rules_btn":          "📜 Kurallar",
+    "quiz_btn":           "📝 Mini Test",
     "notes_empty":        "Henüz not yok.",
     "notes_saved":        "✅ Not kaydedildi.",
     "notes_title":        "📝 KİŞİSEL NOTLARIM",
@@ -833,26 +549,20 @@ TR = {
     "reminder_list":      "⏰ Hatırlatıcılarım ({} adet):",
     "reminder_none":      "Henüz hatırlatıcı yok.",
     "reminder_add_prompt":"⏰ Hatırlatıcı metni yaz:",
-    "reminder_when":      "Ne zaman? (örn: 30d=30dk, 2s=2saat, 1g=1gün)",
     "reminder_saved":     "✅ {} sonra hatırlatacağım.",
     "reminder_fired":     "🔔 HATIRLATICI\n\n{}",
     "reminder_del":       "✅ Silindi.",
-    "anon_q_btn":         "❓ Anonim Soru",
     "anon_q_prompt":      "❓ Sorunuzu yazın (anonim):",
     "anon_q_sent":        "✅ Sorunuz iletildi.",
-    "anon_q_notify":      "❓ ORGANİK SORU (Anonim):\n\n{}",
-    "file_report_btn":    "🚩 Sorun Bildir",
-    "file_report_sent":   "✅ Raporunuz alındı.",
-    "quiz_btn":           "📝 Mini Test",
-    "quiz_none":          "Aktif test yok.",
-    "countdown_btn":      "⏳ Yaklaşan Sınav",
     "countdown_none":     "Yaklaşan sınav eklenmemiş.",
-    "countdown_add":      "➕ Sınav/Etkinlik Ekle",
     "countdown_prompt":   "Sınav adını yazın:",
-    "countdown_date":     "Tarih yazın (ör: 20/05/2026):",
+    "countdown_date":     "Tarih yazın (örn: 20/05/2026):",
     "countdown_saved":    "✅ {} kaydedildi.",
-    "class_stats_btn":    "📊 Sınıf İstatistikleri",
-    "share_btn":          "🔗 Paylaş",
+    "quiz_none":          "Aktif test yok.",
+    "group_select":       "👥 Grubunu seç (A/B/C → alt grup):",
+    "group_selected":     "✅ Grubun kaydedildi: {}",
+    "group_change_btn":   "👥 Grubumu Değiştir",
+    "group_label":        "👥 Grup: {}",
 }
 
 AR = {
@@ -925,7 +635,7 @@ AR = {
     "user_list":     "👥 المستخدمون — اختر واحداً:",
     "no_users":      "لا يوجد مستخدمون بعد.",
     "no_admins":     "لا يوجد مشرفون.",
-    "admin_enter_id": "اكتب ID المستخدم لإضافته مشرفاً:",
+    "admin_enter_id": "اكتب ID أو @اسم_المستخدم:",
     "admin_added":   "✅ تمت إضافة المشرف: {}",
     "admin_exists":  "❌ هو مشرف بالفعل.",
     "invalid_id":    "❌ ID غير صالح.",
@@ -946,6 +656,10 @@ AR = {
     "poll_type_select":   "📊 اختر نوع الاستطلاع:",
     "poll_type_choice":   "🔘 اختيار من متعدد\n(المستخدمون يختارون من الخيارات)",
     "poll_type_open":     "✍️ سؤال مفتوح\n(المستخدمون يكتبون إجابتهم)",
+    "poll_type_quiz":     "🎯 كويز (بجواب صحيح)\n(خيار واحد صحيح والباقي خاطئ)",
+    "poll_correct_prompt":"✅ ما رقم الخيار الصحيح؟ (اكتب رقماً من 1 إلى {n})",
+    "quiz_correct_toast": "✅ إجابة صحيحة! أحسنت!",
+    "quiz_wrong_toast":   "❌ إجابة خاطئة! الإجابة الصحيحة: {ans}",
     "poll_results":       "📈 النتائج",
     "poll_delete":        "🗑 حذف الاستطلاع",
     "poll_panel":         "📊 إدارة الاستطلاعات",
@@ -1084,18 +798,18 @@ AR = {
     "backup_btn":        "💾 نسخ احتياطي كامل",
     "backup_sending":    "💾 جارٍ تجهيز النسخ الاحتياطية...",
     "backup_done":       "✅ اكتمل النسخ الاحتياطي. {} ملف.",
-    "full_backup_btn":   "📦 نسخة احتياطية موحدة",
-    "full_backup_done":  "✅ النسخة الاحتياطية جاهزة! ({} مجموعة بيانات)\nأرسل هذا الملف للبوت لاستعادة البيانات.",
-    "restore_start":     "🔄 جارٍ الاستعادة...",
-    "restore_done":      "✅ اكتملت الاستعادة! {} ملف.\nيُنصح بإعادة تشغيل البوت.",
-    "restore_fail":      "❌ فشلت الاستعادة: {}",
-    "data_missing_warn": (
-        "⚠️ البوت بدأ لكن لم يُعثر على البيانات!\n\n"
-        "إذا كان لديك نسخة احتياطية، أرسل الملف للبوت مع العنوان: restore\n\n"
-        "إذا لم يكن لديك نسخة، فالبيانات قد تمت إعادة تعيينها."
-    ),
+    "full_backup_btn":   "📦 نسخ موحّد",
+    "full_backup_ok":    "✅ تم إنشاء النسخة الاحتياطية الموحّدة وتثبيتها!",
+    "restore_start":     "🔄 جارٍ الاستعادة من النسخة الاحتياطية...",
+    "restore_done":      "✅ تمت استعادة {count} ملف!",
+    "restore_fail":      "❌ فشل الاستعادة: {err}",
     "export_users_btn":  "📤 تصدير المستخدمين",
     "export_done":       "✅ تم تصدير {} مستخدم.",
+    "excel_all_btn":     "📊 Excel (كل المستخدمين)",
+    "excel_user_btn":    "📊 Excel (هذا المستخدم)",
+    "excel_building":    "📊 جارٍ إنشاء ملف Excel...",
+    "excel_done":        "✅ Excel جاهز — {} مستخدم",
+    "excel_user_done":   "✅ ملف Excel للمستخدم جاهز!",
     "bcast_targeted":    "🎯 إرسال موجّه",
     "bcast_all":         "📢 الجميع",
     "bcast_class":       "🎓 حسب السنة",
@@ -1160,13 +874,10 @@ AR = {
     "secret_enter_id":    "اكتب ID المستخدم للإضافة:",
     "secret_added":       "✅ تمت إضافة {} للقائمة البيضاء.",
     "secret_removed":     "✅ تمت إزالة {} من القائمة البيضاء.",
-    "secret_deny":        "🔒 البوت في الوضع السري. تواصل مع المسؤول.",
     "secret_list":        "🔒 القائمة البيضاء ({} مستخدم):",
     "profile_btn":        "👤 ملفي الشخصي",
     "profile_title":      "👤 ملفي الشخصي",
     "spam_warning":       "⚠️ أنت تُرسل بسرعة كبيرة. الرجاء الانتظار.",
-    # ═══ SELAMLAMA (AR) ═══
-    "greeting_reply":     "👋 أهلاً وسهلاً! اكتب /start للعودة إلى القائمة الرئيسية.",
     "startup_msg":        "✅ البوت يعمل مجدداً! جميع الخدمات متاحة.",
     # ═══ WEB ARAMA YAPAY ZEKASI (AR) ═══
     "ai_searching":       "🔍 جارٍ البحث...",
@@ -1205,9 +916,13 @@ AR = {
     "clear_chat_done":    "✅ تم مسح المحادثة.",
     "quick_reply_btn":    "⚡ رد سريع",
     "quick_reply_saved":  "✅ تم حفظ قالب الرد السريع.",
-    # ═══ مميزات جديدة ═══
+    # ═══ أزرار جديدة ═══
     "btn_notes":          "📝 ملاحظاتي",
     "btn_reminder":       "⏰ تذكيراتي",
+    "anon_q_btn":         "❓ سؤال مجهول",
+    "countdown_btn":      "⏳ الامتحانات القادمة",
+    "rules_btn":          "📜 القواعد",
+    "quiz_btn":           "📝 اختبار قصير",
     "notes_empty":        "لا توجد ملاحظات بعد.",
     "notes_saved":        "✅ تم حفظ الملاحظة.",
     "notes_title":        "📝 ملاحظاتي الشخصية",
@@ -1215,26 +930,20 @@ AR = {
     "reminder_list":      "⏰ تذكيراتي ({} تذكير):",
     "reminder_none":      "لا توجد تذكيرات.",
     "reminder_add_prompt":"⏰ اكتب نص التذكير:",
-    "reminder_when":      "متى؟ (مثال: 30d=30دق، 2s=2ساعة، 1g=يوم)",
     "reminder_saved":     "✅ سأذكرك بعد {}.",
     "reminder_fired":     "🔔 تذكير\n\n{}",
     "reminder_del":       "✅ تم الحذف.",
-    "anon_q_btn":         "❓ سؤال مجهول",
     "anon_q_prompt":      "❓ اكتب سؤالك (مجهول الهوية):",
     "anon_q_sent":        "✅ تم إرسال سؤالك.",
-    "anon_q_notify":      "❓ سؤال مجهول الهوية:\n\n{}",
-    "file_report_btn":    "🚩 إبلاغ عن مشكلة",
-    "file_report_sent":   "✅ تم استلام بلاغك.",
-    "quiz_btn":           "📝 اختبار قصير",
-    "quiz_none":          "لا يوجد اختبار نشط.",
-    "countdown_btn":      "⏳ الامتحانات القادمة",
     "countdown_none":     "لا توجد امتحانات مضافة.",
-    "countdown_add":      "➕ إضافة امتحان",
     "countdown_prompt":   "اكتب اسم الامتحان:",
     "countdown_date":     "اكتب التاريخ (مثال: 20/05/2026):",
     "countdown_saved":    "✅ تم حفظ {}.",
-    "class_stats_btn":    "📊 إحصائيات الصف",
-    "share_btn":          "🔗 مشاركة",
+    "quiz_none":          "لا يوجد اختبار نشط.",
+    "group_select":       "👥 اختر مجموعتك (A/B/C → مجموعة فرعية):",
+    "group_selected":     "✅ تم حفظ مجموعتك: {}",
+    "group_change_btn":   "👥 تغيير المجموعة",
+    "group_label":        "👥 المجموعة: {}",
 }
 
 DEFAULT_WELCOME_AR = (
@@ -1245,7 +954,10 @@ DEFAULT_WELCOME_AR = (
     "🖼 الصور والمخططات الهندسية\n"
     "📚 المراجع والكتب التقنية\n\n"
     "﴿ وَقُل رَّبِّ زِدْنِي عِلْمًا ﴾ 📖\n\n"
-    "استخدم الأزرار أدناه للبدء 👇"
+    "استخدم الأزرار أدناه للبدء 👇\n\n"
+    "─────────────────────────\n"
+    "🤖 هذا البوت من تصميم وتطوير\n"
+    "المهندس عبدالرحمن أردال"
 )
 
 # ================================================================
@@ -1279,6 +991,17 @@ def save_json(path, data):
 #  VARSAYILAN KLASÖR YAPISI — Bot her başladığında eksikse oluşturur
 # ================================================================
 
+
+def _make_group_folders():
+    """Her sınıf için A, B, C grubu ve her grubun 3 alt grubu."""
+    groups = {}
+    for g in ("A", "B", "C"):
+        sub_groups = {}
+        for i in range(1, 4):
+            sub_groups[f"{g}{i}"] = {"folders": {}, "files": []}
+        groups[g] = {"folders": sub_groups, "files": []}
+    return groups
+
 def _make_folder(*subs):
     """İçi boş klasör şablonu."""
     return {"folders": {s: {"folders": {}, "files": []} for s in subs}, "files": []}
@@ -1287,6 +1010,7 @@ DEFAULT_CONTENT = {
     "folders": {
         "الاول": {
             "folders": {
+                "المجموعات": {"folders": _make_group_folders(), "files": []},
                 "مواد كورس الأول": _make_folder(
                     "رياضيات", "اسس", "فيزياء", "انجليزي", "ورش", "حقوق", "حاسوب"
                 ),
@@ -1299,6 +1023,7 @@ DEFAULT_CONTENT = {
         },
         "الثاني": {
             "folders": {
+                "المجموعات": {"folders": _make_group_folders(), "files": []},
                 "مواد كورس الأول": _make_folder(
                     "رياضيات", "فيزياء", "اسس", "انجليزي", "ورش"
                 ),
@@ -1311,6 +1036,7 @@ DEFAULT_CONTENT = {
         },
         "الثالث": {
             "folders": {
+                "المجموعات": {"folders": _make_group_folders(), "files": []},
                 "مواد كورس الأول": _make_folder(
                     "رياضيات", "فيزياء", "اسس", "انجليزي"
                 ),
@@ -1323,6 +1049,7 @@ DEFAULT_CONTENT = {
         },
         "الرابع": {
             "folders": {
+                "المجموعات": {"folders": _make_group_folders(), "files": []},
                 "مواد كورس الأول": _make_folder(
                     "مواد متخصصة", "مشروع تخرج", "انجليزي"
                 ),
@@ -1350,9 +1077,13 @@ def load_content():
         if name not in data.setdefault("folders", {}):
             data["folders"][name] = val
             changed = True
+    # طلاب مؤقتون kaldır
+    if TEMP_FOLDER_NAME in data.get("folders", {}):
+        del data["folders"][TEMP_FOLDER_NAME]
+        changed = True
     if changed:
         save_json(DATA_FILE, data)
-        logger.info("✅ Eksik klasörler tamamlandı.")
+        logger.info("Eksik klasorler tamamlandi.")
     return data
 
 def save_content(d):     save_json(DATA_FILE, d)
@@ -1410,7 +1141,30 @@ def load_pinned_msgs():   return load_json(PINNED_MSG_FILE, {})
 def save_pinned_msgs(d):  save_json(PINNED_MSG_FILE, d)
 def load_bcast_log():     return load_json(BROADCAST_LOG_FILE, [])
 def save_bcast_log(d):    save_json(BROADCAST_LOG_FILE, d[-100:])
+
+CLASS_NAMES_FILE = os.path.join(BASE_DIR, "class_names.json")
+
+def load_class_names():    return load_json(CLASS_NAMES_FILE, {})
+def save_class_names(d):   save_json(CLASS_NAMES_FILE, d)
+
+def get_class_display_name(cls_id: str) -> str:
+    """Sınıfın özel adını döndür, yoksa varsayılan ar adını kullan."""
+    names = load_class_names()
+    return names.get(str(cls_id), CLASS_DEFS.get(str(cls_id), {}).get("ar", cls_id))
+
 def load_countdowns():    return load_json(COUNTDOWN_FILE, [])
+def load_groups():        return load_json(GROUP_FILE, {})
+def save_groups(d):       save_json(GROUP_FILE, d)
+
+SHIFT_FILE = os.path.join(BASE_DIR, "user_shifts.json")
+def load_shifts():     return load_json(SHIFT_FILE, {})
+def save_shifts(d):    save_json(SHIFT_FILE, d)
+def get_user_shift(uid: str) -> str:
+    return load_shifts().get(str(uid), "")
+def set_user_shift(uid: str, shift: str):
+    d = load_shifts(); d[str(uid)] = shift; save_shifts(d)
+
+TEMP_FOLDER_NAME = "\u0637\u0644\u0627\u0628 \u0645\u0624\u0642\u062a\u0648\u0646"  # Gecici Ogrenciler
 def save_countdowns(d):   save_json(COUNTDOWN_FILE, d)
 def load_anon_q():        return load_json(ANON_Q_FILE, [])
 def save_anon_q(d):       save_json(ANON_Q_FILE, d)
@@ -1419,20 +1173,175 @@ def save_personal_notes(d):save_json(USER_NOTES_FILE, d)
 def load_quizzes():       return load_json(QUIZ_FILE, [])
 def save_quizzes(d):      save_json(QUIZ_FILE, d)
 def load_reports():       return load_json(REPORT_FILE, [])
+def load_admin_perms():   return load_json(ADMIN_PERMS_FILE, {})
+def save_admin_perms(d):  save_json(ADMIN_PERMS_FILE, d)
 def save_reports(d):      save_json(REPORT_FILE, d)
 
+def get_user_notes(uid: str) -> list:
+    """Kullanıcının tüm notlarını döndür (liste formatı)."""
+    data = load_personal_notes()
+    raw = data.get(str(uid), [])
+    # Eski format (string) → liste formatına çevir
+    if isinstance(raw, str):
+        return [{"type":"text","content":raw,"id":"0","time":datetime.now(IRAQ_TZ).strftime("%H:%M")}] if raw else []
+    return raw
+
+
+NOTE_SUBJECTS = [
+    "رياضيات", "فيزياء", "اسس", "برمجة", "انجليزي",
+    "ميكانيك", "رسم", "كيمياء", "حقوق", "عربي",
+    "رقميه", "مواد متخصصة", "مشروع", "أخرى",
+]
+
+
+# ================================================================
+#  LABORATUVAR SİSTEMİ
+#  Her haftayı bir gruba atayan sistem (B1/B2/B3 dönüşümlü)
+# ================================================================
+LAB_FILE       = os.path.join(BASE_DIR, "lab_schedule.json")
+LAB_FIXED_FILE = os.path.join(BASE_DIR, "lab_fixed.json")
+
+
+# ── Grup Yapılandırma ──────────────────────────────────────────
+CLASS_GROUPS_FILE = os.path.join(BASE_DIR, "class_groups.json")
+
+def load_class_groups() -> dict:
+    """Sınıf grup yapılandırması.
+    Yeni format: {cls: {shift: {grp: [sub1, sub2, ...]}}}
+    Eski format (geriye uyum): {cls: {grp: [sub1, sub2, ...]}} → shift="all" kabul edilir"""
+    default = {
+        "1": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+        "2": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+        "3": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+        "4": {"sabahi": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]},
+              "masaiy": {"A": ["A1","A2","A3"], "B": ["B1","B2","B3"], "C": ["C1","C2","C3"]}},
+    }
+    d = load_json(CLASS_GROUPS_FILE, {})
+    if not d:
+        return default
+    # Geriye uyum: eski format tespiti (value'su dict-of-list)
+    for cls_id, cls_val in d.items():
+        if isinstance(cls_val, dict):
+            first_v = next(iter(cls_val.values()), None)
+            if isinstance(first_v, list):
+                # Eski format — her iki vardiyaya kopyala
+                d[cls_id] = {"sabahi": dict(cls_val), "masaiy": dict(cls_val)}
+    return d
+
+def save_class_groups(d): save_json(CLASS_GROUPS_FILE, d)
+
+def get_class_groups(cls_id: str, shift: str = None) -> dict:
+    """Bir sınıfın gruplarını döndür.
+    shift belirtilirse o vardiyaya ait {grp: [subs]}, yoksa tüm gruplar birleşik."""
+    cls_data = load_class_groups().get(str(cls_id), {})
+    if shift and shift in cls_data:
+        return cls_data[shift]
+    # Tüm grupları birleştir (geriye uyum)
+    merged = {}
+    for sft_data in cls_data.values():
+        if isinstance(sft_data, dict):
+            for grp, subs in sft_data.items():
+                if grp not in merged:
+                    merged[grp] = subs
+    return merged
+
+# ── Sınıf Kanalları ───────────────────────────────────────────
+CLASS_CHANNELS_FILE = os.path.join(BASE_DIR, "class_channels.json")
+
+def load_class_channels() -> dict:
+    """Sınıf kanal/bot linkleri. {cls: {"link": ..., "name": ...}}"""
+    return load_json(CLASS_CHANNELS_FILE, {})
+
+def save_class_channels(d): save_json(CLASS_CHANNELS_FILE, d)
+
+def load_lab_schedule():  return load_json(LAB_FILE, [])
+def save_lab_schedule(d): save_json(LAB_FILE, d)
+def load_lab_fixed():     return load_json(LAB_FIXED_FILE, [])
+def save_lab_fixed(d):    save_json(LAB_FIXED_FILE, d)
+
+def get_current_lab_week():
+    """Bu haftanın laboratuvar grubunu döndür."""
+    from datetime import date
+    schedule = load_lab_schedule()
+    if not schedule: return None
+    today = date.today()
+    # Pazartesi başlangıcını bul
+    week_start = today - __import__("datetime").timedelta(days=today.weekday())
+    week_str = week_start.strftime("%Y-%m-%d")
+    for entry in schedule:
+        if entry.get("week") == week_str:
+            return entry
+    return None
+
+def add_lab_week(week_start_str: str, group: str, note: str = ""):
+    """Tarihe grup+lab ata. Aynı tarih-grup varsa güncelle, yoksa ekle."""
+    schedule = load_lab_schedule()
+    # Aynı tarih + aynı grup varsa güncelle
+    for entry in schedule:
+        if entry.get("week") == week_start_str and entry.get("group") == group:
+            entry["note"] = note
+            save_lab_schedule(schedule)
+            return
+    # Yeni ekle — Aynı tarihte farklı gruplar olabilir
+    schedule.append({"week": week_start_str, "group": group, "note": note,
+                     "added": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")})
+    schedule = sorted(schedule, key=lambda x: (x["week"], x.get("group","")))
+    save_lab_schedule(schedule)
+
+def get_upcoming_lab_weeks(n=4):
+    """Yaklaşan n hafta laboratuvar programını döndür."""
+    from datetime import date, timedelta
+    schedule = load_lab_schedule()
+    today    = date.today()
+    result   = []
+    for entry in schedule:
+        try:
+            wd = __import__("datetime").date.fromisoformat(entry["week"])
+            if wd >= today - timedelta(days=6):
+                result.append(entry)
+        except: pass
+    return result[:n]
+
+def add_user_note(uid: str, note_type: str, content: str, file_id: str = None, subject: str = "أخرى"):
+    """Not ekle (type: text/photo/voice/document)."""
+    d = load_personal_notes()
+    notes = get_user_notes(uid)
+    import time
+    note = {
+        "type": note_type,
+        "content": content[:500],
+        "id": str(int(time.time())),
+        "time": datetime.now(IRAQ_TZ).strftime("%d/%m %H:%M"),
+        "subject": subject,
+    }
+    if file_id:
+        note["file_id"] = file_id
+    notes.append(note)
+    d[str(uid)] = notes[-20:]  # max 20 not
+    save_personal_notes(d)
+
+def delete_user_note(uid: str, note_id: str):
+    d = load_personal_notes()
+    notes = get_user_notes(uid)
+    notes = [n for n in notes if n.get("id") != note_id]
+    d[str(uid)] = notes
+    save_personal_notes(d)
+
+# Eski compat
 def get_personal_note(uid: str) -> str:
-    return load_personal_notes().get(str(uid), "")
+    notes = get_user_notes(uid)
+    return notes[0]["content"] if notes else ""
 
 def set_personal_note(uid: str, text: str):
-    d = load_personal_notes()
-    d[str(uid)] = text[:2000]
-    save_personal_notes(d)
+    add_user_note(uid, "text", text)
 
 def add_reminder(uid: str, text: str, fire_ts: float):
     rems = load_reminders()
     rems.append({"uid": str(uid), "text": text, "fire_ts": fire_ts,
-                 "created": datetime.now().strftime("%Y-%m-%d %H:%M")})
+                 "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")})
     save_reminders(rems)
 
 def get_user_reminders(uid: str) -> list:
@@ -1446,41 +1355,83 @@ def delete_reminder(uid: str, idx: int):
     save_reminders(rems)
 
 def parse_time_input(text: str) -> int:
-    """'30d'→30dk, '2s'→120dk, '1g'→1440dk. None dönerse geçersiz."""
+    """
+    Doğal dil zaman ifadesini dakikaya çevirir.
+    Örnekler:
+      '2 saat'       → 120
+      '30 dakika'    → 30
+      '1 gün'        → 1440
+      '1.5 saat'     → 90
+      '2s', '30d'    → kısa format da desteklenir
+    """
     import re
     text = text.strip().lower()
-    m = re.match(r'^(\d+(?:\.\d+)?)\s*([dsghmDSGHM]?)$', text)
-    if not m: return 0
-    val, unit = float(m.group(1)), m.group(2)
-    if unit in ('d',):   return int(val)           # dakika
-    if unit in ('s',):   return int(val * 60)       # saat→dk
-    if unit in ('g', 'h'): return int(val * 1440)  # gün→dk
-    if unit in ('m',):   return int(val)
-    return int(val)
+    total = 0
 
-def add_countdown(name: str, date_str: str, cls: str = "") -> bool:
-    """date_str: 'DD/MM/YYYY' formatında."""
+    # Türkçe + Arapça zaman kelimeleri
+    patterns = [
+        (r'(\d+(?:[.,]\d+)?)\s*(?:saat|ساعة|ساعات|hour|hours|s\b)',    60),
+        (r'(\d+(?:[.,]\d+)?)\s*(?:gün|يوم|أيام|day|days|g\b)',         1440),
+        (r'(\d+(?:[.,]\d+)?)\s*(?:dakika|دقيقة|دقائق|minute|minutes|min|dk|d\b)', 1),
+        (r'(\d+(?:[.,]\d+)?)\s*(?:hafta|أسبوع|week|weeks)',             10080),
+    ]
+    for pattern, multiplier in patterns:
+        for m in re.finditer(pattern, text):
+            val = float(m.group(1).replace(',', '.'))
+            total += int(val * multiplier)
+
+    return total if total > 0 else 0
+
+def add_countdown(name: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
+    """date_str: 'DD/MM/YYYY'. shift: sabahi/masaiy. group: A/B/C veya boş=hepsi"""
     try:
         from datetime import datetime as dt
         target = dt.strptime(date_str.strip(), "%d/%m/%Y")
         cd = load_countdowns()
         cd.append({"name": name, "date": date_str, "ts": target.timestamp(),
-                   "cls": cls, "created": datetime.now().strftime("%Y-%m-%d")})
+                   "cls": cls, "shift": shift, "group": group,
+                   "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
         save_countdowns(cd)
         return True
     except: return False
 
-def get_countdowns(cls: str = "") -> list:
-    """Gelecekteki geri sayımları döndür."""
+def get_countdowns(cls: str = "", shift: str = "", uid: str = "") -> list:
+    """Gelecekteki geri sayımları döndür. Ek sınıf kayıtlarını da dahil eder."""
     import time
     now = time.time()
     cd  = load_countdowns()
+    # Kullanıcının ek sınıflarını al
+    extra_cls = []
+    if uid:
+        extra_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+        extra_cls  = extra_data.get(str(uid), [])
+    # Ana sınıf + ek sınıflar
+    all_cls = []
+    if cls: all_cls.append(cls)
+    for ec in extra_cls:
+        if ec not in all_cls: all_cls.append(ec)
     result = []
     for c in cd:
         if c.get("ts", 0) > now:
-            if not cls or not c.get("cls") or c.get("cls") == cls:
-                days_left = int((c["ts"] - now) / 86400)
-                result.append({**c, "days_left": days_left})
+            cd_cls   = c.get("cls", "")
+            cd_shift = c.get("shift", "")
+            # Sınıf — ana veya ek sınıftan biri eşleşmeli
+            if all_cls and cd_cls and cd_cls not in all_cls:
+                continue
+            # Grup — A/B/C filtresi
+            cd_grp = c.get("group","")
+            if cd_grp and uid:
+                u_grp = load_groups().get(str(uid),"")
+                if not u_grp.startswith(cd_grp):
+                    continue
+            # Shift
+            if cd_shift and shift:
+                u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
+                c_norm = "sabahi" if cd_shift in ("sabahi","sabah") else "masaiy"
+                if u_norm != c_norm:
+                    continue
+            days_left = int((c["ts"] - now) / 86400)
+            result.append({**c, "days_left": days_left})
     return sorted(result, key=lambda x: x["ts"])
 
 # ================================================================
@@ -1491,255 +1442,6 @@ def get_countdowns(cls: str = "") -> list:
 import re as _re
 import asyncio
 import html as _html
-
-def _detect_subject(text: str) -> Optional[str]:
-    """Metnin hangi akademik konuya ait olduğunu tespit eder."""
-    norm = text.lower()
-    if any(kw in norm for kw in MATH_SUBJECTS_AR):     return "math"
-    if any(kw in norm for kw in PHYSICS_SUBJECTS_AR):  return "physics"
-    if any(kw in norm for kw in CHEMISTRY_SUBJECTS_AR):return "chemistry"
-    if any(kw in norm for kw in {"برمجة","programming","algorithm","code"}): return "programming"
-    if any(kw in norm for kw in ALL_ACADEMIC_SUBJECTS): return "engineering"
-    return None
-
-def _is_question(text: str) -> bool:
-    """Soru mu yoksa rastgele mesaj mı?"""
-    question_indicators = [
-        "?", "؟", "كيف", "ما", "من", "متى", "أين", "لماذا", "كم",
-        "احسب", "اوجد", "حل", "اشرح", "ما هو", "ما هي",
-        "solve", "calculate", "find", "explain", "what is", "how to",
-        "define", "عرف", "اثبت", "prove",
-    ]
-    norm = text.lower()
-    return any(ind in norm for ind in question_indicators) or len(text.split()) >= 4
-
-_GREETINGS = {
-    "slm", "selam", "merhaba", "mrb", "hey", "hi", "hello",
-    "سلام", "سلاموا", "هاي", "هلو", "أهلا", "اهلا", "اهلاً",
-    "السلام عليكم", "سلام عليكم", "وعليكم السلام", "مرحبا", "مرحباً",
-    "صباح الخير", "مساء الخير", "صباح النور", "مساء النور",
-    "هلا", "هلا والله", "ايش الاخبار", "كيف الحال",
-}
-
-def _is_greeting(text: str) -> bool:
-    """Selamlama mesajı mı?"""
-    norm = text.strip().lower()
-    return norm in _GREETINGS or any(norm.startswith(g + " ") or norm == g for g in _GREETINGS)
-
-def _try_math_eval(expr: str) -> Optional[str]:
-    """
-    Saf matematik ifadelerini Python ile hesapla.
-    Güvenli: sadece sayı + operatörler.
-    """
-    # Arapça sayıları çevir
-    ar_digits = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
-    expr = expr.translate(ar_digits)
-
-    # Basit ifade mi?
-    clean = _re.sub(r'[0-9\s\+\-\*\/\(\)\.\,\^√πe]+', '', expr)
-    if clean and not any(kw in clean.lower() for kw in ["sin","cos","tan","log","sqrt","pi","pow"]):
-        return None
-
-    # Python uyumlu hale getir
-    expr2 = expr
-    expr2 = expr2.replace("^", "**")
-    expr2 = expr2.replace("√", "sqrt(").replace("×", "*").replace("÷", "/")
-    expr2 = expr2.replace(",", ".")
-
-    try:
-        import math
-        safe_env = {
-            "__builtins__": {},
-            "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos,
-            "tan": math.tan, "log": math.log, "log10": math.log10,
-            "pi": math.pi, "e": math.e, "pow": math.pow, "abs": abs,
-            "round": round, "floor": math.floor, "ceil": math.ceil,
-        }
-        # Güvenli eval
-        result = eval(compile(expr2, "<string>", "eval"), safe_env)
-        if isinstance(result, (int, float)):
-            if isinstance(result, float) and result.is_integer():
-                return str(int(result))
-            return f"{result:.6g}"
-    except Exception:
-        pass
-    return None
-
-async def web_search_ddg(query: str) -> Optional[dict]:
-    """
-    DuckDuckGo Instant Answer API — ücretsiz, kayıt gerektirmez.
-    Sonuç: {"text": ..., "source": ...} veya None
-    """
-    import aiohttp, urllib.parse
-
-    # Cache kontrolü
-    cache = load_search_cache()
-    cache_key = query[:100]
-    if cache_key in cache:
-        entry = cache[cache_key]
-        import time
-        if time.time() - entry.get("ts", 0) < SEARCH_CACHE_TTL:
-            return entry.get("result")
-
-    url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&no_redirect=1"
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=SEARCH_TIMEOUT),
-                                   headers={"User-Agent": "Mozilla/5.0"}) as resp:
-                if resp.status != 200: return None
-                data = await resp.json(content_type=None)
-
-        # AbstractText → en iyi sonuç
-        text = data.get("AbstractText","").strip()
-        source = data.get("AbstractSource","") or "DuckDuckGo"
-        url_result = data.get("AbstractURL","")
-
-        # Answer (hesap sonucu vb.)
-        if not text:
-            text = data.get("Answer","").strip()
-            source = "DuckDuckGo"
-
-        # Definition
-        if not text:
-            text = data.get("Definition","").strip()
-            source = data.get("DefinitionSource","") or "DuckDuckGo"
-
-        # Related Topics
-        if not text:
-            topics = data.get("RelatedTopics",[])
-            for t in topics[:3]:
-                if isinstance(t, dict) and t.get("Text"):
-                    text = t["Text"][:400].strip()
-                    source = "DuckDuckGo"
-                    break
-
-        if not text: return None
-
-        # HTML temizle
-        text = _html.unescape(text)
-        text = _re.sub(r'<[^>]+>', '', text)
-        text = text[:800]
-
-        result = {"text": text, "source": source, "url": url_result}
-
-        # Cache'e kaydet
-        import time
-        cache[cache_key] = {"result": result, "ts": time.time()}
-        save_search_cache(cache)
-        return result
-
-    except Exception as e:
-        logger.warning(f"DDG arama hatası: {e}")
-        return None
-
-async def web_search_wikipedia(query: str, lang: str = "ar") -> Optional[dict]:
-    """
-    Wikipedia API — ücretsiz özet.
-    lang: "ar" (Arapça) veya "en" (İngilizce)
-    """
-    import aiohttp, urllib.parse
-
-    cache = load_search_cache()
-    cache_key = f"wiki_{lang}_{query[:80]}"
-    if cache_key in cache:
-        entry = cache[cache_key]
-        import time
-        if time.time() - entry.get("ts",0) < SEARCH_CACHE_TTL:
-            return entry.get("result")
-
-    # Önce arama, sonra özet
-    search_url = (
-        f"https://{lang}.wikipedia.org/w/api.php"
-        f"?action=query&list=search&srsearch={urllib.parse.quote(query)}"
-        f"&format=json&srlimit=1"
-    )
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=SEARCH_TIMEOUT)) as r:
-                if r.status != 200: return None
-                data = await r.json()
-
-        results = data.get("query",{}).get("search",[])
-        if not results: return None
-        title = results[0]["title"]
-
-        # Özet al
-        summary_url = (
-            f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/"
-            f"{urllib.parse.quote(title)}"
-        )
-        async with aiohttp.ClientSession() as session:
-            async with session.get(summary_url, timeout=aiohttp.ClientTimeout(total=SEARCH_TIMEOUT)) as r:
-                if r.status != 200: return None
-                sdata = await r.json()
-
-        text    = sdata.get("extract","")[:600]
-        page_url= sdata.get("content_urls",{}).get("desktop",{}).get("page","")
-        if not text: return None
-
-        result = {"text": text, "source": "Wikipedia", "url": page_url}
-        import time
-        cache[cache_key] = {"result": result, "ts": time.time()}
-        save_search_cache(cache)
-        return result
-
-    except Exception as e:
-        logger.warning(f"Wikipedia arama hatası: {e}")
-        return None
-
-async def smart_ai_answer(uid: str, text: str) -> tuple[str, str] | None:
-    """
-    Akıllı AI yanıt motoru.
-    Sıra: FAQ → Kural → Matematik hesap → Wikipedia → DuckDuckGo
-    Döndürür: (yanıt_metni, kaynak_etiketi) veya None
-    """
-    # 1. Önce FAQ ve kurallar
-    rule = ai_match_rules(text)
-    if rule: return (rule, "rule")
-    faq  = ai_match_faq(text)
-    if faq: return (faq, "faq")
-
-    # Soru değilse ya da çok kısa mesajsa AI'ya bırakma
-    if not _is_question(text) or len(text.strip()) < 5:
-        return None
-
-    # 2. Saf matematik ifadesi mi?
-    math_expr = _re.sub(r'[^\d\+\-\*\/\(\)\.\,\^\s√×÷sincotaglqrpie٠-٩]', '', text.lower())
-    if len(math_expr.strip()) > 1:
-        calc = _try_math_eval(text)
-        if calc:
-            return (f"= **{calc}**", "calc")
-
-    # 3. Konuya göre Wikipedia'da ara
-    subject = _detect_subject(text)
-    if subject:
-        # Önce Arapça Wikipedia
-        wiki = await web_search_wikipedia(text, lang="ar")
-        if wiki and wiki.get("text"):
-            return (wiki["text"], f"Wikipedia — {wiki.get('url','')}")
-        # İngilizce Wikipedia fallback
-        wiki_en = await web_search_wikipedia(text, lang="en")
-        if wiki_en and wiki_en.get("text"):
-            return (wiki_en["text"], f"Wikipedia — {wiki_en.get('url','')}")
-
-    # 4. DuckDuckGo genel arama
-    ddg = await web_search_ddg(text)
-    if ddg and ddg.get("text"):
-        src = ddg.get("url","") or ddg.get("source","DuckDuckGo")
-        return (ddg["text"], src)
-
-    return None
-
-def _subject_label(uid: str, subject: Optional[str]) -> str:
-    labels = {
-        "math":        "ai_subject_math",
-        "physics":     "ai_subject_physics",
-        "chemistry":   "ai_subject_chem",
-        "programming": "ai_subject_prog",
-        "engineering": "ai_subject_eng",
-    }
-    key = labels.get(subject, "")
-    return L(uid, key) if key else ""
 
 # ── Başarı Sistemi ─────────────────────────────────────────────
 ACHIEVEMENT_DEFS = {
@@ -1814,6 +1516,192 @@ def set_pinned_msg(text: str):
     save_pinned_msgs(msgs)
 
 # ── Sınıf sistemi ─────────────────────────────────────────────
+
+# Varsayılan admin yetkileri
+DEFAULT_ADMIN_PERMS = {
+    "can_warn":        True,   # Uyarı (süper admin onayı gerekli)
+    "can_block":       True,   # Engelleme (süper admin onayı gerekli)
+    "can_broadcast":   True,   # Duyuru
+    "can_reply":       True,   # Kullanıcıya cevap
+    "can_add_folder":  True,   # Klasör ekle
+    "can_del_folder":  False,  # Klasör sil — kapalı
+    "can_add_file":    True,   # Dosya ekle
+    "can_del_file":    False,  # Dosya sil — kapalı
+    "can_rename_file": False,  # Yeniden adlandır — kapalı
+    "can_poll":        True,   # Anket kur
+    "can_quiz":        False,  # Quiz — kapalı
+    "can_countdown":   True,   # Sınav ekle
+    "can_view_users":  False,  # Kullanıcı görme — kapalı
+    "cls":             None,   # None = tüm sınıflar
+}
+
+def get_admin_perm(admin_uid: str, perm: str) -> bool:
+    """Admin'in belirli bir yetkisi var mı?"""
+    if is_main_admin(admin_uid): return True
+    perms = load_admin_perms()
+    admin_perms = perms.get(str(admin_uid), DEFAULT_ADMIN_PERMS)
+    return admin_perms.get(perm, DEFAULT_ADMIN_PERMS.get(perm, False))
+
+def get_admin_cls(admin_uid: str):
+    """Admin hangi sınıfı yönetiyor? None=hepsi."""
+    if is_main_admin(admin_uid): return None
+    perms = load_admin_perms()
+    return perms.get(str(admin_uid), {}).get("cls", None)
+
+def get_admin_grp(admin_uid: str):
+    """Admin hangi grubu yönetiyor? None=hepsi (A/B/C)."""
+    if is_main_admin(admin_uid): return None
+    perms = load_admin_perms()
+    return perms.get(str(admin_uid), {}).get("grp", None)
+
+def get_admin_shift(admin_uid: str):
+    """Admin hangi vardiyayı yönetiyor? None=hepsi."""
+    if is_main_admin(admin_uid): return None
+    perms = load_admin_perms()
+    return perms.get(str(admin_uid), {}).get("shift", None)
+
+def get_admin_subgrp(admin_uid: str):
+    """Admin hangi alt grubu yönetiyor? None=hepsi (A1/A2/A3 vb.)."""
+    if is_main_admin(admin_uid): return None
+    perms = load_admin_perms()
+    return perms.get(str(admin_uid), {}).get("subgrp", None)
+
+def admin_can_manage_user(admin_uid: str, user_uid: str) -> bool:
+    """Admin bu kullanıcıyı yönetebilir mi? (sınıf+grup+subgrp kontrolü)"""
+    if is_main_admin(admin_uid): return True
+    adm_cls    = get_admin_cls(admin_uid)
+    adm_grp    = get_admin_grp(admin_uid)
+    adm_subgrp = get_admin_subgrp(admin_uid)
+    usr_cls    = get_user_class(user_uid)
+    usr_grp    = get_user_group(user_uid)  # A1/A2/B3 vb.
+    # Sınıf kontrolü
+    if adm_cls and usr_cls != adm_cls:
+        return False
+    # Grup kontrolü (A/B/C)
+    if adm_grp and (not usr_grp or not usr_grp.startswith(adm_grp)):
+        return False
+    # Alt grup kontrolü (A1/A2/A3)
+    if adm_subgrp and usr_grp != adm_subgrp:
+        return False
+    return True
+
+def set_admin_perm(admin_uid: str, perm: str, value):
+    perms = load_admin_perms()
+    if str(admin_uid) not in perms:
+        perms[str(admin_uid)] = dict(DEFAULT_ADMIN_PERMS)
+    perms[str(admin_uid)][perm] = value
+    save_admin_perms(perms)
+
+
+def build_target_keyboard(prefix: str, step: str, val: str = "") -> list:
+    """
+    Adım adım hedefleme klavyesi.
+    step: "cls" | "shift" | "grp"
+    prefix: callback_data başı (örn: "poll|tgt" veya "bcast|tgt")
+    val: önceki seçimler ("|" ile ayrılmış)
+    """
+    sep = "|" if val else ""
+    base = f"{prefix}|{val}{sep}" if val else f"{prefix}|"
+
+    if step == "cls":
+        kb = [
+            [InlineKeyboardButton("🌐 الجميع", callback_data=f"{base}cls_all|shift")],
+        ]
+        for cls_id, cls_def in CLASS_DEFS.items():
+            lbl = get_class_display_name(cls_id)
+            kb.append([InlineKeyboardButton(lbl, callback_data=f"{base}cls_{cls_id}|shift")])
+        return kb
+
+    if step == "shift":
+        kb = [
+            [InlineKeyboardButton("🌐 الكل",    callback_data=f"{base}sft_all|grp"),
+             InlineKeyboardButton("☀️ صباحي",  callback_data=f"{base}sft_sabahi|grp"),
+             InlineKeyboardButton("🌙 مسائي",  callback_data=f"{base}sft_masaiy|grp")],
+        ]
+        return kb
+
+    if step == "grp":
+        # Grup seçimi — seçince direkt done (alt grup yok)
+        kb = [
+            [InlineKeyboardButton("🌐 الكل", callback_data=f"{base}grp_all|done"),
+             InlineKeyboardButton("A",        callback_data=f"{base}grp_A|done"),
+             InlineKeyboardButton("B",        callback_data=f"{base}grp_B|done"),
+             InlineKeyboardButton("C",        callback_data=f"{base}grp_C|done")],
+        ]
+        return kb
+
+    return []
+
+def parse_target_val(val: str) -> dict:
+    """
+    'cls_1|sft_sabahi|grp_A|sub_A2' → {cls:"1", shift:"sabahi", grp:"A", subgrp:"A2"}
+    """
+    result = {"cls": None, "shift": None, "grp": None, "subgrp": None}
+    for part in val.split("|"):
+        part = part.strip()
+        if part.startswith("cls_") and part != "cls_all":
+            result["cls"] = part[4:]
+        elif part.startswith("sft_") and part != "sft_all":
+            result["shift"] = part[4:]
+        elif part.startswith("grp_") and part != "grp_all":
+            result["grp"] = part[4:]
+        elif part.startswith("sub_") and part != "sub_all":
+            result["subgrp"] = part[4:]
+    return result
+
+def get_target_users(target_val: str) -> list:
+    """Hedef kullanıcı listesini döndür."""
+    t     = parse_target_val(target_val)
+    users = load_users()
+    shfts = load_shifts()
+    grps  = load_groups()
+    result = []
+    for uid_ in users:
+        if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
+        if t["cls"] and get_user_class(uid_) != t["cls"]: continue
+        if t["shift"]:
+            u_shift = shfts.get(uid_, "")
+            # sabah/gece eski değerleri de eşleştir
+            if t["shift"] == "sabahi" and u_shift not in ("sabahi","sabah"): continue
+            if t["shift"] == "masaiy" and u_shift not in ("masaiy","gece"): continue
+        if t["grp"]:
+            u_grp = grps.get(uid_, "")
+            if not u_grp.startswith(t["grp"]): continue
+        if t["subgrp"] and grps.get(uid_,"") != t["subgrp"]: continue
+        result.append(uid_)
+    return result
+
+def target_label(target_val: str) -> str:
+    """Hedef açıklaması."""
+    t = parse_target_val(target_val)
+    parts = []
+    if t["cls"]: parts.append(get_class_display_name(t["cls"]))
+    if t["shift"]: parts.append("صباحي" if t["shift"]=="sabahi" else "مسائي")
+    if t["grp"]: parts.append(f"Grup {t['grp']}")
+    if t["subgrp"]: parts.append(t["subgrp"])
+    return " / ".join(parts) if parts else "الجميع"
+
+def include_admins_in_targets(target_uids: list) -> list:
+    """Secondary admins are always included in broadcast/poll targets."""
+    target_set = set(str(u) for u in target_uids)
+    for adm_id in load_admins():
+        if not is_blocked(str(adm_id)):
+            target_set.add(str(adm_id))
+    return list(target_set)
+
+def get_user_group(uid: str) -> str:
+    """A1/A2/A3/B1/B2/B3/C1/C2/C3 formatında grup döndür."""
+    return load_groups().get(str(uid), "")
+
+def set_user_group(uid: str, group: str):
+    d = load_groups(); d[str(uid)] = group; save_groups(d)
+
+def users_by_group(cls: str, group: str) -> list:
+    """Belirli sınıf ve gruptaki kullanıcıları döndür."""
+    cls_users = users_by_class(cls)
+    groups    = load_groups()
+    return [u for u in cls_users if groups.get(u) == group]
+
 def get_user_class(uid: str) -> str:
     """Kullanıcının seçtiği sınıfı döndürür. None = seçmemiş."""
     return load_classes().get(str(uid))
@@ -1827,8 +1715,7 @@ def class_label(uid: str) -> str:
     """Kullanıcının sınıfını görüntülenebilir metin olarak döndürür."""
     cls = get_user_class(str(uid))
     if not cls: return L(uid, "class_unknown")
-    d = CLASS_DEFS.get(cls, {})
-    return d.get("ar", cls) if not is_main_admin(uid) else d.get("tr", cls)
+    return get_class_display_name(cls)
 
 def users_by_class(cls: str) -> list:
     """Belirli bir sınıftaki kullanıcı ID listesi."""
@@ -1850,86 +1737,290 @@ def check_rate_limit(uid: str) -> bool:
     return True
 
 # ── İç Yapay Zeka (FAQ + Kural motoru) ───────────────────────
-def _normalize(text: str) -> str:
-    import re
-    text = text.lower().strip()
-    text = re.sub(r'[؟?!.,،\-]+', ' ', text)
-    # Arapça hareke kaldır
-    text = re.sub(r'[\u064B-\u065F]', '', text)
-    return ' '.join(text.split())
+# ================================================================
+#  TAM YEDEK (tek JSON dosyası) — oluştur / geri yükle
+# ================================================================
+def create_full_backup() -> bytes:
+    """Tüm veri dosyalarını tek bir JSON bytes nesnesine paketler."""
+    bundle = {}
+    for key, fpath in BACKUP_SCHEMA.items():
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    bundle[key] = json.load(f)
+            except Exception:
+                pass
+    return json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8")
 
-def ai_match_faq(text: str) -> Optional[str]:
-    """FAQ'dan eşleşme ara. Bulunursa cevabı döndürür."""
-    norm  = _normalize(text)
-    faqs  = load_faq()
-    best  = None
-    best_score = 0
-    for item in faqs:
-        for kw in item.get("keywords", []):
-            kw_norm = _normalize(kw)
-            if kw_norm in norm or norm in kw_norm:
-                score = len(kw_norm)
-                if score > best_score:
-                    best_score = score
-                    best = item["answer"]
-    return best
 
-def ai_match_rules(text: str) -> Optional[str]:
-    """Otomatik kural motorunda eşleşme ara."""
-    norm  = _normalize(text)
-    rules = load_auto_rules()
-    for rule in rules:
-        for kw in rule.get("keywords", []):
-            if _normalize(kw) in norm:
-                return rule["response"]
-    return None
+def restore_full_backup(raw: bytes):
+    """Tek JSON bytes nesnesinden tüm dosyaları geri yükler.
+    Returns (success: bool, count: int, error: str)"""
+    try:
+        bundle = json.loads(raw.decode("utf-8"))
+    except Exception as e:
+        return False, 0, str(e)
+    count = 0
+    for key, data in bundle.items():
+        fpath = BACKUP_SCHEMA.get(key)
+        if fpath:
+            try:
+                os.makedirs(os.path.dirname(fpath), exist_ok=True)
+                with open(fpath, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                count += 1
+            except Exception:
+                pass
+    return True, count, ""
 
-def ai_recommend_files(uid: str, n: int = 5) -> list:
-    """
-    Kullanıcının sınıfı + görüntüleme geçmişine göre dosya önerir.
-    Basit kural: sınıfla eşleşen klasördeki en çok görüntülenen dosyalar.
-    """
-    cls = get_user_class(uid)
-    if not cls: return []
-    cls_name_ar = CLASS_DEFS.get(cls, {}).get("ar", "")
-    content = load_content()
-    vc      = load_view_counts()
-    recent_keys = {
-        (r["file"].get("file_id") or r["file"].get("caption","?"))
-        for r in get_recently_viewed(uid)
-    }
 
-    candidates = []
-    # Kullanıcının sınıfıyla eşleşen klasörleri tara
-    for folder_name, folder in content.get("folders", {}).items():
-        # Sınıf klasörüyle eşleşiyor mu?
-        if cls_name_ar and cls_name_ar not in folder_name and cls not in folder_name:
-            continue
-        for f in folder.get("files", []):
-            key   = f.get("file_id") or f.get("caption","?")
-            count = vc.get(key, {}).get("count", 0) if isinstance(vc.get(key), dict) else 0
-            if key not in recent_keys:
-                candidates.append((f, count, folder_name))
-        for sub_name, sub in folder.get("folders", {}).items():
-            for f in sub.get("files", []):
-                key   = f.get("file_id") or f.get("caption","?")
-                count = vc.get(key, {}).get("count", 0) if isinstance(vc.get(key), dict) else 0
-                if key not in recent_keys:
-                    candidates.append((f, count, f"{folder_name} › {sub_name}"))
+# ================================================================
+#  EXCEL YARDIMCILARI
+# ================================================================
+def _excel_header(ws, cols, color_hex="1F4E79"):
+    from openpyxl.styles import PatternFill, Font, Alignment
+    fill = PatternFill("solid", fgColor=color_hex)
+    font = Font(bold=True, color="FFFFFF", size=11)
+    for col_idx, title in enumerate(cols, 1):
+        cell = ws.cell(row=1, column=col_idx, value=title)
+        cell.fill = fill; cell.font = font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 20
 
-    candidates.sort(key=lambda x: x[1], reverse=True)
-    return candidates[:n]
 
-def ai_respond(uid: str, text: str) -> Optional[str]:
-    """
-    Gelen mesaja yanıt üret. None = yanıt yok (normal bot akışına bırak).
-    Öncelik: kurallar > FAQ > öneri teklifi
-    """
-    rule = ai_match_rules(text)
-    if rule: return rule
-    faq  = ai_match_faq(text)
-    if faq: return faq
-    return None
+def _excel_row(ws, row_num, values, color_hex=None):
+    from openpyxl.styles import PatternFill, Alignment
+    fill = PatternFill("solid", fgColor=color_hex) if color_hex else None
+    for col_idx, val in enumerate(values, 1):
+        cell = ws.cell(row=row_num, column=col_idx, value=val)
+        if fill: cell.fill = fill
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+
+def _auto_col_width(ws, min_w=8, max_w=40):
+    for col in ws.columns:
+        max_len = 0
+        for cell in col:
+            try:
+                cell_len = len(str(cell.value or ""))
+                if cell_len > max_len: max_len = cell_len
+            except Exception:
+                pass
+        ws.column_dimensions[col[0].column_letter].width = min(max(max_len + 4, min_w), max_w)
+
+
+def build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
+                    polls_d, leaderboard_d, blocked_list, admins_list,
+                    chunk_size: int = 5000):
+    """Tüm kullanıcılar için kapsamlı Excel. Returns list[(bytes, part_no)]."""
+    from openpyxl import Workbook
+
+    cols2 = ["Tarih", "Kullanıcı ID", "Ad", "Tür", "İçerik / Başlık"]
+    TYPE_COLORS = {"photo": "FFF3E0", "video": "FFF3E0", "document": "FFF3E0",
+                   "search": "E8F5E9", "ai_query": "E3F2FD"}
+
+    # Tüm mesajları topla
+    all_msgs = []
+    for uid_, mlist in msgs_d.items():
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", uid_)
+        for m in mlist:
+            all_msgs.append((m.get("time", ""), uid_, name,
+                             m.get("type", "msg"), m.get("text", "")[:120]))
+    all_msgs.sort(key=lambda x: x[0], reverse=True)
+
+    results = []
+
+    # ── DOSYA 1: Ana dosya ────────────────────────────
+    wb = Workbook()
+
+    # Sayfa 1: Kullanıcılar
+    ws1 = wb.active; ws1.title = "Kullanıcılar"
+    ws1.freeze_panes = "A2"
+    cols1 = ["ID", "Ad Soyad", "Kullanıcı Adı", "Sınıf", "Kayıt Tarihi",
+             "Son Görülme", "Mesaj Sayısı", "Uyarı Sayısı", "Puan", "Admin", "Bloke", "Not"]
+    _excel_header(ws1, cols1, "1F4E79")
+    row = 2
+    for uid_, u in sorted(users_d.items(), key=lambda x: x[1].get("first_seen", ""), reverse=True):
+        cls_key = classes_d.get(uid_, "")
+        cls_name = CLASS_DEFS.get(cls_key, {}).get("tr", "—")
+        msg_count = len(msgs_d.get(uid_, []))
+        w_count = len(warns_d.get(uid_, []))
+        score = leaderboard_d.get(uid_, 0)
+        is_adm = "✅" if int(uid_) in admins_list or int(uid_) == ADMIN_ID else ""
+        is_blk = "🚫" if int(uid_) in blocked_list else ""
+        note = notes_d.get(uid_, "")
+        name = u.get("full_name") or u.get("first_name", "—")
+        un = f"@{u['username']}" if u.get("username") else "—"
+        color = "FFE0E0" if is_blk else ("E0EEFF" if is_adm else ("F9F9F9" if row % 2 == 0 else None))
+        _excel_row(ws1, row, [uid_, name, un, cls_name,
+                               u.get("first_seen", "—"), u.get("last_seen", "—"),
+                               msg_count, w_count, score, is_adm, is_blk, note], color)
+        row += 1
+    _auto_col_width(ws1)
+
+    # Sayfa 2: Mesaj Geçmişi (Bölüm 1)
+    ws2 = wb.create_sheet("Mesaj Geçmişi")
+    ws2.freeze_panes = "A2"
+    _excel_header(ws2, cols2, "375623")
+    row = 2
+    for t, uid_, name, typ, text in all_msgs[:chunk_size]:
+        color = TYPE_COLORS.get(typ, ("F9F9F9" if row % 2 == 0 else None))
+        _excel_row(ws2, row, [t, uid_, name, typ, text], color)
+        row += 1
+    _auto_col_width(ws2)
+
+    # Sayfa 3: Uyarılar & Notlar
+    ws3 = wb.create_sheet("Uyarılar & Notlar")
+    ws3.freeze_panes = "A2"
+    cols3 = ["Kullanıcı ID", "Ad", "Kullanıcı Adı", "Sınıf", "Uyarı Sayısı", "Uyarı Detayları", "Admin Notu"]
+    _excel_header(ws3, cols3, "833C00")
+    row = 2
+    for uid_ in set(warns_d.keys()) | set(notes_d.keys()):
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", "—")
+        un = f"@{u['username']}" if u.get("username") else "—"
+        cls_name = CLASS_DEFS.get(classes_d.get(uid_, ""), {}).get("tr", "—")
+        wlist = warns_d.get(uid_, [])
+        details = " | ".join(w.get("reason", "") for w in wlist)
+        note = notes_d.get(uid_, "")
+        color = "FFE0E0" if len(wlist) >= 3 else ("FFF3CD" if wlist else None)
+        _excel_row(ws3, row, [uid_, name, un, cls_name, len(wlist), details[:200], note], color)
+        row += 1
+    _auto_col_width(ws3)
+
+    # Sayfa 4: Anket Sonuçları
+    ws4 = wb.create_sheet("Anket Sonuçları")
+    ws4.freeze_panes = "A2"
+    cols4 = ["Anket ID", "Soru", "Tür", "Aktif", "Toplam Oy", "Seçenekler & Oylar"]
+    _excel_header(ws4, cols4, "7B2C9E")
+    row = 2
+    for pid, poll in polls_d.items():
+        q = poll.get("question", "—")
+        typ = "Açık Uçlu" if poll.get("type") == "open" else "Çoktan Seçmeli"
+        active = "✅" if poll.get("active") else "❌"
+        votes = poll.get("votes", {})
+        opts = poll.get("options", [])
+        if opts:
+            counts = {}
+            for v in votes.values(): counts[v] = counts.get(v, 0) + 1
+            opts_str = " | ".join(f"{o}:{counts.get(o,0)}" for o in opts)
+        else:
+            opts_str = f"{len(votes)} yazılı cevap"
+        _excel_row(ws4, row, [pid, q, typ, active, len(votes), opts_str],
+                   "F3E8FF" if row % 2 == 0 else None)
+        row += 1
+    _auto_col_width(ws4)
+
+    # Sayfa 5: İstatistikler
+    ws5 = wb.create_sheet("İstatistikler")
+    _excel_header(ws5, ["Metrik", "Değer"], "2E4057")
+    stats = [
+        ("Toplam Kullanıcı",  len(users_d)),
+        ("Toplam Admin",      len([u for u in users_d if int(u) in admins_list]) + 1),
+        ("Bloke Kullanıcı",   len(blocked_list)),
+        ("Toplam Mesaj (log)", sum(len(v) for v in msgs_d.values())),
+        ("Toplam Anket",      len(polls_d)),
+        ("Aktif Anket",       sum(1 for p in polls_d.values() if p.get("active"))),
+        ("Toplam Uyarı",      sum(len(v) for v in warns_d.values())),
+        ("Rapor Tarihi",      datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")),
+    ]
+    lb_sorted = sorted(leaderboard_d.items(), key=lambda x: x[1], reverse=True)[:5]
+    for i, (uid_, sc) in enumerate(lb_sorted, 1):
+        u = users_d.get(uid_, {})
+        name = u.get("full_name") or u.get("first_name", uid_)
+        stats.append((f"Top {i}: {name}", f"{sc} puan"))
+    for r, (k, v) in enumerate(stats, 2):
+        _excel_row(ws5, r, [k, v], "EBF5FB" if r % 2 == 0 else None)
+    _auto_col_width(ws5)
+
+    buf = io.BytesIO(); wb.save(buf)
+    results.append((buf.getvalue(), 1))
+
+    # ── EK DOSYALAR: Mesaj bölüm 2, 3... ─────────────
+    if len(all_msgs) > chunk_size:
+        for part, start in enumerate(range(chunk_size, len(all_msgs), chunk_size), 2):
+            chunk = all_msgs[start:start + chunk_size]
+            wb_c = Workbook()
+            ws_c = wb_c.active; ws_c.title = "Mesaj Geçmişi"
+            ws_c.freeze_panes = "A2"
+            _excel_header(ws_c, cols2, "375623")
+            r = 2
+            for t, uid_, name, typ, text in chunk:
+                color = TYPE_COLORS.get(typ, ("F9F9F9" if r % 2 == 0 else None))
+                _excel_row(ws_c, r, [t, uid_, name, typ, text], color)
+                r += 1
+            _auto_col_width(ws_c)
+            buf_c = io.BytesIO(); wb_c.save(buf_c)
+            results.append((buf_c.getvalue(), part))
+
+    return results
+
+
+def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
+                     warns_d, notes_d, polls_d, leaderboard_d,
+                     favorites_d, recent_d) -> bytes:
+    """Tek kullanıcı için detaylı Excel."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    u = users_d.get(uid_, {})
+    name = u.get("full_name") or u.get("first_name", "—")
+    cls_name = CLASS_DEFS.get(classes_d.get(uid_, ""), {}).get("tr", "—")
+
+    # Sayfa 1: Profil
+    ws1 = wb.active; ws1.title = "Profil"
+    _excel_header(ws1, ["Alan", "Değer"], "1F4E79")
+    wlist = warns_d.get(uid_, [])
+    profile = [
+        ("Kullanıcı ID",    uid_),
+        ("Ad Soyad",        name),
+        ("Kullanıcı Adı",   f"@{u['username']}" if u.get("username") else "—"),
+        ("Sınıf",           cls_name),
+        ("Kayıt Tarihi",    u.get("first_seen", "—")),
+        ("Son Görülme",     u.get("last_seen", "—")),
+        ("Mesaj Sayısı",    len(msgs_d.get(uid_, []))),
+        ("Uyarı Sayısı",    len(wlist)),
+        ("Puan",            leaderboard_d.get(uid_, 0)),
+        ("Dil",             u.get("language_code", "—")),
+    ]
+    for r, (k, v) in enumerate(profile, 2):
+        _excel_row(ws1, r, [k, v], "EBF5FB" if r % 2 == 0 else None)
+    _auto_col_width(ws1)
+
+    # Sayfa 2: Mesaj Geçmişi
+    ws2 = wb.create_sheet("Mesaj Geçmişi")
+    ws2.freeze_panes = "A2"
+    _excel_header(ws2, ["Tarih", "Tür", "İçerik"], "375623")
+    TYPE_COLORS = {"photo": "FFF3E0", "video": "FFF3E0", "document": "FFF3E0",
+                   "search": "E8F5E9", "ai_query": "E3F2FD"}
+    for r, m in enumerate(msgs_d.get(uid_, []), 2):
+        color = TYPE_COLORS.get(m.get("type", ""), ("F9F9F9" if r % 2 == 0 else None))
+        _excel_row(ws2, r, [m.get("time", ""), m.get("type", ""), m.get("text", "")[:200]], color)
+    _auto_col_width(ws2)
+
+    # Sayfa 3: Uyarılar
+    ws3 = wb.create_sheet("Uyarılar")
+    ws3.freeze_panes = "A2"
+    _excel_header(ws3, ["Tarih", "Sebep", "Yazan Admin"], "833C00")
+    for r, w in enumerate(wlist, 2):
+        _excel_row(ws3, r, [w.get("time", ""), w.get("reason", ""), w.get("by", "")],
+                   "FFE0E0" if r % 2 == 0 else None)
+    _auto_col_width(ws3)
+
+    # Sayfa 4: Anket Katılımı
+    ws4 = wb.create_sheet("Anket Katılımı")
+    ws4.freeze_panes = "A2"
+    _excel_header(ws4, ["Anket ID", "Soru", "Verilen Cevap"], "7B2C9E")
+    for r, (pid, poll) in enumerate(polls_d.items(), 2):
+        vote = poll.get("votes", {}).get(uid_)
+        if vote is not None:
+            _excel_row(ws4, r, [pid, poll.get("question", "—"), vote],
+                       "F3E8FF" if r % 2 == 0 else None)
+    _auto_col_width(ws4)
+
+    buf = io.BytesIO(); wb.save(buf)
+    return buf.getvalue()
+
 
 # ── Admin İşlem Günlüğü ───────────────────────────────────────
 def log_admin_action(admin_uid: str, action: str, detail: str = ""):
@@ -1938,9 +2029,48 @@ def log_admin_action(admin_uid: str, action: str, detail: str = ""):
         "uid":    str(admin_uid),
         "action": action,
         "detail": str(detail)[:80],
-        "time":   datetime.now().strftime("%Y-%m-%d %H:%M")
+        "time":   datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
     })
     save_admin_log(log[-500:])
+
+def load_admin_activity():
+    return load_json(ADMIN_ACTIVITY_FILE, {})
+
+def save_admin_activity(d):
+    save_json(ADMIN_ACTIVITY_FILE, d)
+
+def log_admin_activity(admin_uid: str, action_type: str, detail: dict):
+    """Detailed admin activity log. detail contains action-specific fields."""
+    data = load_admin_activity()
+    uid_str = str(admin_uid)
+    if uid_str not in data:
+        data[uid_str] = []
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Baghdad")
+    except Exception:
+        import pytz
+        tz = pytz.timezone("Asia/Baghdad")
+    entry = {
+        "time": datetime.now(tz).strftime("%Y-%m-%d %H:%M"),
+        "type": action_type,
+        **detail
+    }
+    data[uid_str].append(entry)
+    # Keep last 200 per admin
+    if len(data[uid_str]) > 200:
+        data[uid_str] = data[uid_str][-200:]
+    save_admin_activity(data)
+
+def get_sender_label(sender_uid: str) -> str:
+    """Returns display label for poll/broadcast sender."""
+    if str(sender_uid) == str(ADMIN_ID):
+        return "مشرف البوت"  # Bot supervisor
+    users_d = load_users()
+    u = users_d.get(str(sender_uid), {})
+    name = u.get("full_name") or u.get("first_name") or f"ID:{sender_uid}"
+    un = f" @{u['username']}" if u.get("username") else ""
+    return f"مسؤول الفصل: {name}{un}"
 
 # ── Uyarı Sistemi ─────────────────────────────────────────────
 def get_warns(uid: str) -> list:
@@ -1951,7 +2081,7 @@ def add_warn(uid: str, reason: str, by_uid: str) -> int:
     uid   = str(uid)
     warns.setdefault(uid, []).append({
         "reason": reason, "by": by_uid,
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M")
+        "time": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
     })
     save_warns(warns)
     return len(warns[uid])
@@ -2005,7 +2135,7 @@ def add_recently_viewed(uid: str, f: dict):
     lst    = recent.get(uid, [])
     key    = f.get("file_id") or f.get("caption","?")
     lst    = [x for x in lst if (x["file"].get("file_id") or x["file"].get("caption","?")) != key]
-    lst.append({"file": f, "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
+    lst.append({"file": f, "time": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")})
     recent[uid] = lst[-RECENT_MAX:]
     save_recent(recent)
 
@@ -2040,12 +2170,7 @@ def set_folder_desc(path: list, desc: str):
     save_folder_descs(descs)
 
 # ── Whitelist / Gizli Mod ─────────────────────────────────────
-def is_whitelisted(uid: str) -> bool:
-    wl = load_whitelist()
-    if not wl.get("enabled"): return True
-    return int(uid) == ADMIN_ID or is_admin(uid) or int(uid) in [int(x) for x in wl.get("users",[])]
 
-# ── Tüm Klasör Yolları ────────────────────────────────────────
 def all_folder_paths(node=None, prefix=None) -> list:
     if node is None:   node = load_content()
     if prefix is None: prefix = []
@@ -2059,7 +2184,7 @@ def all_folder_paths(node=None, prefix=None) -> list:
 # ── Etkin Kullanıcı Filtresi ──────────────────────────────────
 def active_users(days: int = 7) -> list:
     from datetime import timedelta
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff = (datetime.now(IRAQ_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
     users  = load_users()
     return [uid for uid, u in users.items()
             if u.get("last_seen","") >= cutoff and int(uid) != ADMIN_ID]
@@ -2067,7 +2192,7 @@ def active_users(days: int = 7) -> list:
 def new_users(days: int = 7) -> list:
     from datetime import timedelta
     msgs   = load_messages()
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    cutoff = (datetime.now(IRAQ_TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
     users  = load_users()
     new    = []
     for uid, u in users.items():
@@ -2088,7 +2213,18 @@ def get_file_view_count(f: dict) -> int:
     return v.get("count", 0) if isinstance(v, dict) else 0
 
 def make_poll_id():
-    return datetime.now().strftime("%Y%m%d%H%M%S")
+    return datetime.now(IRAQ_TZ).strftime("%Y%m%d%H%M%S")
+
+def _build_poll_target(context, uid):
+    """Assembles poll_target string from poll_tgt_cls/sft/grp in user_data."""
+    cls_val = context.user_data.get("poll_tgt_cls", "")
+    sft_val = context.user_data.get("poll_tgt_sft", "")
+    grp_val = context.user_data.get("poll_tgt_grp", "")
+    parts = []
+    if cls_val: parts.append(f"cls_{cls_val}")
+    if sft_val: parts.append(f"sft_{sft_val}")
+    if grp_val: parts.append(f"grp_{grp_val}")
+    context.user_data["poll_target"] = "|".join(parts) or "all"
 
 def poll_bar(count, total):
     """Görsel oy barı."""
@@ -2124,19 +2260,25 @@ def build_poll_results_text(poll, uid, show_voters=False):
         f"❓ {poll['question']}",
         f"",
         f"👥 {'مجموع الأصوات' if not is_main_admin(uid) else 'Toplam Oy'}: {total}",
-        f"{'─' * 28}",
+        "",
     ]
 
-    for o in opts:
-        lines.append(f"\n🔹 {o}")
+    poll_type   = poll.get("type", "choice")
+    correct_idx = poll.get("correct", -1)
+    if poll_type == "quiz" and 0 <= correct_idx < len(opts):
+        lines.append(f"✅ {'الإجابة الصحيحة' if not is_main_admin(uid) else 'Doğru Cevap'}: {opts[correct_idx]}\n")
+
+    for i, o in enumerate(opts):
+        prefix = "✅ " if (poll_type == "quiz" and i == correct_idx) else "🔹 "
+        lines.append(f"\n{prefix}{o}")
         lines.append(f"   {poll_bar(counts[o], total)}")
         if show_voters and voters[o]:
-            for v in voters[o][:10]:  # max 10 isim göster
+            for v in voters[o][:10]:
                 lines.append(f"   ├ 👤 {v}")
             if len(voters[o]) > 10:
                 lines.append(f"   └ ... +{len(voters[o])-10} kişi daha")
 
-    lines.append(f"\n{'─' * 28}")
+    lines.append("")
     active_str = "✅ Aktif" if poll.get("active") else "🔴 Kapalı"
     if is_main_admin(uid):
         lines.append(active_str)
@@ -2145,11 +2287,17 @@ def build_poll_results_text(poll, uid, show_voters=False):
 
 def load_settings():
     default = {
-        "maintenance":      False,
-        "maintenance_text": "🔧 البوت قيد التحديث، يرجى المحاولة لاحقاً...",
-        "bot_name":         "بوت مهندسي المستقبل",
-        "welcome_msg":      DEFAULT_WELCOME_AR,
-        "bot_photo_id":     None,
+        "maintenance":       False,
+        "maintenance_text":  "🔧 البوت قيد التحديث، يرجى المحاولة لاحقاً...",
+        "update_mode":       False,
+        "update_mode_text":  "🔄 البوت في وضع التحديث، يرجى الانتظار...",
+        "bot_name":          "بوت مهندسي المستقبل",
+        "welcome_msg":       DEFAULT_WELCOME_AR,
+        "bot_photo_id":      None,
+        "exam_remind_days":  [1],
+        "lab_remind_days":   [1],
+        "anon_group_id":     None,
+        "lab_remind_hour":   20,
         "user_buttons": {
             "btn_search": True,
             "btn_help":   True,
@@ -2179,7 +2327,7 @@ def register_user(user) -> bool:
         "last_name":  user.last_name  or "",
         "username":   user.username   or "",
         "full_name":  user.full_name  or "",
-        "last_seen":  datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "last_seen":  datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M:%S"),
     }
     save_users(users)
     return is_new
@@ -2188,7 +2336,7 @@ def log_user_message(user, msg_type: str, content: str, file_id: str = None):
     uid = str(user.id)
     if is_main_admin(uid): return  # sadece süper admin hariç, diğer adminler kaydedilir
     msgs = load_messages()
-    entry = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    entry = {"time": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M:%S"),
              "type": msg_type, "content": str(content)[:300]}
     if file_id: entry["file_id"] = file_id
     msgs.setdefault(uid, []).append(entry)
@@ -2230,7 +2378,7 @@ async def download_file(context, file_id: str, filename: str) -> Optional[str]:
         tg_file = await context.bot.get_file(file_id)
         # Telegram 20MB üzeri dosyalara get_file verir ama download bazen başarısız olur
         safe = "".join(c for c in filename if c.isalnum() or c in "._- ").strip() or \
-               f"file_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+               f"file_{datetime.now(IRAQ_TZ).strftime('%Y%m%d%H%M%S')}"
         dest = os.path.join(FILES_DIR, safe)
         base, ext = os.path.splitext(dest)
         n = 1
@@ -2256,7 +2404,7 @@ async def download_file(context, file_id: str, filename: str) -> Optional[str]:
  WAIT_FAQ_Q, WAIT_FAQ_A,
  WAIT_RULE_KW, WAIT_RULE_RESP,
  WAIT_SCHEDULE_HOURS, WAIT_SCHEDULE_MSG,
- WAIT_TAG, WAIT_SECRET_ID) = range(27)
+ WAIT_TAG, WAIT_SECRET_ID, WAIT_POLL_CORRECT) = range(28)
 
 ALL_BTNS = {
     TR["btn_content"],   AR["btn_content"],
@@ -2267,12 +2415,10 @@ ALL_BTNS = {
     TR["btn_help"],      AR["btn_help"],
     TR["btn_favorites"], AR["btn_favorites"],
     TR["btn_recent"],    AR["btn_recent"],
-    TR["ai_btn"],        AR["ai_btn"],
     TR["profile_btn"],   AR["profile_btn"],
     TR["btn_leaderboard"],AR["btn_leaderboard"],
     TR["btn_notes"],     AR["btn_notes"],
     TR["btn_reminder"],  AR["btn_reminder"],
-    TR["anon_q_btn"],    AR["anon_q_btn"],
     TR["countdown_btn"], AR["countdown_btn"],
     TR["quiz_btn"],      AR["quiz_btn"],
     TR["rules_btn"],     AR["rules_btn"],
@@ -2304,25 +2450,51 @@ def search_content(query: str, node=None, path=None, results=None):
     return results
 
 async def do_search(message, uid: str, query: str):
-    results = search_content(query)
+    # Kullanıcı: kendi sınıfında ara
+    if not is_admin(uid):
+        cls    = get_user_class(uid)
+        cls_ar = CLASS_DEFS.get(cls, {}).get("ar", "") if cls else ""
+        def _nar(s): return s.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+        all_c  = load_content()
+        if cls_ar:
+            node = next((v for k,v in all_c.get("folders",{}).items()
+                         if _nar(k) == _nar(cls_ar)), all_c)
+        else:
+            node = all_c
+        results = search_content(query, node=node)
+    else:
+        results = search_content(query)
+
+    # Kullanıcılar sadece klasör isimlerine göre arama yapar (dosya adları gizli)
+    if not is_admin(uid):
+        results = [r for r in results if r["is_folder"]]
+
     if not results:
         await message.reply_text(L(uid, "search_none").format(query))
         return
-    lines = [L(uid, "search_results").format(query), ""]
-    kb    = []
-    for r in results[:10]:
-        path_str = " › ".join(r["path"]) if r["path"] else "🏠"
-        icon = "📁" if r["is_folder"] else "📎"
-        lines.append(f"{icon} {r['name']}\n   📍 {path_str}")
-        if not r["is_folder"]:
+
+    kb = []
+    for r in results[:12]:
+        path_str = " › ".join(r["path"]) if r["path"] else ""
+        if r["is_folder"]:
+            fp_enc = "~~".join(r["path"] + [r["name"]])
+            label  = f"📁 {r['name'][:30]}"
+            if path_str: label += f"  ({path_str[:18]})"
+            kb.append([InlineKeyboardButton(label + " →",
+                callback_data=f"goto_folder|{fp_enc}")])
+        else:
             path_encoded = "~~".join(r["path"]) if r["path"] else ""
-            kb.append([InlineKeyboardButton(
-                f"{icon} {r['name'][:40]}",
+            label = f"📎 {r['name'][:38]}"
+            kb.append([InlineKeyboardButton(label,
                 callback_data=f"srch|{path_encoded}|{r['idx']}")])
-    await message.reply_text("\n".join(lines)[:3500])
-    if kb:
-        kb.append([InlineKeyboardButton(L(uid, "back"),  callback_data="nav|root")])
-        await message.reply_text("👆", reply_markup=InlineKeyboardMarkup(kb))
+
+    if not kb:
+        await message.reply_text(L(uid, "search_none").format(query))
+        return
+    kb.append([InlineKeyboardButton(L(uid, "back"), callback_data="nav|root")])
+    await message.reply_text(
+        L(uid, "search_results").format(query),
+        reply_markup=InlineKeyboardMarkup(kb))
 
 # ================================================================
 #  KLAVYELER
@@ -2337,10 +2509,43 @@ def reply_kb(uid):
             [KeyboardButton(TR["btn_search"]),   KeyboardButton(TR["btn_help"])],
         ], resize_keyboard=True)
     elif is_admin(uid):
-        return ReplyKeyboardMarkup([
-            [KeyboardButton(AR["btn_content"]),  KeyboardButton(AR["btn_mgmt"])],
-            [KeyboardButton(AR["btn_search"]),   KeyboardButton(AR["btn_help"])],
-        ], resize_keyboard=True)
+        s  = load_settings()
+        ub = s.get("user_buttons", {})
+        rows = []
+        # Satır 1: Ara + Mesaj Gönder (kullanıcı gibi)
+        row1 = []
+        if ub.get("btn_search",   True): row1.append(KeyboardButton(AR["btn_search"]))
+        if ub.get("btn_help",     True): row1.append(KeyboardButton(AR["btn_help"]))
+        if row1: rows.append(row1)
+        # Satır 2: Profil
+        rows.append([KeyboardButton(AR["profile_btn"])])
+        # Satır 3: Favoriler + Son
+        row3 = []
+        if ub.get("btn_favorites",True): row3.append(KeyboardButton(AR["btn_favorites"]))
+        if ub.get("btn_recent",   True): row3.append(KeyboardButton(AR["btn_recent"]))
+        if row3: rows.append(row3)
+        # Satır 4: Notlar + Hatırlatıcı
+        row4 = []
+        if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
+        if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
+        if row4: rows.append(row4)
+        # Satır 5: Sınavlar + Lab
+        row5 = []
+        if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
+        row5.append(KeyboardButton("🔬 المختبر"))
+        if row5: rows.append(row5)
+        # Satır 6: Liderboard + Quiz
+        row6 = []
+        if ub.get("btn_leaderboard",True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
+        if ub.get("quiz_btn",     True): row6.append(KeyboardButton(AR["quiz_btn"]))
+        if row6: rows.append(row6)
+        # Satır 7: Kurallar
+        rows.append([KeyboardButton(AR["rules_btn"])])
+        # Admin özel: İçerik + Güncelleme Modu
+        _s_kb = load_settings()
+        _um_lbl = "🔄 إيقاف التحديث ✅" if _s_kb.get("update_mode") else "🔄 وضع التحديث"
+        rows.append([KeyboardButton(AR["btn_content"]), KeyboardButton(_um_lbl)])
+        return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     else:
         s  = load_settings()
         ub = s.get("user_buttons", {})
@@ -2350,11 +2555,8 @@ def reply_kb(uid):
         if ub.get("btn_search",   True): row1.append(KeyboardButton(AR["btn_search"]))
         if ub.get("btn_help",     True): row1.append(KeyboardButton(AR["btn_help"]))
         if row1: rows.append(row1)
-        # Satır 2: AI Asistan + Profilim
-        row2 = []
-        if ub.get("ai_btn",       True): row2.append(KeyboardButton(AR["ai_btn"]))
-        row2.append(KeyboardButton(AR["profile_btn"]))
-        if row2: rows.append(row2)
+        # Satır 2: Profilim
+        rows.append([KeyboardButton(AR["profile_btn"])])
         # Satır 3: Favoriler + Son Görüntülenen
         row3 = []
         if ub.get("btn_favorites",True): row3.append(KeyboardButton(AR["btn_favorites"]))
@@ -2365,41 +2567,46 @@ def reply_kb(uid):
         if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
         if row4: rows.append(row4)
-        # Satır 5: Anonim Soru + Geri Sayım
+        # Satır 5: Sınavlar + Lab
         row5 = []
-        if ub.get("anon_q_btn",   True): row5.append(KeyboardButton(AR["anon_q_btn"]))
         if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
+        row5.append(KeyboardButton("🔬 المختبر"))
         if row5: rows.append(row5)
         # Satır 6: Liderboard + Test
         row6 = []
         if ub.get("btn_leaderboard", True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
         if ub.get("quiz_btn",     True): row6.append(KeyboardButton(AR["quiz_btn"]))
         if row6: rows.append(row6)
+        # Satır 7: Kurallar
+        rows.append([KeyboardButton(AR["rules_btn"])])
         if not rows: rows = [[]]
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 def folder_text(folder, path, uid):
     uid    = str(uid)
     header = "📂 " + " › ".join(path) if path else L(uid, "home")
-    lines  = [header, "─" * 22]
+    lines  = [header, ""]
     # Klasör açıklaması
     desc = get_folder_desc(path)
     if desc:
         lines.append(f"💬 {desc}")
-        lines.append("─" * 22)
+        lines.append("")
 
     folds  = folder.get("folders", {})
     files  = folder.get("files",   [])
 
-    # Kullanıcılar ana sayfada yalnızca kendi sınıf klasörlerini görür
+    # Kullanıcılar tüm sınıfların dosyalarını görebilir
+    # Kendi sınıfı önde göster
     if not path and not is_admin(uid):
         cls    = get_user_class(uid)
         cls_ar = CLASS_DEFS.get(cls, {}).get("ar", "") if cls else ""
         if cls_ar:
-            folds = {
-                name: sub for name, sub in folds.items()
-                if cls_ar in name
-            }
+            def _nar_ft(s): return s.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+            cls_ar_nft = _nar_ft(cls_ar)
+            # Kendi sınıfı en üste al
+            own   = {k: v for k, v in folds.items() if _nar_ft(k) == cls_ar_nft}
+            other = {k: v for k, v in folds.items() if _nar_ft(k) != cls_ar_nft}
+            folds = {**own, **other}
 
     if folds:
         lines.append(L(uid, "folder_list"))
@@ -2407,15 +2614,18 @@ def folder_text(folder, path, uid):
             cnt = folder_item_count(sub)
             lines.append(f"  • {name}" + (f"  ({cnt})" if cnt else ""))
     if files:
-        lines.append(L(uid, "file_list"))
-        pinned = [f for f in files if f.get("pinned")]
-        normal = [f for f in files if not f.get("pinned")]
-        for f in pinned + normal:
-            pin = "📌" if f.get("pinned") else "  "
-            lines.append(f" {pin} {f.get('caption', f.get('name','?'))}")
+        if is_admin(uid):
+            lines.append(L(uid, "file_list"))
+            pinned = [f for f in files if f.get("pinned")]
+            normal = [f for f in files if not f.get("pinned")]
+            for f in pinned + normal:
+                pin = "📌" if f.get("pinned") else "  "
+                lines.append(f" {pin} {f.get('caption', f.get('name','?'))}")
+        else:
+            lines.append(f"📎 {len(files)} ملف")
     if is_admin(uid):
         s = load_settings()
-        lines.append("─" * 22)
+        lines.append("")
         lines.append(L(uid, "maint_on") if s["maintenance"] else L(uid, "maint_off"))
     return "\n".join(lines)
 
@@ -2423,15 +2633,16 @@ def folder_kb(path, folder, uid, page=0):
     uid         = str(uid)
     kb          = []
     raw_folders = folder.get("folders", {})
-    # Kullanıcı ana sayfada sadece kendi sınıfını görür
+    # Kullanıcı tüm sınıfları görür, kendi sınıfı önde
     if not path and not is_admin(uid):
         cls    = get_user_class(uid)
         cls_ar = CLASS_DEFS.get(cls, {}).get("ar", "") if cls else ""
         if cls_ar:
-            raw_folders = {
-                name: sub for name, sub in raw_folders.items()
-                if cls_ar in name
-            }
+            def _nar_kb(s): return s.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+            cls_ar_nkb = _nar_kb(cls_ar)
+            own_f  = {k: v for k, v in raw_folders.items() if _nar_kb(k) == cls_ar_nkb}
+            rest_f = {k: v for k, v in raw_folders.items() if _nar_kb(k) != cls_ar_nkb}
+            raw_folders = {**own_f, **rest_f}
     all_folders = list(raw_folders.items())
     PAGE_SIZE   = 20
     f_start     = page * PAGE_SIZE
@@ -2443,11 +2654,12 @@ def folder_kb(path, folder, uid, page=0):
         label = f"📁 {name}" + (f" ({cnt})" if cnt else "")
         kb.append([InlineKeyboardButton(label, callback_data=f"open|{name}")])
 
-    # Dosyalar
+    # Dosyalar — admin görür, kullanıcıya klasör açılınca otomatik gönderilir
     files = folder.get("files", [])
-    for idx, f in enumerate(files[:12]):
-        cap = f.get("caption", f.get("name", "?"))
-        kb.append([InlineKeyboardButton(f"📎 {cap}", callback_data=f"getfile|{idx}")])
+    if is_admin(uid):
+        for idx, f in enumerate(files[:12]):
+            cap = f.get("caption", f.get("name", "?"))
+            kb.append([InlineKeyboardButton(f"📎 {cap}", callback_data=f"getfile|{idx}")])
 
     # Sayfa navigasyonu
     total_pages = max(1, -(-len(all_folders) // PAGE_SIZE))
@@ -2472,6 +2684,10 @@ async def show_folder(query, context, path, note=""):
     page    = context.user_data.get("page", 0)
     text    = folder_text(folder, path, uid)
     if note: text += f"\n\n{note}"
+    # Klasör gezintisini logla
+    if not is_admin(uid) and path:
+        folder_name = " / ".join(path)
+        log_user_message(query.from_user, "folder", folder_name)
     try:
         await query.edit_message_text(text, reply_markup=folder_kb(path, folder, uid, page))
     except Exception:
@@ -2504,14 +2720,16 @@ async def _send_file_get_msg(message, f: dict, uid: str):
     """Dosyayı gönderir ve gönderilen mesajı döndürür."""
     ftype = f.get("type",""); fid = f.get("file_id","")
     cap   = f.get("caption",""); url = f.get("url","")
+    # Kullanıcılara dosya adı/başlığı gösterme (datasheet gizli)
+    display_cap = cap if is_admin(str(uid)) else ""
     sent  = None
     try:
-        if   ftype == "photo":     sent = await message.reply_photo(fid, caption=cap)
-        elif ftype == "video":     sent = await message.reply_video(fid, caption=cap)
-        elif ftype == "animation": sent = await message.reply_animation(fid, caption=cap)
-        elif ftype == "document":  sent = await message.reply_document(fid, caption=cap)
-        elif ftype == "audio":     sent = await message.reply_audio(fid, caption=cap)
-        elif ftype == "voice":     sent = await message.reply_voice(fid, caption=cap)
+        if   ftype == "photo":     sent = await message.reply_photo(fid, caption=display_cap or None)
+        elif ftype == "video":     sent = await message.reply_video(fid, caption=display_cap or None)
+        elif ftype == "animation": sent = await message.reply_animation(fid, caption=display_cap or None)
+        elif ftype == "document":  sent = await message.reply_document(fid, caption=display_cap or None)
+        elif ftype == "audio":     sent = await message.reply_audio(fid, caption=display_cap or None)
+        elif ftype == "voice":     sent = await message.reply_voice(fid, caption=None)
         elif ftype == "link":      sent = await message.reply_text(f"🔗 {cap}\n{url}" if cap != url else f"🔗 {url}")
         elif ftype == "text":      sent = await message.reply_text(cap)
         else: sent = await message.reply_text(L(uid, "unsupported"))
@@ -2532,10 +2750,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_blocked(uid) and not is_admin(uid): return
 
-    # Gizli mod kontrolü
-    if not is_admin(uid) and not is_whitelisted(uid):
-        await update.message.reply_text(L(uid, "secret_deny")); return
-
     s = load_settings()
     context.user_data["path"] = []
     context.user_data["mode"] = "browse"
@@ -2545,11 +2759,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
 
-    # Bakım modu kontrolü (kullanıcılar için)
-    if not is_admin(uid) and s["maintenance"]:
-        await update.message.chat.send_message(
-            s.get("maintenance_text", "🔧"),
-            reply_markup=reply_kb(uid))
+    # Bakım / Güncelleme modu kontrolü (kullanıcılar için)
+    if not is_admin(uid) and (s.get("maintenance") or s.get("update_mode")):
+        msg_text = s.get("maintenance_text" if s.get("maintenance") else "update_mode_text",
+                         "🔧 البوت قيد الصيانة...")
+        await update.message.chat.send_message(msg_text, reply_markup=reply_kb(uid))
         return
 
     # Klavyeyi gönder
@@ -2565,7 +2779,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 TR["new_user_notif"].format(
                     name=u.get("full_name") or u.get("first_name") or f"ID:{uid}",
                     un=un, uid=uid,
-                    time=datetime.now().strftime("%Y-%m-%d %H:%M")),
+                    time=datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")),
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton(TR["msg_btn"], callback_data=f"dm_quick|{uid}")
                 ]])
@@ -2603,22 +2817,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             L(uid, "class_select_prompt"),
             reply_markup=InlineKeyboardMarkup(kb))
     else:
-        # Sınıf seçmiş — direkt KENDI sınıfının klasörüne git
-        cls_ar   = CLASS_DEFS[cls]["ar"]
-        content  = load_content()
-        # Sınıfa ait klasör adını bul (الاول, الثاني vb.)
-        cls_folder_name = None
-        for fname in content.get("folders", {}):
-            if cls_ar in fname or fname in cls_ar:
-                cls_folder_name = fname
-                break
-
-        if cls_folder_name:
-            context.user_data["path"] = [cls_folder_name]
-            await show_folder_new(update.message, uid, path=[cls_folder_name])
-        else:
-            # Eşleşen klasör bulunamadı — genel göster
-            await show_folder_new(update.message, uid)
+        # Sınıf seçmiş — ana sayfayı göster (tüm sınıflar, kendi sınıfı önde)
+        context.user_data["path"] = []
+        await show_folder_new(update.message, uid)
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; uid = str(user.id)
@@ -2632,18 +2833,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Kullanıcılar — kendi sınıf klasörüne git
-    cls = get_user_class(uid)
-    if cls:
-        cls_ar   = CLASS_DEFS[cls]["ar"]
-        content  = load_content()
-        cls_fname = None
-        for fname in content.get("folders", {}):
-            if cls_ar in fname or fname in cls_ar:
-                cls_fname = fname; break
-        if cls_fname:
-            context.user_data["path"] = [cls_fname]
-            await show_folder_new(update.message, uid, path=[cls_fname])
-            return
+    # Kullanıcılar — ana sayfa (tüm sınıflar, kendi sınıfı önde)
     context.user_data["path"] = []
     await show_folder_new(update.message, uid)
 # ================================================================
@@ -2655,16 +2845,38 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     text = (update.message.text or "").strip()
     register_user(user)
     await _delete_last_inline(context, update.effective_chat.id)
-    # Kullanıcının buton mesajını sil
     try: await update.message.delete()
     except: pass
 
-    # Kullanıcının buton mesajını sil (sohbet temizliği)
-    try: await update.message.delete()
-    except: pass
+    # Engellenmiş kullanıcı — hiçbir şey yapamaz
+    if is_blocked(uid) and not is_admin(uid):
+        await update.message.reply_text("🚫 تم حظرك من استخدام البوت.")
+        return
 
-    # Buton basıldığında önceki aksiyonu temizle (takılma önleme)
-    context.user_data.pop("action", None)
+    # Bakım/Güncelleme modu kontrolleri
+    if not is_main_admin(uid):
+        s_maint = load_settings()
+        if s_maint.get("maintenance"):
+            if is_admin(uid):
+                # İkincil admin — bakım bilgisi göster, engel
+                by   = s_maint.get("maintenance_by_name", "")
+                when = s_maint.get("maintenance_time", "")
+                msg  = "🔧 البوت في وضع الصيانة الكاملة"
+                if by:   msg += f"\nبواسطة: {by}"
+                if when: msg += f"\nمنذ: {when}"
+                await update.message.reply_text(msg)
+                return
+            else:
+                allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
+                if text not in allowed_maint:
+                    await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+                    return
+        elif s_maint.get("update_mode") and not is_admin(uid):
+            # Güncelleme modu — sadece kullanıcılar bloklanır
+            allowed_um = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
+            if text not in allowed_um:
+                await update.message.reply_text(s_maint.get("update_mode_text", "🔄 البوت في وضع التحديث..."))
+                return
 
     # Kullanıcı/alt-admin buton seçimini kaydet
     if not is_main_admin(uid) and not is_blocked(uid):
@@ -2676,45 +2888,62 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(L(uid, "search_prompt"))
         return
 
-    # ── Asistan (kullanıcılar) ───────────────────────
-    if text in (TR["ai_btn"], AR["ai_btn"]):
-        if not is_admin(uid):
-            context.user_data["action"] = "ai_chat"
-            recs = ai_recommend_files(uid, 3)
-            txt  = L(uid,"ai_welcome") + "\n\n"
-            if recs:
-                txt += L(uid,"suggest_title") + "\n"
-                for f, cnt, folder_name in recs:
-                    txt += f"  📎 {f.get('caption','?')} ({folder_name})\n"
-                txt += "\n"
-            txt += ("💬 اكتب سؤالك الآن وسأجيب عليه فوراً 👇" 
-                    if not is_main_admin(uid) else "💬 Sorunuzu yazın 👇")
-            kb = [
-                [InlineKeyboardButton("❓ الأسئلة الشائعة", callback_data="ai|faq")],
-                [InlineKeyboardButton("◀️ رجوع", callback_data="nav|root")],
-            ]
-            sent = await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
-            context.user_data["last_inline_msg"] = sent.message_id
-        return
 
-    # ── Profil (kullanıcılar) ────────────────────────
+    # ── Profil (kullanıcılar + alt adminler) ─────────
     if text in (TR["profile_btn"], AR["profile_btn"]):
-        if not is_admin(uid):
+        if is_admin(uid) and not is_main_admin(uid):
+            u_adm = load_users().get(uid, {})
+            name  = u_adm.get("full_name") or u_adm.get("first_name") or "—"
+            un    = f"@{u_adm['username']}" if u_adm.get("username") else "—"
+            adm_cls = get_admin_cls(uid) or "الكل"
+            adm_grp = get_admin_grp(uid) or "الكل"
+            adm_sft = get_admin_shift(uid) or "الكل"
+            perms = load_admin_perms().get(uid, {})
+            perm_lines = []
+            perm_map = {
+                "can_add_folder": "📁 إضافة مجلد", "can_del_folder": "🗑 حذف مجلد",
+                "can_add_file": "📎 إضافة ملف",   "can_del_file": "🗑 حذف ملف",
+                "can_rename_file": "✏️ إعادة تسمية","can_broadcast": "📢 إعلان",
+                "can_poll": "📊 استطلاع",          "can_warn": "⚠️ تحذير",
+                "can_block": "🚫 حظر",             "can_view_users": "👥 رؤية الطلاب",
+                "can_countdown": "📅 امتحانات",
+            }
+            for key, lbl in perm_map.items():
+                if perms.get(key): perm_lines.append(f"  ✅ {lbl}")
+            txt = (
+                f"👤 *{name}*\n"
+                f"🔗 {un}\n"
+                f"🆔 {uid}\n"
+                f"🎓 الصف: {adm_cls}\n"
+                f"👥 المجموعة: {adm_grp}\n"
+                f"⏰ الفترة: {adm_sft}\n"
+                f"\n📋 الصلاحيات:\n" + ("\n".join(perm_lines) if perm_lines else "  — لا توجد صلاحيات")
+            )
+            await update.message.reply_text(txt, parse_mode="Markdown")
+        elif not is_admin(uid):
             u    = load_users().get(uid, {})
             name = u.get("full_name") or u.get("first_name") or "—"
             cls  = class_label(uid)
             favs = len(get_favorites(uid))
             rcnt = len(get_recently_viewed(uid))
             warns_list = get_warns(uid)
+            grp   = get_user_group(uid)
+            shift = get_user_shift(uid)
+            shift_lbl = "صباحي" if shift in ("sabahi","sabah") else ("مسائي" if shift in ("masaiy","gece") else "—")
             txt = (
                 f"👤 *{name}*\n"
                 f"🆔 {uid}\n"
                 f"🎓 {L(uid,'class_label').format(cls)}\n"
+                f"⏰ الفترة: {shift_lbl}\n"
+                f"👥 المجموعة: {grp or '—'}\n"
                 f"⭐ {L(uid,'fav_list')}: {favs}\n"
                 f"🕐 {L(uid,'recent_list')}: {rcnt}\n"
                 f"⚠️ {L(uid,'warn_count_label').format(len(warns_list), MAX_WARNS)}"
             )
-            kb = [[InlineKeyboardButton(L(uid,"class_change_btn"), callback_data="class_change")]]
+            kb = [
+                [InlineKeyboardButton(L(uid,"class_change_btn"), callback_data="class_change")],
+                [InlineKeyboardButton(L(uid,"group_change_btn"), callback_data="group_pick_start")],
+            ]
             await update.message.reply_text(txt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return
 
@@ -2752,33 +2981,38 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     # ── Liderboard (herkes) ──────────────────────────
     if text in (TR["btn_leaderboard"], AR["btn_leaderboard"]):
         lb    = get_leaderboard(10)
-        lines = [L(uid,"leaderboard_title"), "─"*22]
+        lines = [L(uid,"leaderboard_title"), ""]
         medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
         for i,(name,pts) in enumerate(lb):
             medal = medals[i] if i < len(medals) else f"{i+1}."
             lines.append(f"{medal} {name[:25]}  —  {pts} pts")
         if not lb: lines.append(L(uid,"leaderboard_empty"))
         own_pts = load_leaderboard().get(uid, 0)
-        lines.append(f"\n{'─'*22}\n👤 {L(uid,'profile_title')}: {own_pts} pts")
+        lines.append(f"\n\n👤 {L(uid,'profile_title')}: {own_pts} pts")
         await update.message.reply_text("\n".join(lines))
         return
 
     # ── Notlarım ─────────────────────────────────────
     if text in (TR["btn_notes"], AR["btn_notes"]):
         if not is_admin(uid):
-            note = get_personal_note(uid)
-            kb = [
-                [InlineKeyboardButton("✏️ " + ("Notu Düzenle" if is_main_admin(uid) else "تعديل الملاحظة"),
-                                      callback_data="notes|edit")],
-                [InlineKeyboardButton("🗑 " + ("Sil" if is_main_admin(uid) else "حذف"),
-                                      callback_data="notes|del")],
-                [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
-            ]
-            txt = (
-                f"📝 {L(uid,'notes_title')}\n{'─'*22}\n\n"
-                + (note if note else L(uid,"notes_empty"))
-            )
-            sent = await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            notes = get_user_notes(uid)
+            kb = []
+            # Son 15 not — her not buton olarak
+            for n in notes[-15:]:
+                icon = {"text":"✍️","photo":"🖼","video":"🎥","voice":"🎙","audio":"🎵","document":"📄"}.get(n.get("type","text"),"📌")
+                subj = n.get("subject","") or ""
+                cap  = n.get("content","")[:25] or f"[{n.get('type','medya')}]"
+                lbl  = f"{icon} {subj+': ' if subj else ''}{cap}"
+                kb.append([
+                    InlineKeyboardButton(lbl[:45], callback_data=f"notes|view|{n['id']}"),
+                    InlineKeyboardButton("🗑", callback_data=f"notes|del|{n['id']}"),
+                ])
+            kb.append([InlineKeyboardButton("➕ إضافة ملاحظة", callback_data="notes|new")])
+            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+            cnt_txt = f"({len(notes)} ملاحظة)" if notes else "لا توجد ملاحظات بعد"
+            sent = await update.message.reply_text(
+                f"📝 ملاحظاتي\n\n{cnt_txt}",
+                reply_markup=InlineKeyboardMarkup(kb))
             context.user_data["last_inline_msg"] = sent.message_id
         return
 
@@ -2811,23 +3045,71 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # ── Anonim Soru ──────────────────────────────────
-    if text in (TR["anon_q_btn"], AR["anon_q_btn"]):
-        if not is_admin(uid):
-            context.user_data["action"] = "anon_q"
-            await update.message.reply_text(L(uid,"anon_q_prompt"))
-        return
 
     # ── Geri Sayım / Yaklaşan Sınavlar ──────────────
+    if text in (TR.get("btn_anon","✉️ Anonim Mesaj"), AR.get("btn_anon","✉️ رسالة مجهولة")) and not is_admin(uid):
+        s = load_settings()
+        if not s.get("anon_group_id"):
+            await update.message.reply_text(L(uid,"anon_disabled"))
+            return
+        context.user_data["action"] = "anon_msg"
+        kb = [[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]
+        sent = await update.message.reply_text(
+            "✉️ اكتب رسالتك المجهولة:\n(ستصل إلى المجموعة بدون اسمك)",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data["last_inline_msg"] = sent.message_id
+        return WAIT_FOLDER
+
+    if text == "🔬 المختبر" and not is_admin(uid):
+        from datetime import datetime as _dt
+        ARABIC_DAYS = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
+        user_grp = load_groups().get(uid, "")
+        schedule = load_lab_schedule()
+        today_ts = _dt.now().date()
+
+        my_labs = []
+        for e in schedule:
+            try:
+                e_dt = _dt.strptime(e["week"], "%Y-%m-%d").date()
+                if e_dt >= today_ts and e.get("group","") == user_grp:
+                    day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
+                    date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
+                    note = e.get("note","")
+                    my_labs.append((date_disp, note, False))
+            except: pass
+
+        # Fixed/recurring lab entries for user's group
+        fixed_labs = load_lab_fixed()
+        for fl in fixed_labs:
+            if fl.get("group","") == user_grp:
+                day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
+                my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
+
+        if not my_labs:
+            await update.message.reply_text(
+                f"🔬 المختبر\n\nلا توجد مواعيد مختبر لمجموعتك ({user_grp or '؟'}) قريباً.")
+            return
+
+        lines = [f"🔬 مواعيد مختبر مجموعة {user_grp}\n"]
+        for date_disp, note, is_fixed in my_labs[:8]:
+            nt = f"\n     📝 {note}" if note else ""
+            lines.append(f"  {'📌' if is_fixed else '📅'} {date_disp}{nt}")
+
+        await update.message.reply_text("\n".join(lines))
+        return
+
     if text in (TR["countdown_btn"], AR["countdown_btn"]):
-        cls = get_user_class(uid) if not is_admin(uid) else ""
-        cds = get_countdowns(cls)
+        cls   = get_user_class(uid) if not is_admin(uid) else ""
+        shift = get_user_shift(uid)  if not is_admin(uid) else ""
+        cds   = get_countdowns(cls, shift, uid=uid)
         if not cds:
             await update.message.reply_text(L(uid,"countdown_none"))
         else:
             lines = [f"⏳ {'Yaklaşan Sınavlar' if is_main_admin(uid) else 'الامتحانات القادمة'}",
-                     "─"*22]
-            for c in cds[:8]:
-                days = c["days_left"]
+                     ""]
+            remind_kb = []
+            for idx_c, cd in enumerate(cds[:8]):
+                days = cd["days_left"]
                 if days == 0:
                     when = "🔴 اليوم!" if not is_main_admin(uid) else "🔴 Bugün!"
                 elif days == 1:
@@ -2836,8 +3118,15 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     when = f"🟡 {days} {'أيام' if not is_main_admin(uid) else 'gün'}"
                 else:
                     when = f"🟢 {days} {'يوم' if not is_main_admin(uid) else 'gün'}"
-                lines.append(f"\n📅 {c['name']}\n   {when} — {c['date']}")
-            await update.message.reply_text("\n".join(lines))
+                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}")
+                if is_admin(uid):
+                    remind_kb.append([InlineKeyboardButton(
+                        f"📢 تذكير: {cd['name'][:20]}",
+                        callback_data=f"cnt|remind|{idx_c}")])
+            kb_final = remind_kb if remind_kb else None
+            await update.message.reply_text(
+                "\n".join(lines),
+                reply_markup=InlineKeyboardMarkup(remind_kb) if remind_kb else None)
         return
 
     # ── Mini Test (Quiz) ─────────────────────────────
@@ -2855,71 +3144,198 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                       for i, o in enumerate(opts)]
                 kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
                 await update.message.reply_text(
-                    f"📝 {q.get('question','?')}\n{'─'*22}",
+                    f"📝 {q.get('question','?')}\n",
                     reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    if text in (TR["rules_btn"], AR["rules_btn"]):
+        rules = load_auto_rules()
+        s_rules = load_settings().get("rules_text", "")
+        if s_rules:
+            await update.message.reply_text(f"📜 {L(uid,'rules_btn')}\n\n{s_rules}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
+        elif rules:
+            lines = [f"📜 {L(uid,'rules_btn')}\n"]
+            for i, r in enumerate(rules, 1):
+                kws = " / ".join(r.get("keywords", []))
+                lines.append(f"{i}. {kws}")
+            await update.message.reply_text("\n".join(lines),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
+        else:
+            await update.message.reply_text("📜 " + ("Henüz kural eklenmemiş." if is_main_admin(uid) else "لا توجد قواعد بعد."))
         return
 
     # ── Mesaj Gönder / Yardım (herkes) ──────────────
     if text in (TR["btn_help"], AR["btn_help"]):
-        if is_admin(uid):
+        if is_admin(uid) and not is_main_admin(uid):
+            # Alt admin → süper admin'e mesaj gönder
+            u_adm = load_users().get(uid, {})
+            name_adm = u_adm.get("full_name") or u_adm.get("first_name") or f"ID:{uid}"
+            adm_cls  = get_admin_cls(uid) or "الكل"
+            adm_grp  = get_admin_grp(uid) or "الكل"
+            context.user_data["action"] = "admin_msg_to_super"
+            context.user_data["admin_identity"] = f"👮 مسؤول: {name_adm}\n🎓 مسؤول عن: {adm_cls} / {adm_grp}"
+            kb = [[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]
+            await update.message.reply_text(
+                "📨 اكتب رسالتك للمسؤول الرئيسي:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return
+        if is_main_admin(uid):
             await update.message.reply_text(L(uid, "help_text"), parse_mode="Markdown")
         else:
-            context.user_data["action"] = "user_msg_to_admin"
-            await update.message.reply_text(L(uid, "msg_to_admin_prompt"))
+            cls_id = get_user_class(uid)
+            # Sınıf admini var mı?
+            cls_admin_exists = False
+            if cls_id:
+                for adm_id_str, adm_p in load_admin_perms().items():
+                    if adm_p.get("cls") == cls_id:
+                        cls_admin_exists = True
+                        break
+            # Her zaman seçim göster — sınıf admini yoksa o butona bastıkta bilgi ver
+            kb = [
+                [InlineKeyboardButton(
+                    "👤 مسؤول صفي" if cls_admin_exists else "👤 مسؤول صفي (غير متاح)",
+                    callback_data="msg_target|class_admin")],
+                [InlineKeyboardButton(
+                    "🔑 المسؤول الرئيسي",
+                    callback_data="msg_target|main_admin")],
+                [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
+            ]
+            sent = await update.message.reply_text(
+                "📨 إلى من تريد إرسال رسالتك؟",
+                reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["last_inline_msg"] = sent.message_id
+            context.user_data["cls_admin_exists"] = cls_admin_exists
+        return
+
+    # ── Sadece adminler buradan devam ────────────────
+    # ── İçerik ──────────────────────────────────────
+    if text in (TR["btn_content"], AR["btn_content"]):
+        if is_main_admin(uid):
+            kb = [
+                [InlineKeyboardButton(L(uid,"add_folder"),    callback_data="cnt|add_folder"),
+                 InlineKeyboardButton(L(uid,"del_folder"),    callback_data="cnt|del_folder")],
+                [InlineKeyboardButton(L(uid,"rename_folder"), callback_data="cnt|rename_folder"),
+                 InlineKeyboardButton(L(uid,"add_file"),      callback_data="cnt|add_file")],
+                [InlineKeyboardButton(L(uid,"del_file"),      callback_data="cnt|del_file"),
+                 InlineKeyboardButton(L(uid,"rename_file"),   callback_data="cnt|rename_file")],
+                [InlineKeyboardButton(L(uid,"pin_file"),      callback_data="extra|pin"),
+                 InlineKeyboardButton(L(uid,"move_file"),     callback_data="extra|move")],
+                [InlineKeyboardButton(L(uid,"copy_file"),     callback_data="extra|copy"),
+                 InlineKeyboardButton(L(uid,"sort_az"),       callback_data="extra|sort_az")],
+                [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
+                 InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
+                [InlineKeyboardButton("📅 Sinav Ekle",       callback_data="cnt|add_countdown")],
+                [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
+            ]
+            sent = await update.message.reply_text(L(uid,"content_mgmt"), reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["last_inline_msg"] = sent.message_id
+        elif is_admin(uid):
+            kb = []
+            row_add = []
+            if get_admin_perm(uid, "can_add_folder"):
+                row_add.append(InlineKeyboardButton("📁 إضافة مجلد", callback_data="cnt|add_folder"))
+            if get_admin_perm(uid, "can_del_folder"):
+                row_add.append(InlineKeyboardButton("🗑 حذف مجلد", callback_data="cnt|del_folder"))
+            if row_add: kb.append(row_add)
+
+            row_file = []
+            if get_admin_perm(uid, "can_add_file"):
+                row_file.append(InlineKeyboardButton("📎 إضافة ملف", callback_data="cnt|add_file"))
+            if get_admin_perm(uid, "can_del_file"):
+                row_file.append(InlineKeyboardButton("🗑 حذف ملف", callback_data="cnt|del_file"))
+            if get_admin_perm(uid, "can_rename_file"):
+                row_file.append(InlineKeyboardButton("✏️ إعادة تسمية", callback_data="cnt|rename_file"))
+            if row_file: kb.append(row_file)
+
+            if get_admin_perm(uid, "can_countdown"):
+                kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown")])
+                kb.append([InlineKeyboardButton("🔬 إضافة موعد مختبر", callback_data="lab|add_new")])
+            if get_admin_perm(uid, "can_poll"):
+                kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
+            if get_admin_perm(uid, "can_broadcast"):
+                kb.append([InlineKeyboardButton("📢 إرسال إعلان", callback_data="sadmin|broadcast")])
+            if not kb:
+                await update.message.reply_text("لا توجد صلاحيات محددة لك حتى الآن.")
+                return
+            if get_admin_perm(uid, "can_view_users"):
+                kb.append([InlineKeyboardButton("👥 طلاب صفي", callback_data="mgmt|my_users")])
+            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+            sent = await update.message.reply_text("📋 لوحة المحتوى:", reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["last_inline_msg"] = sent.message_id
+        else:
+            # Normal kullanıcı — klasörlere git
+            context.user_data["path"] = []
+            await show_folder_new(update.message, uid)
         return
 
     # ── Sadece adminler buradan devam ────────────────
     if not is_admin(uid): return
 
-    # ── İçerik ──────────────────────────────────────
-    if text in (TR["btn_content"], AR["btn_content"]):
-        kb = [
-            [InlineKeyboardButton(L(uid,"add_folder"),    callback_data="cnt|add_folder"),
-             InlineKeyboardButton(L(uid,"del_folder"),    callback_data="cnt|del_folder")],
-            [InlineKeyboardButton(L(uid,"rename_folder"), callback_data="cnt|rename_folder"),
-             InlineKeyboardButton(L(uid,"add_file"),      callback_data="cnt|add_file")],
-            [InlineKeyboardButton(L(uid,"del_file"),      callback_data="cnt|del_file"),
-             InlineKeyboardButton(L(uid,"rename_file"),   callback_data="cnt|rename_file")],
-            [InlineKeyboardButton(L(uid,"pin_file"),      callback_data="extra|pin"),
-             InlineKeyboardButton(L(uid,"move_file"),     callback_data="extra|move")],
-            [InlineKeyboardButton(L(uid,"copy_file"),     callback_data="extra|copy"),
-             InlineKeyboardButton(L(uid,"sort_az"),       callback_data="extra|sort_az")],
-            [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
-             InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
-            [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
-        ]
-        sent = await update.message.reply_text(L(uid,"content_mgmt"), reply_markup=InlineKeyboardMarkup(kb))
-        context.user_data["last_inline_msg"] = sent.message_id
+    # ── Güncelleme Modu (ikincil adminler) ──────────────
+    if not is_main_admin(uid) and text in ("🔄 وضع التحديث", "🔄 إيقاف التحديث ✅"):
+        s_um = load_settings()
+        s_um["update_mode"] = not s_um.get("update_mode", False)
+        if s_um["update_mode"]:
+            u_um = load_users().get(uid, {})
+            s_um["update_mode_by"]      = uid
+            s_um["update_mode_by_name"] = u_um.get("full_name") or u_um.get("first_name") or f"ID:{uid}"
+            s_um["update_mode_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+        else:
+            s_um.pop("update_mode_by", None)
+            s_um.pop("update_mode_by_name", None)
+            s_um.pop("update_mode_time", None)
+        save_settings(s_um)
+        if s_um["update_mode"]:
+            await update.message.reply_text(
+                "🔄 تم تفعيل وضع التحديث\nالمستخدمون لن يتمكنوا من استخدام البوت الآن.",
+                reply_markup=reply_kb(uid))
+        else:
+            await update.message.reply_text("✅ تم إلغاء وضع التحديث", reply_markup=reply_kb(uid))
         return
 
-    # ── Bakım (tüm adminler) ─────────────────────────
-    if text in (TR["btn_maint"], AR["btn_maint"]):
-        s = load_settings(); s["maintenance"] = not s["maintenance"]; save_settings(s)
+    # ── Bakım (sadece ana admin) ─────────────────────
+    if text in (TR["btn_maint"], AR["btn_maint"]) and is_main_admin(uid):
+        s = load_settings()
+        s["maintenance"] = not s["maintenance"]
+        if s["maintenance"]:
+            u_maint = load_users().get(uid, {})
+            s["maintenance_by"]      = uid
+            s["maintenance_by_name"] = u_maint.get("full_name") or u_maint.get("first_name") or f"ID:{uid}"
+            s["maintenance_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+        else:
+            s.pop("maintenance_by", None)
+            s.pop("maintenance_by_name", None)
+            s.pop("maintenance_time", None)
+        save_settings(s)
         durum = L(uid,"maint_on_str") if s["maintenance"] else L(uid,"maint_off_str")
         await update.message.reply_text(L(uid,"maint_toggle").format(durum))
         return
-
-    # ── Yönetim paneli ───────────────────────────────
-    if text in (TR["btn_mgmt"], AR["btn_mgmt"]):
-        if not is_main_admin(uid):
-            # Secondary admin — sınırlı panel (anket + duyuru)
-            kb = [
-                [InlineKeyboardButton(AR["poll_btn"],      callback_data="mgmt|poll"),
-                 InlineKeyboardButton(AR["bcast_targeted"],callback_data="bcast|panel")],
-                [InlineKeyboardButton(AR["broadcast"],     callback_data="mgmt|broadcast")],
-                [InlineKeyboardButton(AR["back"],          callback_data="nav|root")],
-            ]
-            sent = await update.message.reply_text(AR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
-            context.user_data["last_inline_msg"] = sent.message_id
-            return
 
     # ── Sadece süper admin ───────────────────────────
     if not is_main_admin(uid): return
 
     if text == TR["btn_mgmt"]:
+        _s_mgmt  = load_settings()
+        _maint_on = _s_mgmt.get("maintenance", False)
+        _maint_by = _s_mgmt.get("maintenance_by_name", "")
+        _maint_t  = _s_mgmt.get("maintenance_time", "")
+        _maint_lbl = (f"🔧 Bakım AÇIK — {_maint_by} ({_maint_t})" if _maint_on and _maint_by
+                      else ("🔧 Bakım AÇIK" if _maint_on else "✅ Bakım KAPALI"))
+        _um_on  = _s_mgmt.get("update_mode", False)
+        _um_by  = _s_mgmt.get("update_mode_by_name", "")
+        _um_t   = _s_mgmt.get("update_mode_time", "")
+        _um_lbl = (f"🔄 Güncelleme AÇIK — {_um_by} ({_um_t})" if _um_on and _um_by
+                   else ("🔄 Güncelleme AÇIK" if _um_on else "✅ Güncelleme KAPALI"))
         kb = [
+            [InlineKeyboardButton(_maint_lbl,             callback_data="mgmt|toggle_maint")],
+            [InlineKeyboardButton(_um_lbl,                callback_data="mgmt|toggle_update")],
             [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
              InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+            [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+            [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+             InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
+            [InlineKeyboardButton("⏰ Bildirim Ayarları",    callback_data="set|remind_cfg")],
             [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
              InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
             [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
@@ -2928,17 +3344,14 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
             [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
              InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
-            [InlineKeyboardButton(TR["backup_btn"],       callback_data="backup|do"),
-             InlineKeyboardButton(TR["full_backup_btn"],  callback_data="backup|full")],
-            [InlineKeyboardButton(TR["export_users_btn"], callback_data="export|users"),
-             InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all")],
-            [InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history"),
-             InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard")],
-            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
-             InlineKeyboardButton("❓ Anonim Sorular",   callback_data="admin|anon_q")],
-            [InlineKeyboardButton("📝 Quiz Oluştur",     callback_data="admin|quiz_create"),
+            [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+             InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+            [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
-            [InlineKeyboardButton("◀️ Geri",              callback_data="nav|root")],
+            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+             InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+            [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+            [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
         sent = await update.message.reply_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
         context.user_data["last_inline_msg"] = sent.message_id
@@ -2963,12 +3376,14 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🔧 Bakım Metni",      callback_data="set|maint_text"),
              InlineKeyboardButton(TR["set_blocked_btn"], callback_data="set|blocked")],
             [InlineKeyboardButton(TR["btn_mgmt_btn"],    callback_data="set|btn_mgmt"),
-             InlineKeyboardButton(TR["secret_mode_btn"], callback_data="secret|panel")],
+             InlineKeyboardButton("🎓 Sınıf İsimleri",   callback_data="set|class_names")],
+            [InlineKeyboardButton("👥 Grup Yapılandırma", callback_data="set|class_groups"),
+             InlineKeyboardButton("👮 Admin Yetkileri",   callback_data="set|admin_perms")],
             [InlineKeyboardButton("❓ FAQ Yönetimi",     callback_data="faqmgmt|panel"),
              InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
             [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
-             InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
-            [InlineKeyboardButton("◀️ Geri",             callback_data="nav|root")],
+             InlineKeyboardButton("📜 Kural Metni",     callback_data="set|rules_text")],
+            [InlineKeyboardButton("◀️ Geri",             callback_data="close")],
         ]
         sent = await update.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
         context.user_data["last_inline_msg"] = sent.message_id
@@ -2978,17 +3393,47 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 #  CALLBACK HANDLER
 # ================================================================
 
+async def safe_edit(query, text, reply_markup=None):
+    """edit_message_text fail olursa yeni mesaj gönder."""
+    try:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    except Exception:
+        try:
+            await query.message.reply_text(text, reply_markup=reply_markup)
+        except: pass
+
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
     user = query.from_user; uid = str(user.id); adm = is_admin(uid); cb = query.data
 
     if is_blocked(uid) and not adm: return ConversationHandler.END
-    if not adm:
+    if not is_main_admin(uid):
         s = load_settings()
-        if s["maintenance"]:
-            await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
-            return ConversationHandler.END
+        # Callbacks allowed during any restricted mode (lab+exam flow only)
+        def _mode_cb_ok(cb):
+            return (cb.startswith("countdown|") or cb.startswith("lab|") or
+                    cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
+                    cb.startswith("group_pick|") or cb == "class_change" or
+                    cb == "group_pick_start")
+        if s.get("maintenance"):
+            if adm:
+                # İkincil admin — tam bakımda bloklanır
+                by   = s.get("maintenance_by_name", "")
+                when = s.get("maintenance_time", "")
+                msg  = "🔧 البوت في وضع الصيانة الكاملة"
+                if by:   msg += f" (بواسطة: {by})"
+                if when: msg += f" | {when}"
+                await query.answer(msg, show_alert=True)
+                return ConversationHandler.END
+            elif not _mode_cb_ok(cb):
+                await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
+                return ConversationHandler.END
+        elif s.get("update_mode") and not adm:
+            # Güncelleme modu — sadece kullanıcılar bloklanır, aynı kural
+            if not _mode_cb_ok(cb):
+                await query.answer(s.get("update_mode_text","🔄"), show_alert=True)
+                return ConversationHandler.END
 
     content = load_content()
     path    = context.user_data.get("path", [])
@@ -3003,20 +3448,97 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             cls_name  = cls_ar if not is_main_admin(uid) else cls_tr
             # Sınıfa ait klasörü bul ve oraya git
             content2  = load_content()
+            def _nar3(s): return s.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+            cls_ar_n3 = _nar3(cls_ar)
             cls_folder = None
             for fname in content2.get("folders", {}):
-                if cls_ar in fname or fname in cls_ar:
+                if _nar3(fname) == cls_ar_n3:
                     cls_folder = fname
                     break
             confirm_text = L(uid, "class_selected").format(cls_name)
+            # Sınıf seçildikten sonra grup sor
+            kb_shift = [
+                [InlineKeyboardButton("صباحي (نهار)", callback_data="shift_pick|sabahi"),
+                 InlineKeyboardButton("مسائي (مساء)", callback_data="shift_pick|masaiy")],
+            ]
+            await query.edit_message_text(
+                confirm_text + "\n\nVaridiyanizi secin:",
+                reply_markup=InlineKeyboardMarkup(kb_shift))
             if cls_folder:
                 context.user_data["path"] = [cls_folder]
-                await query.edit_message_text(confirm_text)
-                # Klasörü yeni mesaj olarak göster
-                await show_folder_new(query.message, uid, path=[cls_folder])
-            else:
-                await query.edit_message_text(confirm_text)
-                await show_folder_new(query.message, uid)
+        return ConversationHandler.END
+
+    if cb.startswith("msg_target|") and not is_admin(uid):
+        target_type = cb.split("|")[1]
+        # Sınıf admini yoksa bilgi ver
+        if target_type == "class_admin" and not context.user_data.get("cls_admin_exists", True):
+            await query.answer("لا يوجد مسؤول لصفك حالياً، رسالتك ستصل للمسؤول الرئيسي.", show_alert=True)
+            target_type = "main_admin"
+        context.user_data["msg_to"] = target_type
+        context.user_data["action"] = "user_msg_to_admin"
+        prompt = "💬 اكتب رسالتك لمسؤول صفك:" if target_type == "class_admin" else "💬 اكتب رسالتك للمسؤول الرئيسي:"
+        await query.edit_message_text(
+            prompt,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+            ]]))
+        return WAIT_FOLDER
+
+    if cb == "group_pick_start" and not is_admin(uid):
+        kb = [
+            [InlineKeyboardButton("صباحي (نهار)", callback_data="shift_pick|sabahi"),
+             InlineKeyboardButton("مسائي (مساء)", callback_data="shift_pick|masaiy")],
+            [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
+        ]
+        await query.edit_message_text(
+            "Vardiyanizi secin:" if is_main_admin(uid) else "اختر الفترة الدراسية:",
+            reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    if cb.startswith("shift_pick|") and not is_admin(uid):
+        shift = cb.split("|")[1]
+        set_user_shift(uid, shift)
+        shift_lbl = "صباحي" if shift in ("sabahi","sabahi") else "مسائي"
+        kb_grp = [
+            [InlineKeyboardButton("A", callback_data="group_pick|A"),
+             InlineKeyboardButton("B", callback_data="group_pick|B"),
+             InlineKeyboardButton("C", callback_data="group_pick|C")],
+        ]
+        await query.edit_message_text(
+            f"{shift_lbl} - " + L(uid,"group_select"),
+            reply_markup=InlineKeyboardMarkup(kb_grp))
+        return ConversationHandler.END
+
+    if cb.startswith("group_pick|") and not is_admin(uid):
+        group_main = cb.split("|")[1]  # A, B, or C
+        # Alt grup seç
+        kb_sub = [
+            [InlineKeyboardButton(f"{group_main}1", callback_data=f"group_sub|{group_main}1"),
+             InlineKeyboardButton(f"{group_main}2", callback_data=f"group_sub|{group_main}2"),
+             InlineKeyboardButton(f"{group_main}3", callback_data=f"group_sub|{group_main}3")],
+        ]
+        await query.edit_message_text(
+            L(uid,"group_select") + f"\n\n→ {group_main}",
+            reply_markup=InlineKeyboardMarkup(kb_sub))
+        return ConversationHandler.END
+
+    if cb.startswith("group_sub|") and not is_admin(uid):
+        group_full = cb.split("|")[1]   # A1, A2 ... C3
+        set_user_group(uid, group_full)
+        cls = get_user_class(uid)
+        cls_ar = CLASS_DEFS.get(cls, {}).get("ar", "") if cls else ""
+        # İlgili klasöre git
+        def _nar_g(s): return s.replace("أ","ا").replace("إ","ا").replace("آ","ا")
+        cls_ar_ng = _nar_g(cls_ar)
+        content2 = load_content()
+        cls_folder = next((f for f in content2.get("folders",{}) if _nar_g(f)==cls_ar_ng), None)
+        path_new = [cls_folder] if cls_folder else []
+        context.user_data["path"] = path_new
+        await query.edit_message_text(L(uid,"group_selected").format(group_full))
+        if path_new:
+            await show_folder_new(query.message, uid, path=path_new)
+        else:
+            await show_folder_new(query.message, uid)
         return ConversationHandler.END
 
     if cb == "class_change":
@@ -3078,23 +3600,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── İç Yapay Zeka / FAQ ───────────────────────────
-    if cb.startswith("ai|") and not is_admin(uid):
-        action = cb.split("|")[1]
-        if action == "faq":
-            faqs = load_faq()
-            if not faqs:
-                await query.answer(L(uid,"faq_empty"), show_alert=True)
-                return ConversationHandler.END
-            lines = [L(uid,"faq_list_title").format(len(faqs))]
-            for item in faqs[:15]:
-                q = item.get("keywords",["?"])[0]
-                lines.append(f"\n❓ {q}\n💬 {item.get('answer','')[:80]}")
-            await query.edit_message_text(
-                "\n".join(lines)[:4000],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")]]))
-        return ConversationHandler.END
-
-    # ── FAQ Yönetimi (admin) ──────────────────────────
     if cb.startswith("faqmgmt|") and is_main_admin(uid):
         action = cb.split("|")[1]
         if action == "panel":
@@ -3103,7 +3608,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton(TR["faq_add_btn"],  callback_data="faqmgmt|add"),
                  InlineKeyboardButton(TR["faq_list_btn"], callback_data="faqmgmt|list")],
                 [InlineKeyboardButton(TR["faq_del_btn"],  callback_data="faqmgmt|del")],
-                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|settings_panel")],
             ]
             await query.edit_message_text(
                 f"{TR['faq_panel']}\n\n📋 Toplam: {len(faqs)} soru",
@@ -3125,7 +3630,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 lines.append(f"\n{i+1}. ❓ {q}\n   💬 {a}")
             await query.edit_message_text(
                 "\n".join(lines)[:4000],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")]]))
             return ConversationHandler.END
         if action == "del":
             faqs = load_faq()
@@ -3156,7 +3661,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton(TR["rule_add_btn"],  callback_data="rulemgmt|add"),
                  InlineKeyboardButton(TR["rule_list_btn"], callback_data="rulemgmt|list")],
                 [InlineKeyboardButton(TR["rule_del_btn"],  callback_data="rulemgmt|del")],
-                [InlineKeyboardButton("◀️ Geri",           callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",           callback_data="nav|settings_panel")],
             ]
             await query.edit_message_text(
                 f"{TR['rule_panel']}\n\n⚡ Toplam: {len(rules)} kural",
@@ -3178,7 +3683,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 lines.append(f"\n{i+1}. 🔍 {kws}\n   💬 {resp}")
             await query.edit_message_text(
                 "\n".join(lines)[:4000],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")]]))
             return ConversationHandler.END
         if action == "del":
             rules = load_auto_rules()
@@ -3228,30 +3733,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         log_admin_action(uid, "BACKUP", f"{sent_count} dosya yedeklendi")
         return ConversationHandler.END
 
-    # ── Tek dosya tam yedek (+ otomatik pin) ────────
-    if cb == "backup|full" and is_main_admin(uid):
-        await query.answer(TR["backup_sending"], show_alert=False)
-        try:
-            data  = create_full_backup()
-            fname = f"tam_yedek_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
-            count = len(json.loads(data.decode())["data"])
-            msg = await context.bot.send_document(
-                int(uid),
-                io.BytesIO(data),
-                filename=fname,
-                caption=f"AUTO_BACKUP | {count} | {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-                        + TR["full_backup_done"].format(count))
-            # Pin — bot yeniden başlayınca buradan otomatik geri yükler
-            try:
-                await context.bot.pin_chat_message(
-                    int(uid), msg.message_id, disable_notification=True)
-            except Exception:
-                pass
-            log_admin_action(uid, "FULL_BACKUP", f"{count} veri seti")
-        except Exception as e:
-            await context.bot.send_message(int(uid), f"❌ Yedek oluşturulamadı: {e}")
-        return ConversationHandler.END
-
     # ── Kullanıcı dışa aktar (admin) ────────────────
     if cb == "export|users" and is_main_admin(uid):
         users   = load_users()
@@ -3273,34 +3754,54 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         log_admin_action(uid, "EXPORT_USERS", f"{len(lines)-1} kullanıcı")
         return ConversationHandler.END
 
+    # ── Tam Yedek (tek JSON) ─────────────────────────
+    if cb == "backup|full" and is_main_admin(uid):
+        await query.answer("📦 Yedek hazırlanıyor...", show_alert=False)
+        try:
+            raw  = create_full_backup()
+            ts   = datetime.now(IRAQ_TZ).strftime("%Y%m%d_%H%M")
+            fname = f"tam_yedek_{ts}.json"
+            msg  = await context.bot.send_document(
+                int(uid), io.BytesIO(raw), filename=fname,
+                caption=f"📦 Tam yedek — {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}\n"
+                        f"Restore için bu dosyayı bota 'restore' başlığıyla gönder.")
+            try:
+                await context.bot.pin_chat_message(int(uid), msg.message_id, disable_notification=True)
+            except Exception:
+                pass
+            await context.bot.send_message(int(uid), TR["full_backup_ok"])
+            log_admin_action(uid, "FULL_BACKUP", fname)
+        except Exception as e:
+            await context.bot.send_message(int(uid), f"❌ Yedek hatası: {e}")
+        return ConversationHandler.END
+
     # ── Excel: Tüm Kullanıcılar ──────────────────────
     if cb == "export|excel_all" and is_main_admin(uid):
         await query.answer(TR["excel_building"], show_alert=False)
         try:
-            users_d      = load_users()
-            classes_d    = load_classes()
-            msgs_d       = load_messages()
-            warns_d      = load_warns()
-            notes_d      = load_notes()
-            polls_d      = load_polls()
-            leaderboard_d= load_leaderboard()
-            blocked_list = load_blocked()
-            admins_list  = load_admins()
+            users_d       = load_users()
+            classes_d     = load_classes()
+            msgs_d        = load_messages()
+            warns_d       = load_warns()
+            notes_d       = load_notes()
+            polls_d       = load_polls()
+            leaderboard_d = load_leaderboard()
+            blocked_list  = load_blocked()
+            admins_list   = load_admins()
             files = build_excel_all(users_d, classes_d, msgs_d, warns_d, notes_d,
                                     polls_d, leaderboard_d, blocked_list, admins_list)
-            ts = datetime.now().strftime('%Y%m%d_%H%M')
+            ts = datetime.now(IRAQ_TZ).strftime("%Y%m%d_%H%M")
             total_msgs = sum(len(v) for v in msgs_d.values())
             for data, part in files:
                 if part == 1:
                     fname   = f"kullanicilar_{ts}.xlsx"
                     caption = TR["excel_done"].format(len(users_d))
                     if len(files) > 1:
-                        caption += f"\n📨 Toplam {total_msgs} mesaj → {len(files)} dosyaya bölündü"
+                        caption += f"\n📨 {total_msgs} mesaj → {len(files)} dosyaya bölündü"
                 else:
                     fname   = f"kullanicilar_{ts}_mesajlar_{part}.xlsx"
                     caption = f"📊 Mesaj Geçmişi — Bölüm {part}/{len(files)}"
-                await context.bot.send_document(
-                    int(uid), io.BytesIO(data), filename=fname, caption=caption)
+                await context.bot.send_document(int(uid), io.BytesIO(data), filename=fname, caption=caption)
             log_admin_action(uid, "EXCEL_ALL", f"{len(users_d)} kullanıcı, {len(files)} dosya")
         except Exception as e:
             await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
@@ -3311,41 +3812,74 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         target = cb.split("|")[2]
         await query.answer(TR["excel_building"], show_alert=False)
         try:
-            users_d      = load_users()
-            classes_d    = load_classes()
-            msgs_d       = load_messages()
-            warns_d      = load_warns()
-            notes_d      = load_notes()
-            polls_d      = load_polls()
-            leaderboard_d= load_leaderboard()
-            favorites_d  = load_favorites()
-            recent_d     = load_recent()
-            data = build_excel_user(target, users_d, classes_d, msgs_d, warns_d, notes_d,
-                                    polls_d, leaderboard_d, favorites_d, recent_d)
-            u    = users_d.get(target, {})
-            name = (u.get("full_name") or u.get("first_name","user")).replace(" ","_")
+            users_d       = load_users()
+            classes_d     = load_classes()
+            msgs_d        = load_messages()
+            warns_d       = load_warns()
+            notes_d       = load_notes()
+            polls_d       = load_polls()
+            leaderboard_d = load_leaderboard()
+            favorites_d   = load_favorites()
+            recent_d      = load_recent()
+            data  = build_excel_user(target, users_d, classes_d, msgs_d, warns_d, notes_d,
+                                     polls_d, leaderboard_d, favorites_d, recent_d)
+            u     = users_d.get(target, {})
+            name  = (u.get("full_name") or u.get("first_name", "user")).replace(" ", "_")
             fname = f"kullanici_{name}_{target}.xlsx"
-            await context.bot.send_document(
-                int(uid), io.BytesIO(data), filename=fname,
-                caption=TR["excel_user_done"])
+            await context.bot.send_document(int(uid), io.BytesIO(data), filename=fname,
+                                            caption=TR["excel_user_done"])
             log_admin_action(uid, "EXCEL_USER", target)
         except Exception as e:
             await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
         return ConversationHandler.END
 
     # ── Hedefli Duyuru ────────────────────────────────
-    if cb.startswith("bcast|") and is_admin(uid):
+    if cb.startswith("bcast|") and is_main_admin(uid):
         action = cb.split("|")[1]
         if action == "panel":
             kb = [
                 [InlineKeyboardButton(TR["bcast_all"],    callback_data="bcast|target|all"),
                  InlineKeyboardButton(TR["bcast_active"], callback_data="bcast|target|active")],
-                [InlineKeyboardButton(TR["bcast_new"],    callback_data="bcast|target|new"),
-                 InlineKeyboardButton(TR["bcast_class"],  callback_data="bcast|class_select")],
-                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|root")],
+                [InlineKeyboardButton(TR["bcast_new"],    callback_data="bcast|target|new")],
+                [InlineKeyboardButton("🎯 " + TR["bcast_targeted"], callback_data="bcast|tgt_start")],
+                [InlineKeyboardButton("◀️ Geri",          callback_data="nav|mgmt_panel")],
             ]
             await query.edit_message_text(TR["bcast_targeted"], reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
+
+        if action == "tgt_start":
+            # Adım 1: Sınıf seç
+            kb = build_target_keyboard("bcast|tgt", "cls")
+            kb.append([InlineKeyboardButton("◀️", callback_data="close")])
+            await query.edit_message_text("📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "tgt":
+            # Adım adım hedefleme
+            parts_b = cb.split("|")
+            step_b  = parts_b[-1]
+            val_b   = "|".join(parts_b[2:-1]) if len(parts_b) > 3 else (parts_b[2] if len(parts_b) > 2 else "")
+            if step_b == "done":
+                target_uids = get_target_users(val_b)
+                lbl = target_label(val_b)
+                context.user_data["bcast_targets"] = target_uids
+                context.user_data["bcast_label"]   = lbl
+                context.user_data["action"]        = "broadcast_targeted"
+                await query.edit_message_text(
+                    TR["bcast_confirm"].format(len(target_uids)) + f"\n\n🎯 {lbl}",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("✅ Evet, Gönder", callback_data="bcast|confirm"),
+                        InlineKeyboardButton(TR["cancel"],      callback_data="close"),
+                    ]]))
+            else:
+                kb = build_target_keyboard("bcast|tgt", step_b, val_b)
+                kb.append([InlineKeyboardButton("◀️", callback_data="close")])
+                labels_b = {"cls":"السنة","shift":"الفترة","grp":"المجموعة","subgrp":"الفرعية"}
+                await query.edit_message_text(
+                    f"📢 {labels_b.get(step_b, step_b)}:",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
         if action == "class_select":
             kb = [[InlineKeyboardButton(CLASS_DEFS[c]["tr"], callback_data=f"bcast|target|class_{c}")]
                   for c in CLASS_DEFS]
@@ -3406,46 +3940,244 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         await query.edit_message_text(
             "\n".join(lines)[:4000],
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
-    # ── Anonim Sorular (admin görüntüle) ─────────────
-    if cb == "admin|anon_q" and is_main_admin(uid):
-        qs = load_anon_q()
-        if not qs:
-            await query.answer("❓ Henüz anonim soru yok.", show_alert=True)
+    # ── Admin Aktivite Logu (admin) ───────────────────
+    if cb.startswith("admin_activity|") and is_main_admin(uid):
+        act_parts = cb.split("|")
+        aa_act = act_parts[1]
+
+        if aa_act == "panel":
+            # Show list of secondary admins to view their activity
+            admins = load_admins()
+            users_d = load_users()
+            kb = []
+            for adm_id in admins:
+                u = users_d.get(str(adm_id), {})
+                name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
+                data = load_admin_activity()
+                cnt = len(data.get(str(adm_id), []))
+                kb.append([InlineKeyboardButton(f"👮 {name[:20]} ({cnt} işlem)", callback_data=f"admin_activity|show|{adm_id}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text("📋 Admin Aktivite Logları:", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
-        lines = [f"❓ ANONİM SORULAR ({len(qs)} adet)", "─"*24]
-        kb = []
-        for i, q in enumerate(qs[-20:]):
-            cls_name = CLASS_DEFS.get(q.get("cls",""),{}).get("ar","?")
-            lines.append(f"\n{i+1}. [{cls_name}] {q['text'][:80]}\n   🕐 {q.get('time','')}")
-            kb.append([InlineKeyboardButton(
-                f"📢 رد على #{i+1}", callback_data=f"anon|reply|{len(qs)-20+i}")])
-        kb.append([InlineKeyboardButton("🗑 Tümünü Temizle", callback_data="anon|clear")])
-        kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|root")])
-        await query.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+
+        if aa_act == "show":
+            adm_id = act_parts[2]
+            data = load_admin_activity()
+            entries = data.get(str(adm_id), [])
+            users_d = load_users()
+            u = users_d.get(str(adm_id), {})
+            name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
+            lines = [f"👮 {name} — Son 30 İşlem\n"]
+            for e in reversed(entries[-30:]):
+                t = e.get("time","")
+                etype = e.get("type","?")
+                if etype == "POLL_CREATED":
+                    q = e.get("question","?")[:40]
+                    opts = e.get("options",[])
+                    correct = e.get("correct")
+                    lines.append(f"\n📊 Anket | {t}\n  ❓ {q}\n  🗂 {len(opts)} seçenek")
+                    if correct is not None and 0 <= correct < len(opts):
+                        lines.append(f"  ✅ Doğru: {opts[correct]}")
+                elif etype == "BROADCAST":
+                    txt = e.get("text","")[:50]
+                    target = e.get("target","all")
+                    sent = e.get("sent",0)
+                    lines.append(f"\n📢 Duyuru | {t}\n  👥 {sent} kişi | Hedef: {target}\n  📝 {txt}")
+                elif etype == "DM_SENT":
+                    txt = e.get("text","")[:50]
+                    target_uid = e.get("target_uid","?")
+                    tu = users_d.get(str(target_uid),{})
+                    tname = tu.get("full_name") or tu.get("first_name") or f"ID:{target_uid}"
+                    lines.append(f"\n💬 Mesaj | {t}\n  👤 → {tname}\n  📝 {txt}")
+                else:
+                    lines.append(f"\n⚙️ {etype} | {t}")
+            if not entries:
+                lines.append("Henüz aktivite yok.")
+            kb = [[InlineKeyboardButton("◀️ Geri", callback_data="admin_activity|panel")]]
+            try:
+                await query.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            except Exception:
+                await query.message.reply_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+    # ── Admin Yetki Yönetimi ──────────────────────────
+    if cb.startswith("adminperm|") and is_main_admin(uid):
+        parts_p = cb.split("|")
+        act_p   = parts_p[1]
+        adm_id  = parts_p[2] if len(parts_p) > 2 else ""
+
+        if act_p == "show":
+            u = load_users().get(str(adm_id), {})
+            name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
+            perms = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
+            perm_labels = [
+                ("can_add_folder",  "📁 Klasör Ekle"),
+                ("can_del_folder",  "🗑 Klasör Sil"),
+                ("can_add_file",    "📎 Dosya Ekle"),
+                ("can_del_file",    "🗑 Dosya Sil"),
+                ("can_rename_file", "✏️ Yeniden Adlandır"),
+                ("can_countdown",   "📅 Sınav Ekle"),
+                ("can_poll",        "📊 Anket Kur"),
+                ("can_quiz",        "📝 Quiz"),
+                ("can_broadcast",   "📢 Duyuru Gönder"),
+                ("can_reply",       "💬 Kullanıcıya Cevap"),
+                ("can_warn",        "⚠️ Uyarı Ver"),
+                ("can_block",       "🚫 Engelle"),
+                ("can_view_users",  "👥 Kullanıcı Görme"),
+            ]
+            kb = []
+            for pkey, plabel in perm_labels:
+                val  = perms.get(pkey, DEFAULT_ADMIN_PERMS.get(pkey, False))
+                icon = "✅" if val else "❌"
+                kb.append([InlineKeyboardButton(
+                    f"{icon} {plabel}",
+                    callback_data=f"adminperm|toggle|{adm_id}|{pkey}")])
+            # Sınıf kısıtı
+            cls_val = perms.get("cls", None)
+            grp_val = perms.get("grp", None)
+            sub_val = perms.get("subgrp", None)
+            cls_lbl = cls_val or "Hepsi"
+            grp_lbl = grp_val or "Hepsi"
+            sub_lbl = sub_val or "Hepsi"
+            kb.append([
+                InlineKeyboardButton(f"Sinif: {cls_lbl}", callback_data=f"adminperm|cls|{adm_id}"),
+                InlineKeyboardButton(f"Grup: {grp_lbl}",  callback_data=f"adminperm|grp|{adm_id}"),
+            ])
+            if grp_val:
+                kb.append([InlineKeyboardButton(
+                    f"Alt Grup: {sub_lbl}",
+                    callback_data=f"adminperm|subgrp|{adm_id}|{grp_val}")])
+            kb.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(
+                f"👮 {name}\n\nYetkilerini düzenle:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if act_p == "toggle":
+            pkey = parts_p[3] if len(parts_p) > 3 else ""
+            perms = load_admin_perms()
+            adm_perms = perms.get(str(adm_id), dict(DEFAULT_ADMIN_PERMS))
+            adm_perms[pkey] = not adm_perms.get(pkey, DEFAULT_ADMIN_PERMS.get(pkey, False))
+            perms[str(adm_id)] = adm_perms
+            save_admin_perms(perms)
+            # Ekranı anında güncelle (recursion yok)
+            perm_labels = [
+                ("can_add_folder",  "📁 Klasör Ekle"),
+                ("can_del_folder",  "🗑 Klasör Sil"),
+                ("can_add_file",    "📎 Dosya Ekle"),
+                ("can_del_file",    "🗑 Dosya Sil"),
+                ("can_rename_file", "✏️ Yeniden Adlandır"),
+                ("can_countdown",   "📅 Sınav Ekle"),
+                ("can_poll",        "📊 Anket Kur"),
+                ("can_quiz",        "📝 Quiz"),
+                ("can_broadcast",   "📢 Duyuru Gönder"),
+                ("can_reply",       "💬 Kullanıcıya Cevap"),
+                ("can_warn",        "⚠️ Uyarı Ver"),
+                ("can_block",       "🚫 Engelle"),
+                ("can_view_users",  "👥 Kullanıcı Görme"),
+            ]
+            u2 = load_users().get(str(adm_id), {})
+            name2 = u2.get("full_name") or u2.get("first_name") or f"ID:{adm_id}"
+            kb2 = []
+            for pk, pl in perm_labels:
+                v = adm_perms.get(pk, DEFAULT_ADMIN_PERMS.get(pk, False))
+                kb2.append([InlineKeyboardButton(
+                    f"{'✅' if v else '❌'} {pl}",
+                    callback_data=f"adminperm|toggle|{adm_id}|{pk}")])
+            cls_v = adm_perms.get("cls", None)
+            grp_v = adm_perms.get("grp", None)
+            kb2.append([
+                InlineKeyboardButton(f"Sinif: {cls_v or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"),
+                InlineKeyboardButton(f"Grup: {grp_v or 'Hepsi'}",  callback_data=f"adminperm|grp|{adm_id}"),
+            ])
+            kb2.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(
+                f"👮 {name2}\n\nYetkilerini düzenle:",
+                reply_markup=InlineKeyboardMarkup(kb2))
+            return ConversationHandler.END
+
+        if act_p == "cls":
+            kb = [
+                [InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setcls|{adm_id}|all")],
+                [InlineKeyboardButton("1.Sinif", callback_data=f"adminperm|setcls|{adm_id}|1"),
+                 InlineKeyboardButton("2.Sinif", callback_data=f"adminperm|setcls|{adm_id}|2"),
+                 InlineKeyboardButton("3.Sinif", callback_data=f"adminperm|setcls|{adm_id}|3"),
+                 InlineKeyboardButton("4.Sinif", callback_data=f"adminperm|setcls|{adm_id}|4")],
+            ]
+            await query.edit_message_text("Sinif kisiti:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if act_p == "setcls":
+            cls_val = None if parts_p[3] == "all" else parts_p[3]
+            set_admin_perm(adm_id, "cls", cls_val)
+            await query.answer("✅ Kaydedildi", show_alert=False)
+            # Inline rebuild of show panel (no recursive callback)
+            _u = load_users().get(str(adm_id), {})
+            _name = _u.get("full_name") or _u.get("first_name") or f"ID:{adm_id}"
+            _perms = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
+            _perm_labels = [
+                ("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),
+                ("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),
+                ("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),
+                ("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),
+                ("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),
+                ("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme"),
+            ]
+            _kb = []
+            for _pk, _pl in _perm_labels:
+                _v = _perms.get(_pk, DEFAULT_ADMIN_PERMS.get(_pk, False))
+                _kb.append([InlineKeyboardButton(f"{'✅' if _v else '❌'} {_pl}", callback_data=f"adminperm|toggle|{adm_id}|{_pk}")])
+            _cv = _perms.get("cls", None); _gv = _perms.get("grp", None)
+            _kb.append([InlineKeyboardButton(f"Sinif: {_cv or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"),
+                        InlineKeyboardButton(f"Grup: {_gv or 'Hepsi'}", callback_data=f"adminperm|grp|{adm_id}")])
+            _kb.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(f"👮 {_name}\n\nYetkilerini düzenle:", reply_markup=InlineKeyboardMarkup(_kb))
+            return ConversationHandler.END
+
+        if act_p == "grp":
+            cls_grps = load_class_groups()
+            adm_cls_r = load_admin_perms().get(str(adm_id),{}).get("cls","")
+            grp_keys = list(cls_grps.get(adm_cls_r,{}).keys()) if adm_cls_r else ["A","B","C"]
+            kb = [[InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setgrp|{adm_id}|all")]]
+            row = [InlineKeyboardButton(g, callback_data=f"adminperm|setgrp|{adm_id}|{g}") for g in grp_keys]
+            if row: kb.append(row)
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"adminperm|show|{adm_id}")])
+            await query.edit_message_text("Grup kisiti:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if act_p == "setgrp":
+            grp_val = None if parts_p[3] == "all" else parts_p[3]
+            set_admin_perm(adm_id, "grp", grp_val)
+            await query.answer("✅ Kaydedildi", show_alert=False)
+            _u2 = load_users().get(str(adm_id), {}); _n2 = _u2.get("full_name") or _u2.get("first_name") or f"ID:{adm_id}"
+            _p2 = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
+            _pll = [("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme")]
+            _kb2 = [[InlineKeyboardButton(f"{'✅' if _p2.get(_pk2, DEFAULT_ADMIN_PERMS.get(_pk2,False)) else '❌'} {_pl2}", callback_data=f"adminperm|toggle|{adm_id}|{_pk2}")] for _pk2, _pl2 in _pll]
+            _cv2 = _p2.get("cls", None); _gv2 = _p2.get("grp", None)
+            _kb2.append([InlineKeyboardButton(f"Sinif: {_cv2 or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"), InlineKeyboardButton(f"Grup: {_gv2 or 'Hepsi'}", callback_data=f"adminperm|grp|{adm_id}")])
+            _kb2.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(f"👮 {_n2}\n\nYetkilerini düzenle:", reply_markup=InlineKeyboardMarkup(_kb2))
+            return ConversationHandler.END
+
+        if act_p == "setsubgrp":
+            subgrp_val = None if parts_p[3] == "all" else parts_p[3]
+            set_admin_perm(adm_id, "subgrp", subgrp_val)
+            await query.answer("✅ Kaydedildi", show_alert=False)
+            _u3 = load_users().get(str(adm_id), {}); _n3 = _u3.get("full_name") or _u3.get("first_name") or f"ID:{adm_id}"
+            _p3 = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
+            _pll3 = [("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme")]
+            _kb3 = [[InlineKeyboardButton(f"{'✅' if _p3.get(_pk3, DEFAULT_ADMIN_PERMS.get(_pk3,False)) else '❌'} {_pl3}", callback_data=f"adminperm|toggle|{adm_id}|{_pk3}")] for _pk3, _pl3 in _pll3]
+            _cv3 = _p3.get("cls", None); _gv3 = _p3.get("grp", None)
+            _kb3.append([InlineKeyboardButton(f"Sinif: {_cv3 or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"), InlineKeyboardButton(f"Grup: {_gv3 or 'Hepsi'}", callback_data=f"adminperm|grp|{adm_id}")])
+            _kb3.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(f"👮 {_n3}\n\nYetkilerini düzenle:", reply_markup=InlineKeyboardMarkup(_kb3))
+            return ConversationHandler.END
+
         return ConversationHandler.END
 
-    if cb.startswith("anon|") and is_main_admin(uid):
-        parts = cb.split("|")
-        if parts[1] == "clear":
-            save_anon_q([])
-            await query.answer("✅ Temizlendi", show_alert=True)
-            await query.delete_message()
-        elif parts[1] == "reply" and len(parts) > 2:
-            idx = int(parts[2])
-            qs = load_anon_q()
-            q_text = qs[idx]["text"] if 0 <= idx < len(qs) else "?"
-            context.user_data["action"] = "anon_reply"
-            context.user_data["anon_q_text"] = q_text
-            await query.edit_message_text(
-                f"❓ {q_text}\n\n{'─'*22}\nCevabınızı yazın:",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀️ İptal", callback_data="nav|root")
-                ]]))
-            return WAIT_FOLDER
-        return ConversationHandler.END
 
     # ── Quiz Oluştur (admin) ──────────────────────────
     if cb == "admin|quiz_create" and is_main_admin(uid):
@@ -3460,7 +4192,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "D. Seçenek 4\n"
             "CEVAP: A",
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ İptal", callback_data="nav|root")
+                InlineKeyboardButton("◀️ İptal", callback_data="nav|mgmt_panel")
             ]]))
         return WAIT_FOLDER
 
@@ -3474,7 +4206,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             cls_msgs  = sum(len(msgs_d.get(u,"")) for u in cls_users)
             active_7  = sum(1 for u in cls_users
                            if u in msgs_d and msgs_d[u] and
-                           msgs_d[u][-1].get("time","") >= (datetime.now().replace(
+                           msgs_d[u][-1].get("time","") >= (datetime.now(IRAQ_TZ).replace(
                                hour=0,minute=0,second=0).strftime("%Y-%m-%d")))
             lines.append(
                 f"\n🎓 {cls_def['ar']}\n"
@@ -3485,58 +4217,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text(
             "\n".join(lines)[:4000],
             reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Geri", callback_data="nav|root")
+                InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")
             ]]))
         return ConversationHandler.END
-
-    # ── Gizli Mod / Whitelist (admin) ────────────────
-    if cb.startswith("secret|") and is_main_admin(uid):
-        action = cb.split("|")[1]
-        wl = load_whitelist()
-        if action == "panel":
-            mode_txt = TR["secret_on"] if wl.get("enabled") else TR["secret_off"]
-            toggle_lbl = "🔓 Kapat" if wl.get("enabled") else "🔒 Aç"
-            kb = [
-                [InlineKeyboardButton(toggle_lbl,          callback_data="secret|toggle"),
-                 InlineKeyboardButton(TR["secret_add_btn"],callback_data="secret|add")],
-                [InlineKeyboardButton(TR["secret_list"].format(len(wl.get("users",[]))),
-                                                           callback_data="secret|list")],
-                [InlineKeyboardButton("◀️ Geri",           callback_data="nav|root")],
-            ]
-            await query.edit_message_text(mode_txt, reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
-        if action == "toggle":
-            wl["enabled"] = not wl.get("enabled", False)
-            save_whitelist(wl)
-            mode_txt = TR["secret_on"] if wl["enabled"] else TR["secret_off"]
-            await query.answer(mode_txt, show_alert=True)
-            toggle_lbl = "🔓 Kapat" if wl["enabled"] else "🔒 Aç"
-            kb = [
-                [InlineKeyboardButton(toggle_lbl,          callback_data="secret|toggle"),
-                 InlineKeyboardButton(TR["secret_add_btn"],callback_data="secret|add")],
-                [InlineKeyboardButton(TR["secret_list"].format(len(wl.get("users",[]))),
-                                                           callback_data="secret|list")],
-                [InlineKeyboardButton("◀️ Geri",           callback_data="nav|root")],
-            ]
-            await query.edit_message_text(mode_txt, reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
-        if action == "add":
-            context.user_data["action"] = "secret_add_id"
-            await query.edit_message_text(TR["secret_enter_id"],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
-            return WAIT_SECRET_ID
-        if action == "list":
-            users_list = wl.get("users", [])
-            u_data     = load_users()
-            lines = [TR["secret_list"].format(len(users_list))]
-            for wuid in users_list:
-                u    = u_data.get(str(wuid), {})
-                name = u.get("full_name") or u.get("first_name") or f"ID:{wuid}"
-                lines.append(f"  👤 {name} ({wuid})")
-            await query.edit_message_text(
-                "\n".join(lines)[:3000],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
-            return ConversationHandler.END
 
     # ── Sınıf İstatistikleri (admin) ─────────────────
     if cb == "mgmt|class_stats" and is_main_admin(uid):
@@ -3546,7 +4229,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         for cls in classes.values():
             if cls in counts: counts[cls] += 1
             else: none_c += 1
-        lines = ["🎓 SINIF İSTATİSTİKLERİ", "─"*24]
+        lines = ["🎓 SINIF İSTATİSTİKLERİ", ""]
         for c, cnt in counts.items():
             label = CLASS_DEFS[c]["tr"]
             bar   = "█" * min(cnt, 20)
@@ -3554,11 +4237,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         lines.append(f"❓ Seçmemiş: {none_c} kişi")
         await query.edit_message_text(
             "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
     # ── İçerik işlemleri — pin/move/copy/sort/folder_desc ──
-    if cb.startswith("extra|") and is_admin(uid):
+    if cb.startswith("extra|") and is_main_admin(uid):
         action = cb.split("|")[1]
         folder = get_folder(content, path)
 
@@ -3585,7 +4268,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if desc:
                 prompt += f"\n\nMevcut: {desc[:100]}"
             await query.edit_message_text(prompt,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")]]))
             return WAIT_FOLDER_DESC
 
         if action == "pin":
@@ -3594,7 +4277,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📌 {f.get('caption','?')[:35]}", callback_data=f"extra|do_pin|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(L(uid,"pin_select"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -3617,7 +4300,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📂 {f.get('caption','?')[:35]}", callback_data=f"extra|do_move_sel|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(L(uid,"move_select_file"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -3631,7 +4314,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 label = " › ".join(p)
                 penc  = "~~".join(p)
                 kb.append([InlineKeyboardButton(f"📁 {label}", callback_data=f"extra|do_move_dest|{penc}")])
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
                 L(uid,"move_select_dest").format(" › ".join(path) or "🏠"),
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -3666,7 +4349,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📋 {f.get('caption','?')[:35]}", callback_data=f"extra|do_copy_sel|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(L(uid,"copy_select_file"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -3678,7 +4361,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 label = " › ".join(p)
                 penc  = "~~".join(p)
                 kb.append([InlineKeyboardButton(f"📁 {label}", callback_data=f"extra|do_copy_dest|{penc}")])
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
                 L(uid,"move_select_dest").format(" › ".join(path) or "🏠"),
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -3701,7 +4384,354 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 log_admin_action(uid, "COPY_FILE", f"{fname} → {dest_name}")
             return ConversationHandler.END
 
-    # ── Arama sonucu dosya aç ────────────────────────
+    # ── Alt Admin: Duyuru + Anket (sadmin|) ─────────────
+    if cb.startswith("sadmin|") and is_admin(uid) and not is_main_admin(uid):
+        parts = cb.split("|")
+        sadmin_act = parts[1]
+
+        def _cls_kb(prefix):
+            kb = []
+            row = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                row.append(InlineKeyboardButton(cls_def["ar"], callback_data=f"sadmin|{prefix}|{cls_id}"))
+                if len(row) == 2:
+                    kb.append(row); row = []
+            if row: kb.append(row)
+            kb.append([InlineKeyboardButton("📋 الكل", callback_data=f"sadmin|{prefix}|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="nav|mgmt_panel")])
+            return kb
+
+        def _sft_kb(prefix, cls_val, back_cb):
+            return [
+                [InlineKeyboardButton("☀️ صباحي", callback_data=f"sadmin|{prefix}|{cls_val}|sabahi"),
+                 InlineKeyboardButton("🌙 مسائي",  callback_data=f"sadmin|{prefix}|{cls_val}|masaiy"),
+                 InlineKeyboardButton("📋 الكل",   callback_data=f"sadmin|{prefix}|{cls_val}|all")],
+                [InlineKeyboardButton("◀️ رجوع",   callback_data=back_cb)],
+            ]
+
+        def _grp_kb(prefix, cls_val, sft_val, back_cb):
+            grp_keys = list(get_class_groups(cls_val).keys()) if cls_val != "all" else ["A", "B", "C"]
+            row = [InlineKeyboardButton("📋 الكل", callback_data=f"sadmin|{prefix}|{cls_val}|{sft_val}|all")]
+            for g in grp_keys:
+                row.append(InlineKeyboardButton(g, callback_data=f"sadmin|{prefix}|{cls_val}|{sft_val}|{g}"))
+            return [row, [InlineKeyboardButton("◀️ رجوع", callback_data=back_cb)]]
+
+        # ── Broadcast ──
+        if sadmin_act == "broadcast":
+            if not get_admin_perm(uid, "can_broadcast"):
+                await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+            await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("bcls")))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "bcls":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            await safe_edit(query, "📢 الفترة الدراسية:",
+                reply_markup=InlineKeyboardMarkup(_sft_kb("bsft", cls_val, "sadmin|broadcast")))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "bsft":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            sft_val = parts[3] if len(parts) > 3 else "all"
+            await safe_edit(query, "📢 المجموعة:",
+                reply_markup=InlineKeyboardMarkup(_grp_kb("bgrp", cls_val, sft_val, f"sadmin|bcls|{cls_val}")))
+            return WAIT_BROADCAST_MSG
+
+        if sadmin_act == "bgrp":
+            cls_val = parts[2] if len(parts) > 2 else "all"
+            sft_val = parts[3] if len(parts) > 3 else "all"
+            grp_val = parts[4] if len(parts) > 4 else "all"
+            tgt_parts = []
+            if cls_val != "all": tgt_parts.append(f"cls_{cls_val}")
+            if sft_val != "all": tgt_parts.append(f"sft_{sft_val}")
+            if grp_val != "all": tgt_parts.append(f"grp_{grp_val}")
+            context.user_data["sb_target"] = "|".join(tgt_parts) or "all"
+            context.user_data["action"] = "sadmin_bcast"
+            lbl = target_label(context.user_data["sb_target"])
+            await safe_edit(query, f"📢 {lbl}\n\nاكتب نص الإعلان:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="close")]]))
+            return WAIT_BROADCAST_MSG
+
+        # ── Poll — yeni anket oluştur (recursive callback yok) ──
+        if sadmin_act == "poll":
+            if not get_admin_perm(uid, "can_poll"):
+                await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+            adm_cls = get_admin_cls(uid)
+            context.user_data["poll_tgt_cls"] = adm_cls or ""
+            if adm_cls:
+                kb = [
+                    [InlineKeyboardButton("☀️ صباحي", callback_data="poll|tgt_sft|sabahi"),
+                     InlineKeyboardButton("🌙 مسائي",  callback_data="poll|tgt_sft|masaiy"),
+                     InlineKeyboardButton("📋 الكل",   callback_data="poll|tgt_sft|all")],
+                    [InlineKeyboardButton("◀️ إلغاء",  callback_data="close")],
+                ]
+                await safe_edit(query, "📊 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                kb = []
+                for cls_id, cls_def in CLASS_DEFS.items():
+                    kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"poll|tgt_cls|{cls_id}")])
+                kb.append([InlineKeyboardButton("📋 الكل", callback_data="poll|tgt_cls|all")])
+                kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
+                await safe_edit(query, "📊 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        return ConversationHandler.END
+
+    if cb.startswith("admin_bcast|") and is_admin(uid) and not is_main_admin(uid):
+        return ConversationHandler.END
+
+    # ── Laboratuvar Programı ─────────────────────────
+    if cb.startswith("lab|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        lab_parts = cb.split("|")
+        lab_act   = lab_parts[1]
+
+        if lab_act == "add_new":
+            context.user_data["action"] = "lab_add_name"
+            await query.message.reply_text(
+                "🔬 Lab adını yaz (örn: Elektronik Lab, Fizik Lab):")
+            return ConversationHandler.END
+
+        if lab_act == "lab_cls":
+            cls_val = lab_parts[2] if len(lab_parts) > 2 else "all"
+            context.user_data["pending_lab_cls"] = "" if cls_val == "all" else cls_val
+            # Sınıf seçildi → vardiya seç
+            kb = [
+                [InlineKeyboardButton("☀️ صباحي", callback_data="lab|lab_sft|sabahi"),
+                 InlineKeyboardButton("🌙 مسائي",  callback_data="lab|lab_sft|masaiy"),
+                 InlineKeyboardButton("📋 الكل",   callback_data="lab|lab_sft|all")],
+                [InlineKeyboardButton("◀️ إلغاء",  callback_data="mgmt|lab")],
+            ]
+            await query.edit_message_text("🔬 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if lab_act == "lab_sft":
+            sft_val = lab_parts[2] if len(lab_parts) > 2 else "all"
+            context.user_data["pending_lab_sft"] = "" if sft_val == "all" else sft_val
+            context.user_data["action"] = "lab_add_date"
+            await query.edit_message_text("📅 Tarih yaz (DD/MM/YYYY):\nÖrn: 22/04/2026")
+            return WAIT_FOLDER
+
+        if lab_act == "fixed_view":
+            idx_fv = int(lab_parts[2]) if len(lab_parts) > 2 else -1
+            fixed_fv = load_lab_fixed()
+            WEEKDAYS_FV = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            if 0 <= idx_fv < len(fixed_fv):
+                f_fv = fixed_fv[idx_fv]
+                txt_fv = (
+                    f"📌 Sabit Lab Şablonu\n\n"
+                    f"🔬 Ad: {f_fv.get('name','—')}\n"
+                    f"📅 Gün: {WEEKDAYS_FV.get(f_fv.get('weekday',0),'—')}\n"
+                    f"👥 Grup: {f_fv.get('group','—')}"
+                )
+                kb_fv = [[InlineKeyboardButton("🗑 Sil", callback_data=f"lab|fixed_del|{idx_fv}"),
+                           InlineKeyboardButton("◀️ Geri", callback_data="lab|fixed_panel")]]
+                await query.edit_message_text(txt_fv, reply_markup=InlineKeyboardMarkup(kb_fv))
+            else:
+                await query.answer("Bulunamadı", show_alert=True)
+            return ConversationHandler.END
+
+        if lab_act == "view":
+            week  = lab_parts[2]
+            sched = load_lab_schedule()
+            entry = next((e for e in sched if e.get("week")==week), None)
+            grp   = entry.get("group","?") if entry else "?"
+            # Grup değiştir — yeni format: {cls: {shift: {grp: [subs]}}}
+            grps_cfg = load_class_groups()
+            all_subs = []
+            for cls_d in grps_cfg.values():
+                for shift_d in cls_d.values():
+                    if isinstance(shift_d, dict):
+                        for g_key, subs_list in shift_d.items():
+                            if isinstance(subs_list, list):
+                                all_subs.extend(subs_list)
+                            else:
+                                all_subs.append(g_key)
+            all_subs = sorted(set(all_subs))
+            kb = []
+            row = []
+            for sub in all_subs:
+                icon = "✅" if sub == grp else ""
+                row.append(InlineKeyboardButton(f"{icon}{sub}", callback_data=f"lab|set|{week}|{sub}"))
+                if len(row) == 4:
+                    kb.append(row); row = []
+            if row: kb.append(row)
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            await query.edit_message_text(f"🔬 {week}\nMevcut: {grp}\nGrup seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if lab_act == "del":
+            week  = lab_parts[2]
+            sched = load_lab_schedule()
+            sched = [e for e in sched if e.get("week") != week]
+            save_lab_schedule(sched)
+            await query.answer(f"✅ {week} silindi", show_alert=True)
+            # Rebuild lab panel inline
+            from datetime import date as _date2
+            future2 = get_upcoming_lab_weeks(10)
+            kb_del = []
+            for e2 in future2:
+                g2 = e2.get("group","?"); w2 = e2.get("week","")
+                n2 = f" — {e2['note']}" if e2.get("note") else ""
+                kb_del.append([
+                    InlineKeyboardButton(f"🔬 {w2}: {g2}{n2}", callback_data=f"lab|view|{w2}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|del|{w2}"),
+                ])
+            kb_del.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+            kb_del.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
+            kb_del.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text(
+                f"🔬 Lab Programı\n(Bugün: {_date2.today().strftime('%d/%m/%Y')})",
+                reply_markup=InlineKeyboardMarkup(kb_del))
+            return ConversationHandler.END
+
+        if lab_act == "set":
+            week  = lab_parts[2]
+            group = lab_parts[3]
+            lab_name = context.user_data.pop("pending_lab_name", "")
+            add_lab_week(week, group, note=lab_name)
+            from datetime import datetime as _dt2
+            try:
+                d2 = _dt2.strptime(week, "%Y-%m-%d")
+                ARABIC_DAYS2 = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
+                day_ar = ARABIC_DAYS2.get(d2.weekday(),"")
+                date_disp = f"{day_ar} {d2.strftime('%d/%m/%Y')}"
+            except:
+                date_disp = week
+            confirm = (
+                f"✅ تم إضافة موعد المختبر\n\n"
+                f"🔬 المختبر: {lab_name or '—'}\n"
+                f"📅 التاريخ: {date_disp}\n"
+                f"👥 المجموعة: {group}"
+            )
+            try:
+                await query.message.reply_text(confirm)
+            except: pass
+            await query.answer("✅", show_alert=False)
+            # Rebuild lab panel inline
+            from datetime import date as _date3
+            future3 = get_upcoming_lab_weeks(10)
+            kb_set = []
+            for e3 in future3:
+                g3 = e3.get("group","?"); w3 = e3.get("week","")
+                n3 = f" — {e3['note']}" if e3.get("note") else ""
+                kb_set.append([
+                    InlineKeyboardButton(f"🔬 {w3}: {g3}{n3}", callback_data=f"lab|view|{w3}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|del|{w3}"),
+                ])
+            kb_set.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+            kb_set.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
+            kb_set.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text(
+                f"🔬 Lab Programı\n(Bugün: {_date3.today().strftime('%d/%m/%Y')})",
+                reply_markup=InlineKeyboardMarkup(kb_set))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_panel":
+            fixed = load_lab_fixed()
+            WEEKDAYS_TR = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            kb_fp = []
+            for i, f in enumerate(fixed):
+                day_name = WEEKDAYS_TR.get(f.get("weekday",0),"?")
+                lbl = f"{f.get('name','?')[:20]} — {day_name} [{f.get('group','?')}]"
+                kb_fp.append([
+                    InlineKeyboardButton(f"📌 {lbl}", callback_data=f"lab|fixed_view|{i}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i}"),
+                ])
+            kb_fp.append([InlineKeyboardButton("➕ Yeni Sabit Şablon", callback_data="lab|fixed_add")])
+            kb_fp.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            txt_fp = "📌 Sabit Lab Şablonları\n\nHer hafta tekrar eden lab programları:"
+            await query.edit_message_text(txt_fp, reply_markup=InlineKeyboardMarkup(kb_fp))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_add":
+            context.user_data["action"] = "lab_fixed_name"
+            await query.message.reply_text(
+                "📌 Sabit şablon adı yaz (örn: Fizik Lab, Elektronik Lab):")
+            return ConversationHandler.END
+
+        if lab_act == "fixed_del":
+            idx_fd = int(lab_parts[2]) if len(lab_parts) > 2 else -1
+            fixed_d = load_lab_fixed()
+            if 0 <= idx_fd < len(fixed_d):
+                fixed_d.pop(idx_fd)
+                save_lab_fixed(fixed_d)
+            await query.answer("✅ Silindi", show_alert=True)
+            # Rebuild fixed panel inline
+            WEEKDAYS_TR2 = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            kb_fd2 = []
+            for i2, f2 in enumerate(fixed_d):
+                day_name2 = WEEKDAYS_TR2.get(f2.get("weekday",0),"?")
+                lbl2 = f"{f2.get('name','?')[:20]} — {day_name2} [{f2.get('group','?')}]"
+                kb_fd2.append([
+                    InlineKeyboardButton(f"📌 {lbl2}", callback_data=f"lab|fixed_view|{i2}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i2}"),
+                ])
+            kb_fd2.append([InlineKeyboardButton("➕ Yeni Sabit Şablon", callback_data="lab|fixed_add")])
+            kb_fd2.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            await query.edit_message_text(
+                "📌 Sabit Lab Şablonları\n\nHer hafta tekrar eden lab programları:",
+                reply_markup=InlineKeyboardMarkup(kb_fd2))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_day":
+            day_idx = int(lab_parts[2]) if len(lab_parts) > 2 else 0
+            context.user_data["lab_fixed_weekday"] = day_idx
+            # Şimdi grup seç
+            grps_cfg2 = load_class_groups()
+            all_grps2 = set()
+            for cls_dv in grps_cfg2.values():
+                for sft_dv in cls_dv.values():
+                    if isinstance(sft_dv, dict):
+                        for g_key in sft_dv:
+                            all_grps2.add(g_key)
+                        for subs2 in sft_dv.values():
+                            if isinstance(subs2, list):
+                                all_grps2.update(subs2)
+            kb_fg = []
+            row_fg = []
+            for g_opt in sorted(all_grps2):
+                row_fg.append(InlineKeyboardButton(g_opt, callback_data=f"lab|fixed_grp|{g_opt}"))
+                if len(row_fg) == 4:
+                    kb_fg.append(row_fg); row_fg = []
+            if row_fg: kb_fg.append(row_fg)
+            kb_fg.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            await query.edit_message_text("👥 Lab grubu seç:", reply_markup=InlineKeyboardMarkup(kb_fg))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_grp":
+            grp_val = lab_parts[2] if len(lab_parts) > 2 else ""
+            fname   = context.user_data.pop("lab_fixed_name", "")
+            weekday = context.user_data.pop("lab_fixed_weekday", 0)
+            fixed_new = load_lab_fixed()
+            fixed_new.append({"name": fname, "weekday": weekday, "group": grp_val})
+            save_lab_fixed(fixed_new)
+            WEEKDAYS_TR3 = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
+            await query.answer(f"✅ {fname} — {WEEKDAYS_TR3.get(weekday,'?')} [{grp_val}]", show_alert=True)
+            # Rebuild fixed panel
+            kb_fg2 = []
+            for i3, f3 in enumerate(fixed_new):
+                day3 = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
+                lbl3 = f"{f3.get('name','?')[:20]} — {day3} [{f3.get('group','?')}]"
+                kb_fg2.append([
+                    InlineKeyboardButton(f"📌 {lbl3}", callback_data=f"lab|fixed_view|{i3}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i3}"),
+                ])
+            kb_fg2.append([InlineKeyboardButton("➕ Yeni Sabit Şablon", callback_data="lab|fixed_add")])
+            kb_fg2.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
+            await query.edit_message_text(
+                "📌 Sabit Lab Şablonları\n\nHer hafta tekrar eden lab programları:",
+                reply_markup=InlineKeyboardMarkup(kb_fg2))
+            return ConversationHandler.END
+
+    # ── Arama sonucu dosya/klasör aç ─────────────────
+    if cb.startswith("goto_folder|"):
+        fp_enc = cb.split("|", 1)[1]
+        new_path = fp_enc.split("~~") if fp_enc else []
+        context.user_data["path"] = new_path
+        context.user_data["page"] = 0
+        context.user_data.pop("action", None)
+        await show_folder(query, context, new_path)
+        return ConversationHandler.END
+
     if cb.startswith("srch|"):
         parts        = cb.split("|")
         path_encoded = parts[1]
@@ -3732,6 +4762,361 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if cb == "noop":
         return ConversationHandler.END
 
+    # ── Onay sistemi (süper admin onaylıyor) ──────────
+    if cb.startswith("newadmin|") and is_main_admin(uid):
+        parts_n = cb.split("|")
+        act_n   = parts_n[1]
+        adm_id  = parts_n[2]
+
+        if act_n == "cls":
+            cls_val = None if parts_n[3] == "all" else parts_n[3]
+            set_admin_perm(adm_id, "cls", cls_val)
+            if cls_val:
+                # Grup sor
+                kb = [
+                    [InlineKeyboardButton("Hepsi", callback_data=f"newadmin|grp|{adm_id}|all")],
+                    [InlineKeyboardButton("A",     callback_data=f"newadmin|grp|{adm_id}|A"),
+                     InlineKeyboardButton("B",     callback_data=f"newadmin|grp|{adm_id}|B"),
+                     InlineKeyboardButton("C",     callback_data=f"newadmin|grp|{adm_id}|C")],
+                    [InlineKeyboardButton("Atla",  callback_data=f"newadmin|skip|{adm_id}")],
+                ]
+                await query.edit_message_text(f"Sinif: {cls_val}\nHangi grubu yonetsin?", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await query.edit_message_text(f"Admin {adm_id} eklendi. Kisit yok.")
+            return ConversationHandler.END
+
+        if act_n == "grp":
+            grp_val = None if parts_n[3] == "all" else parts_n[3]
+            set_admin_perm(adm_id, "grp", grp_val)
+            if grp_val:
+                # Alt grup sor
+                kb = [
+                    [InlineKeyboardButton("Hepsi", callback_data=f"newadmin|sub|{adm_id}|all")],
+                    [InlineKeyboardButton(f"{grp_val}1", callback_data=f"newadmin|sub|{adm_id}|{grp_val}1"),
+                     InlineKeyboardButton(f"{grp_val}2", callback_data=f"newadmin|sub|{adm_id}|{grp_val}2"),
+                     InlineKeyboardButton(f"{grp_val}3", callback_data=f"newadmin|sub|{adm_id}|{grp_val}3")],
+                    [InlineKeyboardButton("Atla", callback_data=f"newadmin|skip|{adm_id}")],
+                ]
+                cls_v = get_admin_cls(adm_id) or "?"
+                await query.edit_message_text(
+                    f"Sinif: {cls_v}  Grup: {grp_val}\nAlt grup?",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await query.edit_message_text(f"Admin {adm_id} ayarlandi.")
+            return ConversationHandler.END
+
+        if act_n == "sub":
+            sub_val = None if parts_n[3] == "all" else parts_n[3]
+            set_admin_perm(adm_id, "subgrp", sub_val)
+            cls_v = get_admin_cls(adm_id) or "Hepsi"
+            grp_v = get_admin_grp(adm_id) or "Hepsi"
+            await query.edit_message_text(
+                f"Tamamlandi!\nAdmin: {adm_id}\nSinif: {cls_v}\nGrup: {grp_v}\nAlt grup: {sub_val or 'Hepsi'}")
+            return ConversationHandler.END
+
+        if act_n == "skip":
+            await query.edit_message_text(f"Admin {adm_id} eklendi. Yetkiler sonra ayarlanabilir.")
+            return ConversationHandler.END
+
+    # ── Admin Ekle: Önce sınıf/grup seç ──────────────
+    if cb.startswith("newadmin_pre|") and is_main_admin(uid):
+        parts_pre = cb.split("|")
+        step_pre  = parts_pre[1]
+        val_pre   = parts_pre[2] if len(parts_pre) > 2 else "all"
+
+        if step_pre == "cls":
+            context.user_data["pending_admin_cls"] = None if val_pre == "all" else val_pre
+            if val_pre != "all":
+                # Grup seç
+                kb = [
+                    [InlineKeyboardButton("Hepsi", callback_data="newadmin_pre|grp|all")],
+                    [InlineKeyboardButton("A", callback_data="newadmin_pre|grp|A"),
+                     InlineKeyboardButton("B", callback_data="newadmin_pre|grp|B"),
+                     InlineKeyboardButton("C", callback_data="newadmin_pre|grp|C")],
+                    [InlineKeyboardButton("İptal", callback_data="close")],
+                ]
+                await query.edit_message_text(
+                    f"Sinif: {val_pre}\nHangi grubu yonetsin?",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                context.user_data["pending_admin_grp"] = None
+                context.user_data["action"] = "admin_add"
+                await query.edit_message_text(
+                    TR["admin_enter_id"],
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("İptal", callback_data="close")]]))
+                return WAIT_ADMIN_ID
+            return ConversationHandler.END
+
+        if step_pre == "grp":
+            context.user_data["pending_admin_grp"] = None if val_pre == "all" else val_pre
+            context.user_data["action"] = "admin_add"
+            cls_v = context.user_data.get("pending_admin_cls","?")
+            grp_v = val_pre
+            await query.edit_message_text(
+                f"Sinif: {cls_v}  Grup: {grp_v}\n\nAdmin ID veya @kullanici adi yazin:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("İptal", callback_data="close")]]))
+            return WAIT_ADMIN_ID
+        return ConversationHandler.END
+
+    # ── Admin Ekle — Önce Sınıf/Vardiya/Grup, Sonra ID ─
+    if cb.startswith("newadmin_pre|") and is_main_admin(uid):
+        pre_parts = cb.split("|")
+        pre_act   = pre_parts[1]
+
+        if pre_act == "cls":
+            cls_val = pre_parts[2]  # all veya 1/2/3/4
+            context.user_data["new_admin_pre_cls"] = None if cls_val == "all" else cls_val
+            if cls_val == "all":
+                # Direkt ID'ye geç
+                context.user_data["action"] = "admin_add"
+                await query.edit_message_text(
+                    TR["admin_enter_id"],
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("İptal","close")]]))
+                return WAIT_ADMIN_ID
+            # Vardiya sor
+            kb = [
+                [InlineKeyboardButton("Hepsi",    callback_data=f"newadmin_pre|shift|all"),
+                 InlineKeyboardButton("☀️ Sabah", callback_data=f"newadmin_pre|shift|sabahi"),
+                 InlineKeyboardButton("🌙 Gece",  callback_data=f"newadmin_pre|shift|masaiy")],
+                [InlineKeyboardButton("İptal", callback_data="close")],
+            ]
+            await query.edit_message_text(
+                f"Sınıf: {cls_val}\nVardiya seç:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if pre_act == "shift":
+            shift_val = pre_parts[2]
+            context.user_data["new_admin_pre_shift"] = None if shift_val == "all" else shift_val
+            kb = [
+                [InlineKeyboardButton("Hepsi", callback_data="newadmin_pre|grp|all"),
+                 InlineKeyboardButton("A",     callback_data="newadmin_pre|grp|A"),
+                 InlineKeyboardButton("B",     callback_data="newadmin_pre|grp|B"),
+                 InlineKeyboardButton("C",     callback_data="newadmin_pre|grp|C")],
+                [InlineKeyboardButton("İptal", callback_data="close")],
+            ]
+            cls_v = context.user_data.get("new_admin_pre_cls","?")
+            await query.edit_message_text(
+                f"Sınıf: {cls_v}  Vardiya: {shift_val}\nGrup seç:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if pre_act == "grp":
+            grp_val = pre_parts[2]
+            context.user_data["new_admin_pre_grp"] = None if grp_val == "all" else grp_val
+            # ID gir
+            cls_v   = context.user_data.get("new_admin_pre_cls","Hepsi")
+            shift_v = context.user_data.get("new_admin_pre_shift","Hepsi")
+            context.user_data["action"] = "admin_add"
+            await query.edit_message_text(
+                f"Sınıf: {cls_v}  Vardiya: {shift_v}  Grup: {grp_val}\n\nAdmin ID veya @kullanici adı yazın:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("İptal","close")]]))
+            return WAIT_ADMIN_ID
+
+        return ConversationHandler.END
+
+    # ── Yeni Admin Sinif/Grup Kisiti ─────────────────
+    if cb.startswith("newadmin|") and is_main_admin(uid):
+        parts_n = cb.split("|")
+        act_n   = parts_n[1]
+        adm_id  = parts_n[2]
+        val     = parts_n[3] if len(parts_n) > 3 else "all"
+        val_real = None if val == "all" else val
+
+        if act_n == "cls":
+            set_admin_perm(adm_id, "cls", val_real)
+            if val_real:
+                kb = [
+                    [InlineKeyboardButton("الكل",    callback_data=f"newadmin|shift|{adm_id}|all"),
+                     InlineKeyboardButton("☀️ صباحي", callback_data=f"newadmin|shift|{adm_id}|sabahi"),
+                     InlineKeyboardButton("🌙 مسائي", callback_data=f"newadmin|shift|{adm_id}|masaiy")],
+                    [InlineKeyboardButton("Atla", callback_data=f"newadmin|grp|{adm_id}|all")],
+                ]
+                await query.edit_message_text(
+                    f"Sinif: {val_real}\nHangi vardiyayi yonetsin?",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await query.edit_message_text(f"Admin {adm_id} eklendi. Kisit yok.")
+            return ConversationHandler.END
+
+        if act_n == "shift":
+            shift_val = None if val == "all" else val
+            set_admin_perm(adm_id, "shift", shift_val)
+            kb = [
+                [InlineKeyboardButton("Hepsi", callback_data=f"newadmin|grp|{adm_id}|all")],
+                [InlineKeyboardButton("A", callback_data=f"newadmin|grp|{adm_id}|A"),
+                 InlineKeyboardButton("B", callback_data=f"newadmin|grp|{adm_id}|B"),
+                 InlineKeyboardButton("C", callback_data=f"newadmin|grp|{adm_id}|C")],
+                [InlineKeyboardButton("Atla", callback_data=f"newadmin|skip|{adm_id}")],
+            ]
+            cls_v = get_admin_cls(adm_id) or "?"
+            await query.edit_message_text(
+                f"Sinif: {cls_v}  Vardiya: {shift_val or 'Hepsi'}\nHangi grubu?",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if act_n == "grp":
+            set_admin_perm(adm_id, "grp", val_real)
+            if val_real:
+                cls_v = get_admin_cls(adm_id) or "?"
+                kb = [
+                    [InlineKeyboardButton("Hepsi", callback_data=f"newadmin|sub|{adm_id}|all")],
+                    [InlineKeyboardButton(f"{val_real}1", callback_data=f"newadmin|sub|{adm_id}|{val_real}1"),
+                     InlineKeyboardButton(f"{val_real}2", callback_data=f"newadmin|sub|{adm_id}|{val_real}2"),
+                     InlineKeyboardButton(f"{val_real}3", callback_data=f"newadmin|sub|{adm_id}|{val_real}3")],
+                    [InlineKeyboardButton("Atla", callback_data=f"newadmin|skip|{adm_id}")],
+                ]
+                await query.edit_message_text(
+                    f"Sinif: {cls_v}  Grup: {val_real}\nAlt grup?",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await query.edit_message_text(f"Admin {adm_id} ayarlandi.")
+            return ConversationHandler.END
+
+        if act_n == "sub":
+            set_admin_perm(adm_id, "subgrp", val_real)
+            cls_v = get_admin_cls(adm_id) or "Hepsi"
+            grp_v = get_admin_grp(adm_id) or "Hepsi"
+            log_admin_action(uid, "ADMIN_SETUP", f"ID:{adm_id} sinif:{cls_v} grp:{grp_v}")
+            await query.edit_message_text(
+                f"Tamamlandi!\nAdmin: {adm_id}\nSinif: {cls_v}\nGrup: {grp_v}\nAlt grup: {val_real or 'Hepsi'}")
+            return ConversationHandler.END
+
+        if act_n == "skip":
+            log_admin_action(uid, "ADMIN_ADDED_NOPERM", f"ID:{adm_id}")
+            await query.edit_message_text(f"Admin {adm_id} eklendi. Yetkiler: Ayarlar > Admin Yetkileri")
+            return ConversationHandler.END
+
+        return ConversationHandler.END
+
+
+    # ── Onay Sistemi ─────────────────────────────────
+    if cb.startswith("newadmin|") and is_main_admin(uid):
+        parts_n = cb.split("|")
+        act_n   = parts_n[1]
+        adm_id  = parts_n[2]
+
+        if act_n == "cls":
+            cls_val = None if parts_n[3] == "all" else parts_n[3]
+            set_admin_perm(adm_id, "cls", cls_val)
+            if cls_val:
+                # Grup sor
+                kb = [
+                    [InlineKeyboardButton("Hepsi", callback_data=f"newadmin|grp|{adm_id}|all")],
+                    [InlineKeyboardButton("A",     callback_data=f"newadmin|grp|{adm_id}|A"),
+                     InlineKeyboardButton("B",     callback_data=f"newadmin|grp|{adm_id}|B"),
+                     InlineKeyboardButton("C",     callback_data=f"newadmin|grp|{adm_id}|C")],
+                    [InlineKeyboardButton("Atla",  callback_data=f"newadmin|skip|{adm_id}")],
+                ]
+                await query.edit_message_text(f"Sinif: {cls_val}\nHangi grubu yonetsin?", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await query.edit_message_text(f"Admin {adm_id} eklendi. Kisit yok.")
+            return ConversationHandler.END
+
+        if act_n == "grp":
+            grp_val = None if parts_n[3] == "all" else parts_n[3]
+            set_admin_perm(adm_id, "grp", grp_val)
+            if grp_val:
+                # Alt grup sor
+                kb = [
+                    [InlineKeyboardButton("Hepsi", callback_data=f"newadmin|sub|{adm_id}|all")],
+                    [InlineKeyboardButton(f"{grp_val}1", callback_data=f"newadmin|sub|{adm_id}|{grp_val}1"),
+                     InlineKeyboardButton(f"{grp_val}2", callback_data=f"newadmin|sub|{adm_id}|{grp_val}2"),
+                     InlineKeyboardButton(f"{grp_val}3", callback_data=f"newadmin|sub|{adm_id}|{grp_val}3")],
+                    [InlineKeyboardButton("Atla", callback_data=f"newadmin|skip|{adm_id}")],
+                ]
+                cls_v = get_admin_cls(adm_id) or "?"
+                await query.edit_message_text(
+                    f"Sinif: {cls_v}  Grup: {grp_val}\nAlt grup?",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                await query.edit_message_text(f"Admin {adm_id} ayarlandi.")
+            return ConversationHandler.END
+
+        if act_n == "sub":
+            sub_val = None if parts_n[3] == "all" else parts_n[3]
+            set_admin_perm(adm_id, "subgrp", sub_val)
+            cls_v = get_admin_cls(adm_id) or "Hepsi"
+            grp_v = get_admin_grp(adm_id) or "Hepsi"
+            await query.edit_message_text(
+                f"Tamamlandi!\nAdmin: {adm_id}\nSinif: {cls_v}\nGrup: {grp_v}\nAlt grup: {sub_val or 'Hepsi'}")
+            return ConversationHandler.END
+
+        if act_n == "skip":
+            await query.edit_message_text(f"Admin {adm_id} eklendi. Yetkiler sonra ayarlanabilir.")
+            return ConversationHandler.END
+
+    if cb.startswith("approve|") and is_main_admin(uid):
+        parts   = cb.split("|")
+        action  = parts[1]   # warn / block / deny
+        target  = parts[2]
+        req_uid = parts[3] if len(parts) > 3 else ""
+        u = load_users().get(target, {})
+        name = u.get("full_name") or u.get("first_name") or f"ID:{target}"
+
+        if action == "deny":
+            op = parts[4] if len(parts) > 4 else "işlem"
+            try:
+                await context.bot.send_message(
+                    int(req_uid),
+                    f"❌ Talebiniz reddedildi.\n👤 {name} ({target})\n📋 İşlem: {op}")
+            except: pass
+            await query.edit_message_text(f"❌ Reddedildi: {name}")
+            return ConversationHandler.END
+
+        if action == "warn":
+            # Sebebi approve mesajından al — mesaj text içinde "Sebep: ..." satırı var
+            msg_txt = query.message.text or ""
+            reason = ""
+            for line in msg_txt.split("\n"):
+                if "Sebep:" in line or "سبب:" in line:
+                    reason = line.split(":",1)[1].strip()
+            if not reason: reason = "بقرار الإدارة"
+            count = add_warn(target, reason, uid)
+            # Kullanıcıya bildir
+            try:
+                await context.bot.send_message(
+                    int(target),
+                    AR["warn_msg_to_user"].format(reason=reason, count=count, max=MAX_WARNS))
+            except: pass
+            # Alt admin'e bildir
+            if req_uid:
+                try:
+                    await context.bot.send_message(
+                        int(req_uid),
+                        f"✅ الطلب تمت الموافقة عليه\n👤 {name}\nالتحذيرات: {count}/{MAX_WARNS}")
+                except: pass
+            # Otomatik engel
+            if count >= MAX_WARNS:
+                blocked = load_blocked()
+                if int(target) not in blocked:
+                    blocked.append(int(target)); save_blocked(blocked)
+                try:
+                    await context.bot.send_message(int(target), "🚫 تم حظرك من البوت.")
+                except: pass
+                await query.edit_message_text(f"✅ تم التحذير والحظر التلقائي: {name} ({count}/{MAX_WARNS})")
+            else:
+                await query.edit_message_text(f"✅ تم إرسال التحذير: {name} ({count}/{MAX_WARNS})")
+            log_admin_action(uid, "WARN_APPROVED", f"target={target} reason={reason[:30]}")
+            return ConversationHandler.END
+
+        if action == "block":
+            blocked = load_blocked()
+            if int(target) not in blocked:
+                blocked.append(int(target))
+                save_blocked(blocked)
+            # Kullanıcıya bildir
+            try:
+                await context.bot.send_message(int(target), "🚫 تم حظرك من البوت من قِبل الإدارة.")
+            except: pass
+            # Talep eden admin'e bildir
+            try:
+                await context.bot.send_message(int(req_uid), f"✅ Onaylandı: {name} engellendi.")
+            except: pass
+            await query.edit_message_text(f"✅ {name} engellendi.")
+            log_admin_action(uid, "BLOCK_APPROVED", f"target={target} req_by={req_uid}")
+            return ConversationHandler.END
+
     if cb.startswith("page|"):
         page = int(cb.split("|")[1])
         context.user_data["page"] = page
@@ -3751,6 +5136,82 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     await context.bot.delete_message(chat_id=query.message.chat_id, message_id=mid)
                 except: pass
             path.pop()
+        elif action == "mgmt_panel":
+            # Yönetim panelini inline göster (süper admin)
+            if is_main_admin(uid):
+                _s_mp  = load_settings()
+                _mp_on  = _s_mp.get("maintenance", False)
+                _mp_by  = _s_mp.get("maintenance_by_name", "")
+                _mp_t   = _s_mp.get("maintenance_time", "")
+                _mp_lbl = (f"🔧 Bakım AÇIK — {_mp_by} ({_mp_t})" if _mp_on and _mp_by
+                           else ("🔧 Bakım AÇIK" if _mp_on else "✅ Bakım KAPALI"))
+                _um_mp_on = _s_mp.get("update_mode", False)
+                _um_mp_by = _s_mp.get("update_mode_by_name", "")
+                _um_mp_t  = _s_mp.get("update_mode_time", "")
+                _um_mp_lbl = (f"🔄 Güncelleme AÇIK — {_um_mp_by} ({_um_mp_t})" if _um_mp_on and _um_mp_by
+                              else ("🔄 Güncelleme AÇIK" if _um_mp_on else "✅ Güncelleme KAPALI"))
+                kb = [
+                    [InlineKeyboardButton(_mp_lbl,                callback_data="mgmt|toggle_maint")],
+                    [InlineKeyboardButton(_um_mp_lbl,             callback_data="mgmt|toggle_update")],
+                    [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
+                     InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+                    [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+                    [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+                     InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
+                    [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
+                    [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
+                     InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
+                    [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
+                     InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
+                    [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
+                     InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                    [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
+                     InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
+                    [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+                     InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+                    [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
+                     InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                    [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+                     InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                    [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+                ]
+                await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        elif action == "settings_panel":
+            # Ayarlar panelini inline göster
+            if is_main_admin(uid):
+                s = load_settings()
+                txt = (
+                    f"{TR['settings_title']}\n\n"
+                    f"📝 Ad: {s.get('bot_name','—')}\n"
+                    f"🖼 Fotoğraf: {'✅' if s.get('bot_photo_id') else '❌'}\n"
+                    f"🚫 Engellenenler: {len(load_blocked())} kişi"
+                )
+                kb = [
+                    [InlineKeyboardButton("📝 Bot Adı",          callback_data="set|name"),
+                     InlineKeyboardButton("💬 Karşılama",         callback_data="set|welcome")],
+                    [InlineKeyboardButton("🖼 Bot Fotoğrafı",    callback_data="set|photo"),
+                     InlineKeyboardButton("📄 Bot Açıklaması",   callback_data="set|set_description")],
+                    [InlineKeyboardButton("🔧 Bakım Metni",      callback_data="set|maint_text"),
+                     InlineKeyboardButton(TR["set_blocked_btn"], callback_data="set|blocked")],
+                    [InlineKeyboardButton(TR["btn_mgmt_btn"],    callback_data="set|btn_mgmt"),
+                     InlineKeyboardButton("🎓 Sınıf İsimleri",   callback_data="set|class_names")],
+                    [InlineKeyboardButton("👥 Grup Yapılandırma", callback_data="set|class_groups"),
+                     InlineKeyboardButton("👮 Admin Yetkileri",   callback_data="set|admin_perms")],
+                    [InlineKeyboardButton("❓ FAQ Yönetimi",     callback_data="faqmgmt|panel"),
+                     InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
+                    [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
+                     InlineKeyboardButton("📜 Kural Metni",     callback_data="set|rules_text")],
+                    [InlineKeyboardButton("◀️ Geri",             callback_data="close")],
+                ]
+                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        elif action == "cur":
+            # İptal → bulunduğun klasöre dön (nav|root yerine)
+            pass  # path değişmez, aşağıda show_folder çağrılır
+
         elif action == "root":
             # Ana sayfaya dönünce tüm klasör mesajlarını temizle
             folder_msgs = context.user_data.get("folder_msgs", {})
@@ -3812,29 +5273,189 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Yönetim (sadece süper admin) ──────────────────
-    # ── Anket ve broadcast — tüm adminler ──────────────
-    if cb.startswith("mgmt|") and is_admin(uid):
-        _mgmt_action = cb.split("|")[1]
-        if _mgmt_action == "broadcast" and not is_main_admin(uid):
-            context.user_data["action"] = "broadcast"
+    # Alt admin — kendi sınıf kullanıcılarını görme
+    if cb == "mgmt|my_users" and is_admin(uid) and not is_main_admin(uid):
+        if not get_admin_perm(uid, "can_view_users"):
+            await query.answer("ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+        adm_cls = get_admin_cls(uid)
+        adm_grp = get_admin_grp(uid)
+        users_d = load_users()
+        grps_d  = load_groups()
+        shfts   = load_shifts()
+        kb = []
+        for uid_, u in users_d.items():
+            if int(uid_) == ADMIN_ID: continue
+            if adm_cls and get_user_class(uid_) != adm_cls: continue
+            if adm_grp and not grps_d.get(uid_,"").startswith(adm_grp): continue
+            name   = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+            un     = f" @{u['username']}" if u.get("username") else ""
+            grp_s  = grps_d.get(uid_,"?")
+            sft_s  = "☀️" if shfts.get(uid_,"") in ("sabahi","sabah") else ("🌙" if shfts.get(uid_,"") in ("masaiy","gece") else "")
+            adm_mk = "👑 " if is_admin(uid_) else ""
+            kb.append([InlineKeyboardButton(f"{adm_mk}👤 {name}{un} {sft_s}[{grp_s}]", callback_data=f"user|info|{uid_}")])
+        if not kb:
+            await query.answer("لا يوجد طلاب في فئتك", show_alert=True)
+            return ConversationHandler.END
+        try:
+            await query.edit_message_text(f"👥 طلاب صفي ({len(kb)}):", reply_markup=InlineKeyboardMarkup(kb[:30]))
+        except:
+            await query.message.reply_text(f"👥 طلاب صفي ({len(kb)}):", reply_markup=InlineKeyboardMarkup(kb[:30]))
+        return ConversationHandler.END
+
+    if cb.startswith("mgmt|") and is_admin(uid) and (is_main_admin(uid) or cb == "mgmt|poll"):
+        parts  = cb.split("|")
+        action = parts[1]
+
+        if action == "lab":
+            # Mevcut lab kayıtları + yeni tarih ekleme
+            schedule = load_lab_schedule()
+            from datetime import date as _date
+            today_str = _date.today().strftime("%d/%m/%Y")
+            # Gelecekteki kayıtlar
+            future = get_upcoming_lab_weeks(10)
+            kb = []
+            for e in future:
+                grp  = e.get("group","?")
+                week = e.get("week","")
+                note = f" — {e['note']}" if e.get("note") else ""
+                kb.append([
+                    InlineKeyboardButton(f"🔬 {week}: {grp}{note}", callback_data=f"lab|view|{week}"),
+                    InlineKeyboardButton("🗑", callback_data=f"lab|del|{week}"),
+                ])
+            kb.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+            kb.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
             await query.edit_message_text(
-                AR["broadcast_enter"],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(AR["cancel"], callback_data="close")]]))
-            return WAIT_BROADCAST_MSG
-        if _mgmt_action == "poll" and not is_main_admin(uid):
-            polls = load_polls()
-            kb = [[InlineKeyboardButton(AR["poll_create"], callback_data="poll|create")]]
-            if polls:
-                kb.append([InlineKeyboardButton(AR["poll_results"], callback_data="poll|list_results"),
-                           InlineKeyboardButton(AR["poll_delete"],  callback_data="poll|list_delete")])
-            kb.append([InlineKeyboardButton(AR["back"], callback_data="nav|root")])
-            active = sum(1 for p in polls.values() if p.get("active"))
-            txt = f"{AR['poll_panel']}\n\n📊 {len(polls)}\n✅ {active}"
-            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+                f"🔬 Lab Programı\n(Bugün: {today_str})",
+                reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
-    if cb.startswith("mgmt|") and is_main_admin(uid):
-        action = cb.split("|")[1]
+        if action == "toggle_maint":
+            _s_tm = load_settings()
+            _s_tm["maintenance"] = not _s_tm.get("maintenance", False)
+            if _s_tm["maintenance"]:
+                _s_tm["maintenance_by"]      = uid
+                _s_tm["maintenance_by_name"] = load_users().get(uid,{}).get("full_name") or load_users().get(uid,{}).get("first_name") or f"ID:{uid}"
+                _s_tm["maintenance_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+            else:
+                _s_tm.pop("maintenance_by", None)
+                _s_tm.pop("maintenance_by_name", None)
+                _s_tm.pop("maintenance_time", None)
+            save_settings(_s_tm)
+            _tm_on  = _s_tm["maintenance"]
+            _tm_by  = _s_tm.get("maintenance_by_name", "")
+            _tm_t   = _s_tm.get("maintenance_time", "")
+            _tm_lbl = (f"🔧 Bakım AÇIK — {_tm_by} ({_tm_t})" if _tm_on and _tm_by
+                       else ("🔧 Bakım AÇIK" if _tm_on else "✅ Bakım KAPALI"))
+            await query.answer(f"{'🔧 Bakım AÇILDI' if _tm_on else '✅ Bakım KAPATILDI'}", show_alert=True)
+            _um_tm_on = _s_tm.get("update_mode", False)
+            _um_tm_by = _s_tm.get("update_mode_by_name", "")
+            _um_tm_t  = _s_tm.get("update_mode_time", "")
+            _um_tm_lbl = (f"🔄 Güncelleme AÇIK — {_um_tm_by} ({_um_tm_t})" if _um_tm_on and _um_tm_by
+                          else ("🔄 Güncelleme AÇIK" if _um_tm_on else "✅ Güncelleme KAPALI"))
+            # Yönetim panelini güncelle
+            kb_tm = [
+                [InlineKeyboardButton(_tm_lbl,                callback_data="mgmt|toggle_maint")],
+                [InlineKeyboardButton(_um_tm_lbl,             callback_data="mgmt|toggle_update")],
+                [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
+                 InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+                [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+                 InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
+                [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
+                [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
+                 InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
+                [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
+                 InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
+                [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
+                 InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
+                 InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
+                [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+                 InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+                [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
+                 InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+                 InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+            ]
+            await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tm))
+            return ConversationHandler.END
+
+        if action == "toggle_update":
+            _s_tu = load_settings()
+            _s_tu["update_mode"] = not _s_tu.get("update_mode", False)
+            if _s_tu["update_mode"]:
+                _u_tu = load_users().get(uid, {})
+                _s_tu["update_mode_by"]      = uid
+                _s_tu["update_mode_by_name"] = _u_tu.get("full_name") or _u_tu.get("first_name") or f"ID:{uid}"
+                _s_tu["update_mode_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+            else:
+                _s_tu.pop("update_mode_by", None)
+                _s_tu.pop("update_mode_by_name", None)
+                _s_tu.pop("update_mode_time", None)
+            save_settings(_s_tu)
+            _tu_on  = _s_tu["update_mode"]
+            _tu_by  = _s_tu.get("update_mode_by_name", "")
+            _tu_t   = _s_tu.get("update_mode_time", "")
+            _tu_lbl = (f"🔄 Güncelleme AÇIK — {_tu_by} ({_tu_t})" if _tu_on and _tu_by
+                       else ("🔄 Güncelleme AÇIK" if _tu_on else "✅ Güncelleme KAPALI"))
+            await query.answer(f"{'🔄 Güncelleme Modu AÇILDI' if _tu_on else '✅ Güncelleme Modu KAPATILDI'}", show_alert=True)
+            _mt_tu_on = _s_tu.get("maintenance", False)
+            _mt_tu_by = _s_tu.get("maintenance_by_name", "")
+            _mt_tu_t  = _s_tu.get("maintenance_time", "")
+            _mt_tu_lbl = (f"🔧 Bakım AÇIK — {_mt_tu_by} ({_mt_tu_t})" if _mt_tu_on and _mt_tu_by
+                          else ("🔧 Bakım AÇIK" if _mt_tu_on else "✅ Bakım KAPALI"))
+            kb_tu = [
+                [InlineKeyboardButton(_mt_tu_lbl,             callback_data="mgmt|toggle_maint")],
+                [InlineKeyboardButton(_tu_lbl,                callback_data="mgmt|toggle_update")],
+                [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
+                 InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+                [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+                 InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
+                [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
+                [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
+                 InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
+                [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
+                 InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
+                [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
+                 InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
+                 InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
+                [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+                 InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+                [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
+                 InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+                 InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+            ]
+            await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tu))
+            return ConversationHandler.END
+
+        if action == "admin_log_export":
+            log = load_admin_log()
+            if not log:
+                await query.answer("Log boş", show_alert=True); return ConversationHandler.END
+            import csv as _csv
+            bio = io.StringIO()
+            w = _csv.writer(bio)
+            w.writerow(["Zaman", "Admin", "Islem", "Detay"])
+            for entry in log:
+                adm_name = load_users().get(entry.get("uid",""),{}).get("first_name", entry.get("uid","?"))
+                w.writerow([entry.get("time",""), adm_name, entry.get("action",""), entry.get("detail","")])
+            b = io.BytesIO(bio.getvalue().encode("utf-8-sig"))
+            b.seek(0)
+            try:
+                await context.bot.send_document(
+                    int(uid),
+                    document=b,
+                    filename=f"admin_log_{datetime.now(IRAQ_TZ).strftime('%Y%m%d_%H%M')}.csv",
+                    caption=f"📋 Admin Log — {len(log)} kayıt")
+            except Exception as e:
+                await query.answer(f"Hata: {e}", show_alert=True)
+            return ConversationHandler.END
 
         if action == "stats":
             u_d   = load_users()
@@ -3881,7 +5502,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f"💬 Toplam kayıt: {total_msg}\n"
                 f"👁 Toplam görüntüleme: {total_views}\n"
                 f"🔧 Bakım: {'Açık' if s['maintenance'] else 'Kapalı'}\n\n"
-                f"{'─'*28}\n"
+                f"\n"
                 f"📨 Aktivite Dağılımı:\n"
                 f"  ✍️ Mesaj: {type_counts.get('msg',0)}\n"
                 f"  🔘 Buton: {type_counts.get('button',0)}\n"
@@ -3890,10 +5511,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f"  🖼 Fotoğraf: {type_counts.get('photo',0)}\n"
                 f"  📄 Dosya: {type_counts.get('document',0)}\n"
                 f"  🎥 Video: {type_counts.get('video',0)}\n\n"
-                f"{'─'*28}\n"
+                f"\n"
                 f"📁 Klasör Yapısı:\n" +
                 ("\n".join(folder_lines) if folder_lines else "  Boş") +
-                f"\n\n{'─'*28}\n"
+                f"\n\n\n"
                 f"🏆 En Aktif Kullanıcılar:\n"
             )
             users_data = load_users()
@@ -3903,36 +5524,135 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 txt += f"  👤 {name[:20]} — {cnt} kayıt\n"
 
             if top_files:
-                txt += f"\n{'─'*28}\n🔥 En Çok Görüntülenen:\n"
+                txt += f"\n\n🔥 En Çok Görüntülenen:\n"
                 for i,(fname,cnt) in enumerate(top_files,1):
                     txt += f"  {i}. {fname[:25]} — {cnt}×\n"
 
             kb = [
                 [InlineKeyboardButton("📊 Kullanıcı Listesi", callback_data="mgmt|users")],
-                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")],
             ]
             await query.edit_message_text(txt[:4000], reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if action == "users":
-            u_d = load_users()
-            if not u_d:
-                await query.answer(TR["no_users"], show_alert=True); return ConversationHandler.END
-            kb = []
-            for uid_, u in list(u_d.items())[-50:]:
+            # Adım 1: Sınıf seç
+            kb = [[InlineKeyboardButton("📋 Tümü", callback_data="mgmt|ulist|all|all|all")]]
+            for cls_id, cls_def in CLASS_DEFS.items():
+                cnt = len(users_by_class(cls_id))
+                kb.append([InlineKeyboardButton(
+                    f"{cls_def['tr']}  ({cnt})",
+                    callback_data=f"mgmt|ulist|{cls_id}|_|_")])
+            kb.append([InlineKeyboardButton("🔍 Ara", callback_data="mgmt|ulist|search")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text("👥 Kullanıcılar — Sınıf Seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "ulist" and len(parts) > 2 and parts[2] == "search":
+            context.user_data["action"] = "user_search_admin"
+            await query.edit_message_text(
+                "🔍 İsim veya @username yazın:",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ İptal", callback_data="mgmt|users")]]))
+            return WAIT_FOLDER
+
+        if action == "ulist":
+            # parts: mgmt|ulist|cls|sft|grp
+            # _ = henüz seçilmedi
+            cls_f = parts[2] if len(parts) > 2 else "all"
+            sft_f = parts[3] if len(parts) > 3 else "_"
+            grp_f = parts[4] if len(parts) > 4 else "_"
+
+            u_d    = load_users()
+            grps_d = load_groups()
+            shfts  = load_shifts()
+
+            # Adım 1: Sınıf seçildi, vardiya seç
+            if cls_f not in ("all","search") and sft_f == "_":
+                cls_name = CLASS_DEFS.get(cls_f,{}).get("tr","?")
+                u_cls = [u for u in u_d if get_user_class(u)==cls_f and int(u)!=ADMIN_ID]
+                s_cnt = sum(1 for u in u_cls if shfts.get(u,"") in ("sabahi","sabah"))
+                g_cnt = sum(1 for u in u_cls if shfts.get(u,"") in ("masaiy","gece"))
+                kb = [
+                    [InlineKeyboardButton(f"☀️ Sabahci ({s_cnt})", callback_data=f"mgmt|ulist|{cls_f}|sabahi|_"),
+                     InlineKeyboardButton(f"🌙 Gececi ({g_cnt})",  callback_data=f"mgmt|ulist|{cls_f}|masaiy|_")],
+                    [InlineKeyboardButton(f"Tümü ({len(u_cls)})",   callback_data=f"mgmt|ulist|{cls_f}|all|_")],
+                    [InlineKeyboardButton("◀️ Geri", callback_data="mgmt|users")],
+                ]
+                await query.edit_message_text(f"👥 {cls_name} — Vardiya Seç:", reply_markup=InlineKeyboardMarkup(kb))
+                return ConversationHandler.END
+
+            # Adım 2: Vardiya seçildi, grup seç
+            if cls_f not in ("all","search") and sft_f != "_" and grp_f == "_":
+                cls_name = CLASS_DEFS.get(cls_f,{}).get("tr","?")
+                cls_groups = get_class_groups(cls_f)
+                u_filtered = []
+                for u in u_d:
+                    if int(u) == ADMIN_ID: continue
+                    if get_user_class(u) != cls_f: continue
+                    if sft_f != "all":
+                        us = shfts.get(u,"")
+                        if sft_f == "sabahi" and us not in ("sabahi","sabah"): continue
+                        if sft_f == "masaiy" and us not in ("masaiy","gece"): continue
+                    u_filtered.append(u)
+                sft_lbl = "☀️ Sabah" if sft_f=="sabahi" else ("🌙 Gece" if sft_f=="masaiy" else "Tümü")
+                kb = []
+                for grp in cls_groups:
+                    cnt = sum(1 for u in u_filtered if grps_d.get(u,"").startswith(grp))
+                    kb.append([InlineKeyboardButton(f"👥 Grup {grp} ({cnt})", callback_data=f"mgmt|ulist|{cls_f}|{sft_f}|{grp}")])
+                kb.append([InlineKeyboardButton(f"Tümü ({len(u_filtered)})", callback_data=f"mgmt|ulist|{cls_f}|{sft_f}|all")])
+                kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"mgmt|ulist|{cls_f}|_|_")])
+                await query.edit_message_text(f"👥 {cls_name} / {sft_lbl} — Grup Seç:", reply_markup=InlineKeyboardMarkup(kb))
+                return ConversationHandler.END
+
+            # Adım 3: Liste göster
+            result = []
+            for uid_, u in u_d.items():
                 if int(uid_) == ADMIN_ID: continue
-                name = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
-                un   = f" @{u['username']}" if u.get("username") else ""
-                kb.append([InlineKeyboardButton(f"👤 {name}{un}", callback_data=f"user|info|{uid_}")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
-            await query.edit_message_text(TR["user_list"], reply_markup=InlineKeyboardMarkup(kb))
+                if cls_f not in ("all","search"):
+                    if get_user_class(uid_) != cls_f: continue
+                if sft_f not in ("_","all"):
+                    us = shfts.get(uid_,"")
+                    if sft_f == "sabahi" and us not in ("sabahi","sabah"): continue
+                    if sft_f == "masaiy" and us not in ("masaiy","gece"): continue
+                if grp_f not in ("_","all"):
+                    if not grps_d.get(uid_,"").startswith(grp_f): continue
+                result.append((uid_, u))
+
+            if not result:
+                await query.answer("Bu filtrede kullanıcı yok", show_alert=True)
+                return ConversationHandler.END
+
+            kb = []
+            for uid_, u in result[:40]:
+                name   = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+                un     = f" @{u['username']}" if u.get("username") else ""
+                grp_s  = grps_d.get(uid_,"?")
+                sft_s  = "☀️" if shfts.get(uid_,"") in ("sabahi","sabah") else ("🌙" if shfts.get(uid_,"") in ("masaiy","gece") else "")
+                cls_s  = get_user_class(uid_) or "?"
+                adm_mk = "👑 " if is_admin(uid_) else ""
+                kb.append([InlineKeyboardButton(
+                    f"{adm_mk}👤 {name}{un} {sft_s}[{cls_s}/{grp_s}]",
+                    callback_data=f"user|info|{uid_}")])
+            back_cb = f"mgmt|ulist|{cls_f}|{sft_f}|_" if grp_f not in ("_","all") else f"mgmt|ulist|{cls_f}|_|_" if sft_f != "_" else "mgmt|users"
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=back_cb)])
+            await query.edit_message_text(
+                f"👥 {len(result)} kullanıcı:",
+                reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         if action == "add_admin":
-            context.user_data["action"] = "admin_add"
-            await query.edit_message_text(TR["admin_enter_id"],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
-            return WAIT_ADMIN_ID
+            # Önce sınıf seç
+            kb = [
+                [InlineKeyboardButton("Hepsi (kisitsiz)", callback_data="newadmin_pre|cls|all")],
+                [InlineKeyboardButton("1.Sinif", callback_data="newadmin_pre|cls|1"),
+                 InlineKeyboardButton("2.Sinif", callback_data="newadmin_pre|cls|2"),
+                 InlineKeyboardButton("3.Sinif", callback_data="newadmin_pre|cls|3"),
+                 InlineKeyboardButton("4.Sinif", callback_data="newadmin_pre|cls|4")],
+                [InlineKeyboardButton("İptal", callback_data="close")],
+            ]
+            await query.edit_message_text("Admin ekle — Önce sınıf seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
 
         if action == "del_admin":
             admins = load_admins()
@@ -3964,19 +5684,42 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "poll":
             polls = load_polls()
             kb = [[InlineKeyboardButton(TR["poll_create"], callback_data="poll|create")]]
-            if polls:
+            if polls and is_main_admin(uid):
                 kb.append([InlineKeyboardButton(TR["poll_results"], callback_data="poll|list_results"),
                            InlineKeyboardButton(TR["poll_delete"],  callback_data="poll|list_delete")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            back_cb = "nav|mgmt_panel" if is_main_admin(uid) else "close"
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=back_cb)])
             active = sum(1 for p in polls.values() if p.get("active"))
             txt = f"{TR['poll_panel']}\n\n📊 Toplam anket: {len(polls)}\n✅ Aktif: {active}"
-            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            try:
+                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            except Exception:
+                await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
     if cb.startswith("rem_admin|") and is_main_admin(uid):
         target = int(cb.split("|")[1])
         admins = load_admins()
-        if target in admins: admins.remove(target); save_admins(admins)
+        if target in admins:
+            admins.remove(target); save_admins(admins)
+            log_admin_action(uid, "REMOVE_ADMIN", f"ID:{target} cikartildi")
+            # Reset class so they go through class selection again
+            classes = load_classes()
+            classes.pop(str(target), None)
+            save_classes(classes)
+            # Notify removed admin + show class selection
+            cls_kb = [
+                [InlineKeyboardButton(CLASS_DEFS["1"]["ar"], callback_data="class_pick|1"),
+                 InlineKeyboardButton(CLASS_DEFS["2"]["ar"], callback_data="class_pick|2")],
+                [InlineKeyboardButton(CLASS_DEFS["3"]["ar"], callback_data="class_pick|3"),
+                 InlineKeyboardButton(CLASS_DEFS["4"]["ar"], callback_data="class_pick|4")],
+            ]
+            try:
+                await context.bot.send_message(
+                    target,
+                    "تم إلغاء صلاحياتك كمسؤول.\n\nالرجاء اختيار سنتك الدراسية:",
+                    reply_markup=InlineKeyboardMarkup(cls_kb))
+            except: pass
         await query.answer(TR["admin_removed"].format(target), show_alert=True)
         if admins:
             kb = [[InlineKeyboardButton(f"🚫 {a}", callback_data=f"rem_admin|{a}")] for a in admins]
@@ -3984,7 +5727,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text(TR["del_admin_lbl"], reply_markup=InlineKeyboardMarkup(kb))
         else:
             await query.edit_message_text(TR["no_admins"],
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
 
     if cb.startswith("dm_pick|") and is_main_admin(uid):
@@ -4000,7 +5743,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
         return WAIT_DM_MSG
 
-    if cb.startswith("dm_quick|") and is_main_admin(uid):
+    if cb.startswith("dm_quick|") and is_admin(uid):
         target = cb.split("|")[1]
         context.user_data["dm_target"] = target; context.user_data["action"] = "dm_msg"
         u    = load_users().get(target,{}); name = u.get("full_name") or u.get("first_name") or f"ID:{target}"
@@ -4012,9 +5755,36 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return WAIT_DM_MSG
 
     # ── Kullanıcı detay (süper admin) ────────────────
-    if cb.startswith("user|") and is_main_admin(uid):
+    if cb.startswith("user|") and is_admin(uid):
         parts  = cb.split("|")
         action = parts[1]
+
+        # Alt admin yetki kontrolü
+        if not is_main_admin(uid):
+            target_uid = parts[2] if len(parts) > 2 else ""
+            # Ana admin profilini görme yasak; diğer admin profilleri görülebilir (read-only)
+            if target_uid and int(target_uid) == ADMIN_ID and action == "info":
+                await query.answer("لا يمكنك عرض ملف المشرف الرئيسي", show_alert=True)
+                return ConversationHandler.END
+            # Profil görme yetkisi
+            view_actions = {"info", "extra_cls", "toggle_xcls"}
+            if action in view_actions and not get_admin_perm(uid, "can_view_users"):
+                await query.answer("فعّل صلاحية رؤية المستخدمين أولاً", show_alert=True)
+                return ConversationHandler.END
+            # Uyarı yetkisi
+            if action == "warn" and not get_admin_perm(uid, "can_warn"):
+                await query.answer("ليس لديك صلاحية التحذير", show_alert=True)
+                return ConversationHandler.END
+            # Engel yetkisi
+            if action == "block" and not get_admin_perm(uid, "can_block"):
+                await query.answer("ليس لديك صلاحية الحظر", show_alert=True)
+                return ConversationHandler.END
+            # Sadece süper admin
+            main_only = {"export", "change_cls", "change_grp", "set_cls", "set_grp",
+                         "ulist", "dm"}
+            if action in main_only:
+                await query.answer("ليس لديك هذه الصلاحية", show_alert=True)
+                return ConversationHandler.END
 
         if action == "info":
             target = parts[2]; u_d = load_users(); m_d = load_messages()
@@ -4089,22 +5859,493 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton(TR["msg_btn"], callback_data=f"dm_quick|{target}")],
                 [InlineKeyboardButton(TR["warn_btn"],    callback_data=f"user|warn|{target}"),
                  InlineKeyboardButton(TR["note_btn"],    callback_data=f"user|note|{target}")],
-                [InlineKeyboardButton(TR["excel_user_btn"], callback_data=f"export|excel_user|{target}")],
             ]
             if warns_list:
                 kb.append([InlineKeyboardButton(TR["warn_clear_btn"], callback_data=f"user|clear_warns|{target}")])
             if media_files:
                 kb.insert(0,[InlineKeyboardButton(TR["send_media_btn"].format(len(media_files)),
                                                   callback_data=f"user|sendmedia|{target}")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            if is_main_admin(uid):
+                kb.append([InlineKeyboardButton("🎓 Sınıf Değiştir", callback_data=f"user|change_cls|{target}"),
+                            InlineKeyboardButton("👥 Grup Değiştir",  callback_data=f"user|change_grp|{target}")])
+                kb.append([InlineKeyboardButton("➕ Ek Sınav Sınıfı", callback_data=f"user|extra_cls|{target}")])
+            kb.append([InlineKeyboardButton("📥 Aktivite İndir", callback_data=f"user|export|{target}")])
+            if is_main_admin(uid):
+                kb.append([InlineKeyboardButton(TR["excel_user_btn"], callback_data=f"export|excel_user|{target}")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")])
+            # Alt admin — sadece isim + kullanıcıadı + 2 buton
+            if not is_main_admin(uid):
+                simple_info = (
+                    f"👤 {name}\n"
+                    f"🔗 {un}\n"
+                    f"⚠️ {len(warns_list)}/{MAX_WARNS} تحذيرات"
+                    + ("\n🚫 محظور" if blkd else "")
+                )
+                simple_kb = []
+                if get_admin_perm(uid, "can_warn") and not blkd:
+                    simple_kb.append(InlineKeyboardButton("⚠️ تحذير", callback_data=f"user|warn|{target}"))
+                if get_admin_perm(uid, "can_block"):
+                    if blkd:
+                        simple_kb.append(InlineKeyboardButton("🔓 رفع الحظر", callback_data=f"user|unblock|{target}"))
+                    else:
+                        simple_kb.append(InlineKeyboardButton("🚫 حظر", callback_data=f"user|block|{target}"))
+                row_btns = [simple_kb] if simple_kb else []
+                if warns_list and get_admin_perm(uid, "can_warn"):
+                    row_btns.append([InlineKeyboardButton("🗑 مسح التحذيرات", callback_data=f"user|clear_warns|{target}")])
+                row_btns.append([InlineKeyboardButton("◀️ رجوع", callback_data="mgmt|my_users")])
+                await query.edit_message_text(simple_info, reply_markup=InlineKeyboardMarkup(row_btns))
+                return ConversationHandler.END
+
             await query.edit_message_text(info[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "export":
+            target = parts[2]; m_d = load_messages(); u_d = load_users()
+            msgs = m_d.get(target, [])
+            u    = u_d.get(target, {})
+
+            def clean(s):
+                """Metni koru — Arapça, Türkçe, emoji dahil."""
+                if not s: return "-"
+                try:
+                    val = str(s).strip()
+                    return val if val else "-"
+                except:
+                    return str(s)[:500] if s else "-"
+            to_ascii = clean
+
+            name     = clean(u.get("full_name") or u.get("first_name") or "")
+            username = clean(u.get("username") or "")
+            cls_str  = clean(class_label(target))
+            grp_str  = clean(get_user_group(target))
+
+            TYPE_MAP = {
+                "msg":       "Mesaj",
+                "photo":     "Fotograf",
+                "video":     "Video",
+                "document":  "Dosya",
+                "voice":     "Ses Mesaji",
+                "animation": "GIF",
+                "sticker":   "Sticker",
+                "button":    "Buton",
+                "search":    "Arama",
+                "file_view": "Dosya Goruntuleme",
+                "folder":    "Klasor Girisi",
+                "command":   "Komut",
+                "media":     "Medya",
+                "note":      "Not",
+            }
+
+            SEP = "=" * 44
+            sep = "-" * 44
+
+            lines = [
+                SEP,
+                "  KULLANICI AKTiViTE RAPORU",
+                SEP,
+                f"  Ad       : {name}",
+                f"  Kullanici: @{username}" if username != "-" else "",
+                f"  ID       : {target}",
+                f"  Sinif    : {cls_str}",
+                f"  Grup     : {grp_str}",
+                f"  Son giris: {u.get('last_seen','-')}",
+                f"  Rapor    : {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}",
+                SEP,
+                "",
+                "  OZET",
+                sep,
+                f"  Toplam aktivite  : {len(msgs)}",
+            ]
+
+            counts = {}
+            for m in msgs:
+                t = m.get("type", "diger")
+                counts[t] = counts.get(t, 0) + 1
+            for t, c in sorted(counts.items(), key=lambda x: -x[1]):
+                lbl = TYPE_MAP.get(t, t)
+                lines.append(f"  {lbl:<22}: {c}")
+
+            lines += [
+                "",
+                sep,
+                "  TUM AKTiViTE GECMiSi",
+                sep,
+                f"  {'Tarih-Saat':<22} {'Tur':<18} Icerik",
+                sep,
+            ]
+
+            for m in msgs:
+                t     = m.get("type", "")
+                lbl   = TYPE_MAP.get(t, t).strip()
+                zaman = m.get("time", "")
+                cont  = clean(m.get("content", ""))
+                fid   = m.get("file_id", "")
+                if not cont or cont == "-":
+                    cont = f"[{lbl}]"
+                line = f"  {zaman}  [{lbl}]  {cont[:120]}"
+                if fid:
+                    line += f"  (file_id: {fid[:20]}...)"
+                lines.append(line)
+
+            # Hatırlatıcılar
+            rems = get_user_reminders(target)
+            if rems:
+                lines += ["", sep, f"  HATIRLATICILARI  ({len(rems)} adet)", sep]
+                import time as _t
+                now_ts = _t.time()
+                for i, r in enumerate(rems, 1):
+                    rem_txt  = to_ascii(r.get("text", ""))
+                    created  = r.get("created", "")
+                    dur_min  = int((r.get("fire_ts", 0) - r.get("created_ts", 0)) / 60) if r.get("created_ts") else 0
+                    left_min = max(0, int((r.get("fire_ts", 0) - now_ts) / 60))
+                    if left_min >= 1440:
+                        left_str = f"{left_min//1440} gun {(left_min%1440)//60} sa kaldi"
+                    elif left_min >= 60:
+                        left_str = f"{left_min//60} saat {left_min%60} dk kaldi"
+                    else:
+                        left_str = f"{left_min} dakika kaldi"
+                    lines.append(f"  {i}. [{created}] {rem_txt}")
+                    lines.append(f"     Kalan: {left_str}")
+
+            # Notlar
+            notes = get_user_notes(target)
+            if notes:
+                lines += ["", sep, f"  NOTLARI  ({len(notes)} adet)", sep]
+                for i, n in enumerate(notes, 1):
+                    subj  = to_ascii(n.get("subject", ""))
+                    cont  = to_ascii(n.get("content", ""))
+                    ntype = n.get("type", "text")
+                    zaman = n.get("time", "")
+                    fid_n = n.get("file_id", "")
+                    lines.append(f"  {i}. [{zaman}] Ders:{subj}  Tur:{ntype}")
+                    if cont and cont != "-":
+                        lines.append(f"     Icerik: {cont[:200]}")
+                    if fid_n:
+                        lines.append(f"     Medya: {fid_n[:40]}...")
+
+            # ── Excel dosyası oluştur ──────────────────
+            try:
+                import openpyxl
+                from openpyxl.styles import Font, PatternFill, Alignment
+                from openpyxl.utils import get_column_letter
+                HAS_OPENPYXL = True
+            except ImportError:
+                HAS_OPENPYXL = False
+
+            if not HAS_OPENPYXL:
+                wb = None
+            else:
+                wb = openpyxl.Workbook()
+
+            # ── Excel veya CSV ─────────────────────────
+            if not HAS_OPENPYXL:
+                # CSV fallback — kullanıcı bilgileri + aktiviteler
+                shift_raw  = get_user_shift(target)
+                shift_disp = "Sabahci" if shift_raw in ("sabahi","sabah") else ("Gececi" if shift_raw in ("masaiy","gece") else "-")
+                import csv as _csv
+                csv_bio = io.StringIO()
+                w = _csv.writer(csv_bio)
+                # Bilgi kutusu
+                w.writerow(["=== KULLANICI BILGISI ==="])
+                w.writerow(["Ad",          name])
+                w.writerow(["Kullanici Adi", u.get("username","-") or "-"])
+                w.writerow(["ID",           target])
+                w.writerow(["Sinif",        cls_str or "-"])
+                w.writerow(["Vardiya",      shift_disp])
+                w.writerow(["Grup",         grp_str or "-"])
+                w.writerow(["Kayit Tarihi", u.get("join_date", u.get("last_seen","-"))[:10] if u.get("join_date") or u.get("last_seen") else "-"])
+                w.writerow(["Son Kullanim", u.get("last_seen","-")])
+                w.writerow(["Toplam Aktivite", len(msgs)])
+                w.writerow(["Rapor Tarihi",  datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")])
+                w.writerow([])
+                w.writerow(["=== AKTIVITE GECMISI ==="])
+                w.writerow(["Tarih-Saat", "Tur", "Icerik"])
+                for m in msgs:
+                    w.writerow([m.get("time",""), TYPE_MAP.get(m.get("type",""),"").strip(), m.get("content","")[:200]])
+                b2 = io.BytesIO(csv_bio.getvalue().encode("utf-8-sig"))
+                b2.seek(0)
+                fn2 = f"rapor_{target}_{datetime.now(IRAQ_TZ).strftime('%Y%m%d_%H%M')}.csv"
+                try:
+                    await query.message.reply_document(b2, filename=fn2, caption=f"{name} | {len(msgs)} aktivite")
+                except Exception as e:
+                    await query.message.reply_text(f"Hata: {e}")
+                return ConversationHandler.END
+
+            # ── Sayfa 1: Özet ──────────────────────────
+            ws1 = wb.active
+            ws1.title = "Ozet"
+            hdr_font  = Font(bold=True, color="FFFFFF", size=11)
+            hdr_fill  = PatternFill("solid", fgColor="1F4E79")
+            alt_fill  = PatternFill("solid", fgColor="D6E4F0")
+            box_fill  = PatternFill("solid", fgColor="EBF3FB")
+            box_font  = Font(bold=True, size=11, color="1F4E79")
+
+            # ── Kullanıcı Bilgileri Kutusu ──────────────
+            shift_raw = get_user_shift(target)
+            shift_disp = "صباحي" if shift_raw in ("sabahi","sabah") else ("مسائي" if shift_raw in ("masaiy","gece") else "-")
+            grp_disp   = grp_str or "-"
+            join_date  = u.get("join_date", u.get("last_seen", "-"))[:10] if u.get("join_date") or u.get("last_seen") else "-"
+            last_seen  = u.get("last_seen", "-")
+            username_val = u.get("username", "-") or "-"
+
+            box_rows = [
+                ["╔══════════════════════════════╗"],
+                ["  بيانات المستخدم / KULLANICI BILGISI"],
+                ["╠══════════════════════════════╣"],
+                ["  الاسم / Ad",          name],
+                ["  اسم المستخدم",         f"@{username_val}"],
+                ["  المعرف / ID",          target],
+                ["  السنة / Sinif",        cls_str or "-"],
+                ["  الفترة / Vardiya",     shift_disp],
+                ["  المجموعة / Grup",      grp_disp],
+                ["  تاريخ الانضمام",       join_date],
+                ["  آخر استخدام",          last_seen],
+                ["  إجمالي النشاط",        len(msgs)],
+                ["  تاريخ التقرير",        datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")],
+                ["╚══════════════════════════════╝"],
+            ]
+            for br in box_rows:
+                ws1.append(br)
+                r = ws1.max_row
+                for col in range(1, 3):
+                    ws1.cell(r, col).fill = box_fill
+                    ws1.cell(r, col).font = box_font if br[0].startswith("╠") or br[0].startswith("╔") or br[0].startswith("╚") or br[0].startswith("  بيانات") else Font(size=10)
+                    ws1.cell(r, col).alignment = Alignment(horizontal="right")
+
+            ws1.append([])
+            info_rows = []  # artık kutu kullandık
+
+            ws1.append([])
+            ws1.append(["TUR", "ADET"])
+            ws1["A" + str(ws1.max_row)].font = hdr_font
+            ws1["A" + str(ws1.max_row)].fill = hdr_fill
+            ws1["B" + str(ws1.max_row)].font = hdr_font
+            ws1["B" + str(ws1.max_row)].fill = hdr_fill
+            counts = {}
+            for m in msgs:
+                t = TYPE_MAP.get(m.get("type",""), m.get("type","?")).strip()
+                counts[t] = counts.get(t, 0) + 1
+            for t, cnt in sorted(counts.items(), key=lambda x: -x[1]):
+                ws1.append([t, cnt])
+
+            ws1.column_dimensions["A"].width = 22
+            ws1.column_dimensions["B"].width = 40
+
+            # ── Sayfa 2: Tüm Aktiviteler ────────────────
+            ws2 = wb.create_sheet("Aktiviteler")
+            headers = ["Tarih-Saat", "Tur", "Icerik"]
+            ws2.append(headers)
+            for col, h in enumerate(headers, 1):
+                cell = ws2.cell(1, col, h)
+                cell.font = hdr_font
+                cell.fill = hdr_fill
+                cell.alignment = Alignment(horizontal="center")
+            for i, m in enumerate(msgs, 2):
+                t    = TYPE_MAP.get(m.get("type",""), m.get("type","?")).strip()
+                cont = clean(m.get("content",""))
+                if not cont or cont == "-":
+                    cont = f"[{t}]"
+                ws2.append([m.get("time",""), t, cont[:200]])
+                if i % 2 == 0:
+                    for col in range(1, 4):
+                        ws2.cell(i, col).fill = alt_fill
+            ws2.column_dimensions["A"].width = 22
+            ws2.column_dimensions["B"].width = 18
+            ws2.column_dimensions["C"].width = 60
+
+            # ── Sayfa 3: Hatırlatıcılar ──────────────────
+            rems_data = get_user_reminders(target)
+            if rems_data:
+                ws3 = wb.create_sheet("Hatirlaticlar")
+                ws3.append(["Metin", "Olusturma", "Ates Zamani", "Kalan (dk)"])
+                for col in range(1, 5):
+                    ws3.cell(1, col).font = hdr_font
+                    ws3.cell(1, col).fill = hdr_fill
+                import time as _tx
+                now_ts = _tx.time()
+                for r in rems_data:
+                    left = max(0, int((r.get("fire_ts",0) - now_ts) / 60))
+                    ws3.append([
+                        clean(r.get("text","")),
+                        r.get("created",""),
+                        datetime.fromtimestamp(r.get("fire_ts",0)).strftime("%Y-%m-%d %H:%M:%S") if r.get("fire_ts") else "-",
+                        left
+                    ])
+                for col in [1,2,3,4]:
+                    ws3.column_dimensions[get_column_letter(col)].width = 25
+
+            # ── Sayfa 4: Notlar ──────────────────────────
+            notes_data = get_user_notes(target)
+            if notes_data:
+                ws4 = wb.create_sheet("Notlar")
+                ws4.append(["Ders", "Tur", "Icerik", "Zaman", "MediaID"])
+                for col in range(1, 5):
+                    ws4.cell(1, col).font = hdr_font
+                    ws4.cell(1, col).fill = hdr_fill
+                for n in notes_data:
+                    cont_n = clean(n.get("content",""))
+                    fid_n  = n.get("file_id","")
+                    ws4.append([
+                        clean(n.get("subject","")),
+                        n.get("type","text"),
+                        cont_n[:200] if cont_n and cont_n != "-" else f"[{n.get('type','medya')}]",
+                        n.get("time",""),
+                        fid_n[:30] + "..." if fid_n else ""
+                    ])
+                for col in [1,2,3,4]:
+                    ws4.column_dimensions[get_column_letter(col)].width = 25
+
+            if not HAS_OPENPYXL:
+                # openpyxl yoksa düz metin
+                import csv
+                bio = io.StringIO()
+                writer = csv.writer(bio)
+                writer.writerow(["Tarih", "Tur", "Icerik"])
+                for m in msgs:
+                    writer.writerow([m.get("time",""), TYPE_MAP.get(m.get("type",""),"").strip(), m.get("content","")[:200]])
+                bio2 = io.BytesIO(bio.getvalue().encode("utf-8-sig"))
+                bio2.seek(0)
+                fname2 = f"rapor_{target}_{datetime.now(IRAQ_TZ).strftime('%Y%m%d_%H%M')}.csv"
+                try:
+                    await query.message.reply_document(bio2, filename=fname2, caption=f"{name} | {len(msgs)} aktivite")
+                except Exception as e:
+                    await query.message.reply_text(f"Hata: {e}")
+                return ConversationHandler.END
+
+            bio = io.BytesIO()
+            wb.save(bio)
+            bio.seek(0)
+            fname = f"rapor_{target}_{datetime.now(IRAQ_TZ).strftime('%Y%m%d_%H%M')}.xlsx"
+            try:
+                await query.message.reply_document(
+                    bio,
+                    filename=fname,
+                    caption=f"{name} | ID:{target} | {len(msgs)} aktivite")
+            except Exception as e:
+                await query.message.reply_text(f"Hata: {e}")
+            return ConversationHandler.END
+
+        if action == "extra_cls":
+            # Ek sınav takibi — kullanıcı başka sınıfın sınavlarını da görsün
+            target = parts[2]
+            u_e = load_users().get(target,{})
+            name_e = u_e.get("full_name") or u_e.get("first_name") or target
+            # Mevcut ek sınıflar
+            extra_cls_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+            current_extra = extra_cls_data.get(str(target), [])
+            kb = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                icon = "✅" if cls_id in current_extra else "➕"
+                kb.append([InlineKeyboardButton(
+                    f"{icon} {cls_def['tr']}",
+                    callback_data=f"user|toggle_xcls|{target}|{cls_id}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"user|info|{target}")])
+            await query.edit_message_text(
+                f"📚 Ek Sınav Sınıfları\n{name_e}\n\n✅ = ekli, ➕ = ekle/çıkar:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "toggle_xcls":
+            target = parts[2]; cls_id = parts[3]
+            extra_cls_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+            cur = extra_cls_data.get(str(target), [])
+            if cls_id in cur: cur.remove(cls_id)
+            else: cur.append(cls_id)
+            extra_cls_data[str(target)] = cur
+            save_json(os.path.join(BASE_DIR, "user_extra_cls.json"), extra_cls_data)
+            await query.answer(f"✅ {'Eklendi' if cls_id in cur else 'Çıkarıldı'}", show_alert=False)
+            # Rebuild extra_cls panel inline
+            u_xe = load_users().get(target, {}); name_xe = u_xe.get("full_name") or u_xe.get("first_name") or target
+            kb_xe = []
+            for _cid, _cdef in CLASS_DEFS.items():
+                _icon = "✅" if _cid in cur else "➕"
+                kb_xe.append([InlineKeyboardButton(f"{_icon} {_cdef['tr']}", callback_data=f"user|toggle_xcls|{target}|{_cid}")])
+            kb_xe.append([InlineKeyboardButton("◀️ Geri", callback_data=f"user|info|{target}")])
+            await query.edit_message_text(f"➕ Ek Sınav Takibi: {name_xe}", reply_markup=InlineKeyboardMarkup(kb_xe))
+            return ConversationHandler.END
+
+        if action == "change_cls":
+            # Tek kullanıcı sınıf değiştir
+            target = parts[2]
+            u_c = load_users().get(target,{})
+            name_c = u_c.get("full_name") or u_c.get("first_name") or target
+            kb = [[InlineKeyboardButton(CLASS_DEFS[cls]["ar"], callback_data=f"user|set_cls|{target}|{cls}")]
+                  for cls in CLASS_DEFS]
+            kb.append([InlineKeyboardButton("◀️", callback_data=f"user|info|{target}")])
+            await query.edit_message_text(f"🎓 Sınıf değiştir: {name_c}", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "set_cls":
+            target = parts[2]; new_cls = parts[3]
+            old_cls = get_user_class(target)
+            set_user_class(target, new_cls)
+            log_admin_action(uid, "CHANGE_CLS", f"user:{target} {old_cls}→{new_cls}")
+            await query.answer(f"✅ {CLASS_DEFS[new_cls]['ar']}", show_alert=True)
+            u_c = load_users().get(target, {})
+            name_c = u_c.get("full_name") or u_c.get("first_name") or target
+            kb_back = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                        InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            await query.edit_message_text(
+                f"✅ {name_c} → {CLASS_DEFS[new_cls]['ar']}",
+                reply_markup=InlineKeyboardMarkup(kb_back))
+            return ConversationHandler.END
+
+        if action == "change_grp":
+            target = parts[2]
+            kb = [
+                [InlineKeyboardButton("A", callback_data=f"user|set_grp|{target}|A"),
+                 InlineKeyboardButton("B", callback_data=f"user|set_grp|{target}|B"),
+                 InlineKeyboardButton("C", callback_data=f"user|set_grp|{target}|C")],
+                [InlineKeyboardButton("A1",callback_data=f"user|set_grp|{target}|A1"),
+                 InlineKeyboardButton("A2",callback_data=f"user|set_grp|{target}|A2"),
+                 InlineKeyboardButton("A3",callback_data=f"user|set_grp|{target}|A3")],
+                [InlineKeyboardButton("B1",callback_data=f"user|set_grp|{target}|B1"),
+                 InlineKeyboardButton("B2",callback_data=f"user|set_grp|{target}|B2"),
+                 InlineKeyboardButton("B3",callback_data=f"user|set_grp|{target}|B3")],
+                [InlineKeyboardButton("C1",callback_data=f"user|set_grp|{target}|C1"),
+                 InlineKeyboardButton("C2",callback_data=f"user|set_grp|{target}|C2"),
+                 InlineKeyboardButton("C3",callback_data=f"user|set_grp|{target}|C3")],
+                [InlineKeyboardButton("◀️", callback_data=f"user|info|{target}")],
+            ]
+            await query.edit_message_text("👥 Grup değiştir:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "set_grp":
+            target = parts[2]; new_grp = parts[3]
+            old_grp = get_user_group(target)
+            set_user_group(target, new_grp)
+            log_admin_action(uid, "CHANGE_GRP", f"user:{target} {old_grp}→{new_grp}")
+            await query.answer(f"✅ {new_grp}", show_alert=True)
+            u_c2 = load_users().get(target, {})
+            name_c2 = u_c2.get("full_name") or u_c2.get("first_name") or target
+            kb_back2 = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                         InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            await query.edit_message_text(
+                f"✅ {name_c2} → Grup: {new_grp}",
+                reply_markup=InlineKeyboardMarkup(kb_back2))
             return ConversationHandler.END
 
         if action == "warn":
             target = parts[2]
+            u    = load_users().get(target,{}); name = u.get("full_name") or u.get("first_name") or f"ID:{target}"
+            if not is_main_admin(uid):
+                if not get_admin_perm(uid, "can_warn"):
+                    await query.answer("Yetkin yok", show_alert=True); return ConversationHandler.END
+                if not admin_can_manage_user(uid, target):
+                    await query.answer("Bu kullaniciya yetkini yok", show_alert=True); return ConversationHandler.END
+                # Sebep sor, sonra onaya gönder
+                context.user_data["pending_action"] = "warn"
+                context.user_data["pending_target"] = target
+                context.user_data["pending_tname"]  = name
+                context.user_data["action"] = "pending_reason"
+                await query.edit_message_text(
+                    f"⚠️ Uyari sebebini yaz:\n{name}",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("Iptal", callback_data="nav|mgmt_panel")
+                    ]]))
+                return WAIT_FOLDER
             context.user_data["warn_target"] = target
             context.user_data["action"]      = "warn_reason"
-            u    = load_users().get(target,{}); name = u.get("full_name") or u.get("first_name") or f"ID:{target}"
             await query.edit_message_text(
                 f"{TR['warn_reason_prompt']}\n\n👤 {name}",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
@@ -4126,7 +6367,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             target = parts[2]
             clear_warns(target)
             await query.answer(TR["warns_cleared"].format(target), show_alert=True)
-            query.data = f"user|info|{target}"; return await callback(update, context)
+            kb_cw = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                      InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            _u_cw = load_users().get(target, {})
+            _n_cw = _u_cw.get("full_name") or _u_cw.get("first_name") or target
+            await query.edit_message_text(f"✅ {_n_cw} uyarıları temizlendi", reply_markup=InlineKeyboardMarkup(kb_cw))
+            return ConversationHandler.END
 
         if action == "sendmedia":
             target = parts[2]; m_d = load_messages()
@@ -4149,28 +6395,106 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return ConversationHandler.END
 
         if action == "block":
-            target=parts[2]; blocked=load_blocked()
+            target=parts[2]
+            u = load_users().get(target,{}); name = u.get("full_name") or u.get("first_name") or f"ID:{target}"
+            if not is_main_admin(uid):
+                if not get_admin_perm(uid, "can_block"):
+                    await query.answer("Yetkin yok", show_alert=True); return ConversationHandler.END
+                if not admin_can_manage_user(uid, target):
+                    await query.answer("Bu kullaniciya yetkini yok", show_alert=True); return ConversationHandler.END
+                # Sebep sor, sonra onaya gönder
+                context.user_data["pending_action"] = "block"
+                context.user_data["pending_target"] = target
+                context.user_data["pending_tname"]  = name
+                context.user_data["action"] = "pending_reason"
+                await query.edit_message_text(
+                    f"🚫 Engelleme sebebini yaz:\n{name}",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("Iptal", callback_data="nav|mgmt_panel")
+                    ]]))
+                return WAIT_FOLDER
+            blocked=load_blocked()
             if int(target) not in blocked: blocked.append(int(target)); save_blocked(blocked)
             await query.answer(TR["blocked_ok"].format(target), show_alert=True)
-            query.data=f"user|info|{target}"; return await callback(update, context)
+            kb_blk = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                       InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            await query.edit_message_text(f"🚫 {name} engellendi", reply_markup=InlineKeyboardMarkup(kb_blk))
+            return ConversationHandler.END
 
         if action == "unblock":
             target=parts[2]; blocked=load_blocked()
+            u_ub = load_users().get(target, {}); name_ub = u_ub.get("full_name") or u_ub.get("first_name") or f"ID:{target}"
             if int(target) in blocked: blocked.remove(int(target)); save_blocked(blocked)
             await query.answer(TR["unblocked_ok"].format(target), show_alert=True)
-            query.data=f"user|info|{target}"; return await callback(update, context)
+            kb_ub = [[InlineKeyboardButton("👤 Profil", callback_data=f"user|info|{target}"),
+                      InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]
+            await query.edit_message_text(f"✅ {name_ub} engeli kaldırıldı", reply_markup=InlineKeyboardMarkup(kb_ub))
+            return ConversationHandler.END
 
     # ── İçerik yönetimi ───────────────────────────────
     if cb.startswith("cnt|") and adm:
         action = cb.split("|")[1]; folder = get_folder(content, path)
 
+        if action == "remind":
+            # Öğrencilere sınav hatırlatması gönder
+            idx_r  = int(cb.split("|")[2])
+            adm_cls = get_admin_cls(uid) or ""
+            adm_sft = get_admin_shift(uid) or ""
+            cds_r  = get_countdowns(adm_cls, uid=uid)
+            if idx_r >= len(cds_r):
+                await query.answer("Sınav bulunamadı", show_alert=True); return ConversationHandler.END
+            cd_r = cds_r[idx_r]
+            name_r = cd_r.get("name","")
+            date_r = cd_r.get("date","")
+            cls_r  = cd_r.get("cls","") or adm_cls
+            grp_r  = cd_r.get("group","")
+            msg_r  = f"⏰ تذكير بالامتحان\n\n📚 {name_r}\n📅 {date_r}"
+            # Hedef kullanıcılar
+            targets_r = get_target_users(f"cls_{cls_r}" if cls_r else "all")
+            if grp_r:
+                grps_d = load_groups()
+                targets_r = [u for u in targets_r if grps_d.get(u,"").startswith(grp_r)]
+            sent_r = 0
+            for uid_r in targets_r:
+                try: await context.bot.send_message(int(uid_r), msg_r); sent_r += 1
+                except: pass
+            await query.answer(f"✅ {sent_r} kişiye gönderildi", show_alert=True)
+            return ConversationHandler.END
+
+        if action == "add_countdown":
+            if is_main_admin(uid) or get_admin_perm(uid, "can_countdown"):
+                context.user_data["action"] = "countdown_name"
+                await query.edit_message_text(
+                    L(uid, "countdown_prompt"),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|cur")
+                    ]]))
+                return WAIT_FOLDER
+            else:
+                await query.answer("Yetkin yok", show_alert=True)
+                return ConversationHandler.END
+
         if action == "add_folder":
+            if not get_admin_perm(uid, "can_add_folder"):
+                await query.answer("Yetkin yok / ليس لديك صلاحية", show_alert=True)
+                return ConversationHandler.END
             context.user_data["action"] = "add_folder"
-            await query.edit_message_text(L(uid,"enter_folder_name"),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+            hint = (
+                "📁 Klasör adı yaz (tek tek)\n"
+                "⚡ Hızlı: Birden fazla klasör için her satıra bir isim yaz\n\n"
+                "Örnek:\nرياضيات\nفيزياء\nكيمياء"
+                if is_main_admin(uid) else
+                "📁 اكتب اسم المجلد\n⚡ لإضافة عدة مجلدات، اكتب اسماً في كل سطر"
+            )
+            await query.edit_message_text(
+                hint,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")]]))
             return WAIT_FOLDER
 
         if action == "add_file":
+            if not get_admin_perm(uid, "can_add_file"):
+                await query.answer("Yetkin yok / ليس لديك صلاحية", show_alert=True)
+                return ConversationHandler.END
             context.user_data["action"] = "add_file"
             existing = folder_file_names(folder)
             if existing:
@@ -4179,12 +6503,15 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             else:
                 prompt = L(uid,"add_file_prompt_empty")
             await query.edit_message_text(prompt,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")]]))
             return WAIT_FILE
 
-        # Sil/Düzenle — tüm adminler
-        if not is_admin(uid):
-            await query.answer("⛔", show_alert=True); return ConversationHandler.END
+        # Sil/Düzenle — yetki kontrolü (süper admin her şeye, alt admin izinlerine göre)
+        _perm_map = {"del_folder": "can_del_folder", "del_file": "can_del_file",
+                     "rename_folder": "can_rename_file", "rename_file": "can_rename_file"}
+        if action in _perm_map and not get_admin_perm(uid, _perm_map[action]):
+            await query.answer("⛔ Yetkin yok / ليس لديك صلاحية", show_alert=True)
+            return ConversationHandler.END
 
         if action == "del_folder":
             folds = list(folder.get("folders",{}).keys())
@@ -4199,10 +6526,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Klasörü Sil", callback_data="do|bulk_del_folder"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             await query.edit_message_text(
-                f"🗑 {'Silmek istediğin klasörleri seç:' if is_main_admin(uid) else 'اختر المجلدات للحذف:'}\n{'─'*24}",
+                f"🗑 {'Silmek istediğin klasörleri seç:' if is_main_admin(uid) else 'اختر المجلدات للحذف:'}\n",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -4219,10 +6546,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Dosyayı Sil", callback_data="do|bulk_del_file"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             await query.edit_message_text(
-                f"🗑 {'Silmek istediğin dosyaları seç:' if is_main_admin(uid) else 'اختر الملفات للحذف:'}\n{'─'*24}",
+                f"🗑 {'Silmek istediğin dosyaları seç:' if is_main_admin(uid) else 'اختر الملفات للحذف:'}\n",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -4231,7 +6558,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if not folds:
                 await query.answer(L(uid,"no_folders"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"✏️ {f}", callback_data=f"do|pick_folder|{f}")] for f in folds]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")])
             await query.edit_message_text(L(uid,"rename_folder_select"), reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -4241,13 +6568,19 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(L(uid,"no_files"), show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"✏️ {f.get('caption','?')}", callback_data=f"do|pick_file|{i}")]
                   for i,f in enumerate(files)]
-            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")])
+            kb.append([InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur")])
             await query.edit_message_text(L(uid,"rename_file_select"), reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            return WAIT_FOLDER
 
-    # ── Do (tüm adminler) ────────────────────────────
+    # ── Do (sadece süper admin) ───────────────────────
     # ── Checkbox toggle (seç/kaldır) ─────────────────
     if cb.startswith("dsel|") and is_admin(uid):
+        _dsel_type = cb.split("|")[1] if len(cb.split("|")) > 1 else ""
+        if not is_main_admin(uid):
+            if _dsel_type == "file" and not get_admin_perm(uid, "can_del_file"):
+                await query.answer("ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
+            if _dsel_type == "folder" and not get_admin_perm(uid, "can_del_folder"):
+                await query.answer("ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
         parts    = cb.split("|")
         sel_type = parts[1]   # "folder" veya "file"
         val      = parts[2]   # klasör adı veya dosya index
@@ -4267,7 +6600,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Klasörü Sil", callback_data="do|bulk_del_folder"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             try:
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
@@ -4289,7 +6622,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             action_row = []
             if sel:
                 action_row.append(InlineKeyboardButton(f"🗑 {len(sel)} Dosyayı Sil", callback_data="do|bulk_del_file"))
-            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root"))
+            action_row.append(InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|cur"))
             kb.append(action_row)
             try:
                 await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
@@ -4327,7 +6660,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "confirm_del_folder":
             kb = [
                 [InlineKeyboardButton(TR["confirm_yes"], callback_data=f"do|del_folder|{arg}"),
-                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|root")]
+                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|mgmt_panel")]
             ]
             await query.edit_message_text(
                 L(uid,"del_folder_confirm").format(arg),
@@ -4343,7 +6676,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             fname = files[idx].get("caption","?")
             kb = [
                 [InlineKeyboardButton(TR["confirm_yes"], callback_data=f"do|del_file|{idx}"),
-                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|root")]
+                 InlineKeyboardButton(TR["confirm_no"],  callback_data="nav|mgmt_panel")]
             ]
             await query.edit_message_text(
                 L(uid,"del_file_confirm").format(fname),
@@ -4360,7 +6693,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "pick_folder":
             context.user_data["action"] = "rename_folder"; context.user_data["target"] = arg
             await query.edit_message_text(L(uid,"new_folder_name").format(arg),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")]]))
             return WAIT_RENAME_FOLDER
 
         if action == "del_file":
@@ -4373,7 +6706,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if action == "pick_file":
             context.user_data["action"] = "rename_file"; context.user_data["target"] = int(arg)
             await query.edit_message_text(L(uid,"new_file_name"),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|mgmt_panel")]]))
             return WAIT_RENAME_FILE
 
     # ── Ayarlar (sadece süper admin) ──────────────────
@@ -4406,6 +6739,258 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
             return WAIT_BOT_NAME  # aynı state kullan
 
+        if action == "class_names":
+            names = load_class_names()
+            kb = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                cur_name = names.get(cls_id, cls_def["ar"])
+                kb.append([InlineKeyboardButton(
+                    f"✏️ {cls_def['ar']} → {cur_name}",
+                    callback_data=f"set|edit_clsname|{cls_id}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
+            await query.edit_message_text(
+                "🎓 Sinif Isimleri\n\nHer sinifa ozel isim ver:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "edit_clsname":
+            cls_id = cb.split("|")[2]
+            context.user_data["action"] = "set_class_name"
+            context.user_data["cls_name_id"] = cls_id
+            cur = load_class_names().get(cls_id, CLASS_DEFS[cls_id]["ar"])
+            await query.edit_message_text(
+                f"Sinif {cls_id} icin yeni isim yaz:\nSu an: {cur}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ İptal", callback_data="set|class_names")
+                ]]))
+            return WAIT_FOLDER
+
+        if action == "group_mgmt":
+            # Inline redirect to class_groups panel
+            cls_grps_gm = load_class_groups()
+            kb_gm = []
+            for _cid_gm, _cdef_gm in CLASS_DEFS.items():
+                _grps_gm = list(cls_grps_gm.get(_cid_gm, {}).keys())
+                kb_gm.append([InlineKeyboardButton(f"🎓 {_cdef_gm['tr']}: {', '.join(_grps_gm)}", callback_data=f"set|cgrp_cls|{_cid_gm}")])
+            kb_gm.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
+            await query.edit_message_text("Sinif Grup Yapılandırmasi:", reply_markup=InlineKeyboardMarkup(kb_gm))
+            return ConversationHandler.END
+
+        if action == "reset_groups":
+            save_groups({}); save_shifts({})
+            await query.answer("Tum gruplar sifirlandi", show_alert=True)
+            await query.delete_message()
+            return ConversationHandler.END
+
+        if action in ("remind_cfg", "toggle_exam_day", "toggle_lab_day"):
+            s = load_settings()
+            # Toggle güncelleme
+            if action == "toggle_exam_day":
+                d = int(cb.split("|")[2])
+                days = s.get("exam_remind_days", [1])
+                if isinstance(days, int): days = [days]
+                if d in days:
+                    days.remove(d)
+                    if not days: days = [1]
+                else:
+                    days.append(d)
+                s["exam_remind_days"] = sorted(days)
+                save_settings(s)
+            elif action == "toggle_lab_day":
+                d = int(cb.split("|")[2])
+                days = s.get("lab_remind_days", [1])
+                if isinstance(days, int): days = [days]
+                if d in days:
+                    days.remove(d)
+                    if not days: days = [1]
+                else:
+                    days.append(d)
+                s["lab_remind_days"] = sorted(days)
+                save_settings(s)
+            # Panel yeniden çiz (doğrudan — recursive yok)
+            exam_days = s.get("exam_remind_days", [1])
+            if isinstance(exam_days, int): exam_days = [exam_days]
+            lab_days  = s.get("lab_remind_days",  [1])
+            if isinstance(lab_days, int):  lab_days  = [lab_days]
+            exam_lbl = ", ".join(f"{d}g" for d in sorted(exam_days))
+            lab_lbl  = ", ".join(f"{d}g" for d in sorted(lab_days))
+            exam_row = [InlineKeyboardButton(
+                f"{'✅' if d in exam_days else '⬜'} {d}g",
+                callback_data=f"set|toggle_exam_day|{d}") for d in [1, 2, 3, 5, 7]]
+            lab_row = [InlineKeyboardButton(
+                f"{'✅' if d in lab_days else '⬜'} {d}g",
+                callback_data=f"set|toggle_lab_day|{d}") for d in [1, 2, 3]]
+            kb = [
+                exam_row,
+                lab_row,
+                [InlineKeyboardButton("◀️ رجوع", callback_data="nav|mgmt_panel")],
+            ]
+            await query.edit_message_text(
+                f"⏰ إعدادات التذكيرات\n\n"
+                f"📚 الامتحانات — التذكير قبل: {exam_lbl}\n"
+                f"🔬 المختبر — التذكير قبل: {lab_lbl}\n\n"
+                f"اضغط على الأرقام لتفعيل/إلغاء كل تذكير",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "anon_group":
+            s = load_settings()
+            cur = s.get("anon_group_id","Ayarlanmadi")
+            context.user_data["action"] = "set_anon_group"
+            await query.edit_message_text(
+                f"Anonim Mesaj Grubu\nMevcut: {cur}\n\nGrup ID yaz (ornek: -1001234567890)\nKapatmak icin 0:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Iptal","nav|settings_panel")]]))
+            return WAIT_FOLDER
+
+        if action == "class_groups":
+            cls_grps = load_class_groups()
+            kb = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                grps_this = list(cls_grps.get(cls_id, {}).keys())
+                kb.append([InlineKeyboardButton(
+                    f"🎓 {cls_def['tr']}: {', '.join(grps_this)}",
+                    callback_data=f"set|cgrp_cls|{cls_id}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
+            await query.edit_message_text("Sinif Grup Yapılandırmasi:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "cgrp_cls":
+            parts = cb.split("|")
+            cls_id = parts[2]
+            cls_name = CLASS_DEFS.get(cls_id,{}).get("tr","?")
+            # Önce vardiya seç
+            kb = [
+                [InlineKeyboardButton("☀️ Sabahcı", callback_data=f"set|cgrp_sft|{cls_id}|sabahi"),
+                 InlineKeyboardButton("🌙 Masaici",  callback_data=f"set|cgrp_sft|{cls_id}|masaiy")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="set|class_groups")],
+            ]
+            await query.edit_message_text(f"🎓 {cls_name} — Vardiya Seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "cgrp_sft":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3]
+            cls_grps = load_class_groups()
+            grps_this = cls_grps.get(cls_id, {}).get(shift, {})
+            cls_name = CLASS_DEFS.get(cls_id,{}).get("tr","?")
+            sft_lbl = "☀️ Sabahcı" if shift == "sabahi" else "🌙 Masaici"
+            kb = []
+            for g, subs in grps_this.items():
+                subs_str = "/".join(subs)
+                kb.append([
+                    InlineKeyboardButton(f"👥 {g} ({subs_str})", callback_data=f"set|cgrp_edit|{cls_id}|{shift}|{g}"),
+                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_del|{cls_id}|{shift}|{g}"),
+                ])
+            kb.append([InlineKeyboardButton("➕ Grup Ekle", callback_data=f"set|cgrp_add|{cls_id}|{shift}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_cls|{cls_id}")])
+            await query.edit_message_text(f"👥 {cls_name} / {sft_lbl}:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "cgrp_del":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]
+            cls_grps = load_class_groups()
+            if cls_id in cls_grps and shift in cls_grps[cls_id] and grp in cls_grps[cls_id][shift]:
+                del cls_grps[cls_id][shift][grp]
+                save_class_groups(cls_grps)
+                await query.answer(f"✅ {grp} silindi", show_alert=True)
+            # Rebuild cgrp_sft panel inline
+            cls_grps2 = load_class_groups()
+            grps_cd = cls_grps2.get(cls_id, {}).get(shift, {})
+            cls_name_cd = CLASS_DEFS.get(cls_id,{}).get("tr","?")
+            sft_lbl_cd = "☀️ Sabahcı" if shift == "sabahi" else "🌙 Masaici"
+            kb_cd = []
+            for g_cd, subs_cd in grps_cd.items():
+                kb_cd.append([
+                    InlineKeyboardButton(f"👥 {g_cd} ({'/'.join(subs_cd)})", callback_data=f"set|cgrp_edit|{cls_id}|{shift}|{g_cd}"),
+                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_del|{cls_id}|{shift}|{g_cd}"),
+                ])
+            kb_cd.append([InlineKeyboardButton("➕ Grup Ekle", callback_data=f"set|cgrp_add|{cls_id}|{shift}")])
+            kb_cd.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_cls|{cls_id}")])
+            await query.edit_message_text(f"👥 {cls_name_cd} / {sft_lbl_cd}:", reply_markup=InlineKeyboardMarkup(kb_cd))
+            return ConversationHandler.END
+
+        if action == "cgrp_add":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3] if len(parts) > 3 else "sabahi"
+            context.user_data["action"] = "cgrp_add_name"
+            context.user_data["cgrp_add_cls"] = cls_id
+            context.user_data["cgrp_add_sft"] = shift
+            await query.edit_message_text(
+                "Yeni grup adi (ornek: D):",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️","close")]]))
+            return WAIT_FOLDER
+
+        if action == "cgrp_edit":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]
+            cls_grps = load_class_groups()
+            subs = cls_grps.get(cls_id,{}).get(shift,{}).get(grp, [])
+            sft_lbl = "☀️" if shift == "sabahi" else "🌙"
+            kb = []
+            for sub in subs:
+                kb.append([
+                    InlineKeyboardButton(sub, callback_data=f"set|cgrp_sub_view|{cls_id}|{shift}|{grp}|{sub}"),
+                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_sub_del|{cls_id}|{shift}|{grp}|{sub}"),
+                ])
+            kb.append([InlineKeyboardButton("➕ Alt Bölüm Ekle", callback_data=f"set|cgrp_sub_add|{cls_id}|{shift}|{grp}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_sft|{cls_id}|{shift}")])
+            await query.edit_message_text(
+                f"{sft_lbl} Grup {grp}: {', '.join(subs)}",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "cgrp_sub_del":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]; sub = parts[5]
+            cls_grps = load_class_groups()
+            try:
+                cls_grps[cls_id][shift][grp].remove(sub)
+                save_class_groups(cls_grps)
+                await query.answer(f"✅ {sub} silindi", show_alert=True)
+            except: pass
+            # Rebuild cgrp_edit panel inline
+            subs_sd = cls_grps.get(cls_id,{}).get(shift,{}).get(grp,[])
+            sft_lbl_sd = "☀️" if shift == "sabahi" else "🌙"
+            kb_sd = []
+            for s_sd in subs_sd:
+                kb_sd.append([
+                    InlineKeyboardButton(s_sd, callback_data=f"set|cgrp_sub_view|{cls_id}|{shift}|{grp}|{s_sd}"),
+                    InlineKeyboardButton("🗑", callback_data=f"set|cgrp_sub_del|{cls_id}|{shift}|{grp}|{s_sd}"),
+                ])
+            kb_sd.append([InlineKeyboardButton("➕ Alt Bölüm Ekle", callback_data=f"set|cgrp_sub_add|{cls_id}|{shift}|{grp}")])
+            kb_sd.append([InlineKeyboardButton("◀️ Geri", callback_data=f"set|cgrp_sft|{cls_id}|{shift}")])
+            await query.edit_message_text(f"{sft_lbl_sd} Grup {grp}: {', '.join(subs_sd)}", reply_markup=InlineKeyboardMarkup(kb_sd))
+            return ConversationHandler.END
+
+        if action == "cgrp_sub_add":
+            parts = cb.split("|")
+            cls_id = parts[2]; shift = parts[3]; grp = parts[4]
+            context.user_data["action"] = "cgrp_sub_add_name"
+            context.user_data["cgrp_cls"] = cls_id
+            context.user_data["cgrp_sft"] = shift
+            context.user_data["cgrp_grp"] = grp
+            await query.edit_message_text(
+                f"Alt bölüm adi (örnek: {grp}4):",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️","close")]]))
+            return WAIT_FOLDER
+
+        if action == "admin_perms":
+            # Admin listesini göster
+            admins = load_admins()
+            if not admins:
+                await query.answer("Henüz alt admin yok.", show_alert=True)
+                return ConversationHandler.END
+            users_d = load_users()
+            kb = []
+            for adm_id in admins:
+                u = users_d.get(str(adm_id), {})
+                name = u.get("full_name") or u.get("first_name") or f"ID:{adm_id}"
+                kb.append([InlineKeyboardButton(f"👮 {name[:25]}", callback_data=f"adminperm|show|{adm_id}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|settings_panel")])
+            await query.edit_message_text("👮 Admin Yetki Yönetimi", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
         if action == "maint_text":
             context.user_data["action"] = "set_maint_text"
             await query.edit_message_text(
@@ -4418,7 +7003,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             txt  = TR["blocked_list"].format(len(blocked)) + "\n\n"
             txt += "\n".join(f"🆔 {b}" for b in blocked) if blocked else TR["no_blocked"]
             await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                [[InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")]]))
             return ConversationHandler.END
 
         if action == "btn_mgmt":
@@ -4436,7 +7021,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set|toggle_btn|{key}")])
             track_icon = "✅" if track else "❌"
             kb.append([InlineKeyboardButton(f"{track_icon} 👁 Aktivite Takibi", callback_data="set|toggle_track")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")])
             await query.edit_message_text(
                 TR["btn_mgmt_title"] + "\n\n✅ = Açık  |  ❌ = Kapalı\n"
                 "Kullanıcıların göreceği butonları buradan yönet.",
@@ -4460,7 +7045,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set|toggle_btn|{key}")])
             track_icon = "✅" if track else "❌"
             kb.append([InlineKeyboardButton(f"{track_icon} 👁 Aktivite Takibi", callback_data="set|toggle_track")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")])
             status = "✅ AÇIK" if track else "❌ KAPALI"
             await query.edit_message_text(
                 TR["btn_mgmt_title"] + f"\n\n👁 Aktivite Takibi → {status}\n\n✅ = Açık  |  ❌ = Kapalı",
@@ -4485,7 +7070,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(f"{icon} {label}", callback_data=f"set|toggle_btn|{k}")])
             track_icon = "✅" if track else "❌"
             kb.append([InlineKeyboardButton(f"{track_icon} 👁 Aktivite Takibi", callback_data="set|toggle_track")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|settings_panel")])
             await query.edit_message_text(
                 TR["btn_mgmt_title"] + "\n\n✅ = Açık  |  ❌ = Kapalı",
                 reply_markup=InlineKeyboardMarkup(kb))
@@ -4506,7 +7091,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # ── Liderboard ────────────────────────────────────
     if cb == "misc|leaderboard":
         lb    = get_leaderboard(10)
-        lines = [L(uid,"leaderboard_title"), "─"*22]
+        lines = [L(uid,"leaderboard_title"), ""]
         medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"]
         for i,(name,pts) in enumerate(lb):
             medal = medals[i] if i < len(medals) else f"{i+1}."
@@ -4529,8 +7114,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
         return WAIT_WELCOME   # aynı state kullan
 
+    if cb == "set|rules_text" and is_main_admin(uid):
+        s = load_settings()
+        cur = s.get("rules_text","")
+        context.user_data["action"] = "set_rules_text"
+        prompt = f"📜 Kural metnini girin (kullanıcılara gösterilecek):\n\nMevcut: {cur[:100] if cur else '—'}"
+        await query.edit_message_text(prompt,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")]]))
+        return WAIT_WELCOME
+
     # ── Duyuru Geçmişi (admin) ───────────────────────
-    if cb == "bcast|history" and is_admin(uid):
+    if cb == "bcast|history" and is_main_admin(uid):
         log_ = load_bcast_log()
         if not log_:
             await query.answer(TR["bcast_history_empty"], show_alert=True); return ConversationHandler.END
@@ -4543,7 +7137,102 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             )
         await query.edit_message_text(
             "\n".join(lines)[:4000],
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
+        return ConversationHandler.END
+
+    # ── Seçili kişilere mesaj ────────────────────────
+    if cb.startswith("msgsel|") and is_main_admin(uid):
+        ms_parts = cb.split("|")
+        ms_act   = ms_parts[1]
+
+        if ms_act == "panel":
+            selected = context.user_data.get("msgsel_targets", [])
+            kb = [
+                [InlineKeyboardButton("👮 Sadece Adminler", callback_data="msgsel|admins_only")],
+                [InlineKeyboardButton("👥 Kullanıcıdan Seç", callback_data="msgsel|pick_users")],
+            ]
+            if selected:
+                n = len(selected)
+                kb.append([InlineKeyboardButton(f"✅ {n} kişi seçildi — Mesaj Gönder", callback_data="msgsel|send")])
+                kb.append([InlineKeyboardButton("🗑 Seçimi Temizle", callback_data="msgsel|clear")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text("📨 Seçili Kişilere Mesaj", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if ms_act == "admins_only":
+            admins_list = load_admins()
+            context.user_data["msgsel_targets"] = [str(a) for a in admins_list]
+            await query.answer(f"✅ {len(admins_list)} admin seçildi", show_alert=True)
+            selected = context.user_data.get("msgsel_targets", [])
+            n = len(selected)
+            kb_ao = [
+                [InlineKeyboardButton("👮 Sadece Adminler", callback_data="msgsel|admins_only")],
+                [InlineKeyboardButton("👥 Kullanıcıdan Seç", callback_data="msgsel|pick_users")],
+                [InlineKeyboardButton(f"✅ {n} kişi seçildi — Mesaj Gönder", callback_data="msgsel|send")],
+                [InlineKeyboardButton("🗑 Seçimi Temizle", callback_data="msgsel|clear")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")],
+            ]
+            await query.edit_message_text("📨 Seçili Kişilere Mesaj", reply_markup=InlineKeyboardMarkup(kb_ao))
+            return ConversationHandler.END
+
+        if ms_act == "pick_users":
+            u_d = load_users()
+            selected = context.user_data.get("msgsel_targets", [])
+            kb = []
+            for uid_, u in list(u_d.items())[:50]:
+                if int(uid_) == ADMIN_ID: continue
+                name = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+                un   = f" @{u['username']}" if u.get("username") else ""
+                tick = "✅ " if uid_ in selected else ""
+                kb.append([InlineKeyboardButton(f"{tick}👤 {name}{un}", callback_data=f"msgsel|toggle|{uid_}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="msgsel|panel")])
+            await query.edit_message_text("👥 Mesaj gönderilecek kişileri seç:", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if ms_act == "toggle":
+            target_id = ms_parts[2]
+            sel = context.user_data.get("msgsel_targets", [])
+            if target_id in sel:
+                sel.remove(target_id)
+            else:
+                sel.append(target_id)
+            context.user_data["msgsel_targets"] = sel
+            # Rebuild pick_users inline — no recursive callback
+            u_d2 = load_users()
+            selected2 = sel
+            kb_tog = []
+            for uid2_, u2 in list(u_d2.items())[:50]:
+                if int(uid2_) == ADMIN_ID: continue
+                name2 = u2.get("full_name") or u2.get("first_name") or f"ID:{uid2_}"
+                un2   = f" @{u2['username']}" if u2.get("username") else ""
+                tick2 = "✅ " if uid2_ in selected2 else ""
+                kb_tog.append([InlineKeyboardButton(f"{tick2}👤 {name2}{un2}", callback_data=f"msgsel|toggle|{uid2_}")])
+            kb_tog.append([InlineKeyboardButton("◀️ Geri", callback_data="msgsel|panel")])
+            await query.edit_message_text("👥 Mesaj gönderilecek kişileri seç:", reply_markup=InlineKeyboardMarkup(kb_tog))
+            return ConversationHandler.END
+
+        if ms_act == "clear":
+            context.user_data["msgsel_targets"] = []
+            # Rebuild panel inline — no recursive callback
+            kb_cl = [
+                [InlineKeyboardButton("👮 Sadece Adminler", callback_data="msgsel|admins_only")],
+                [InlineKeyboardButton("👥 Kullanıcıdan Seç", callback_data="msgsel|pick_users")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")],
+            ]
+            await query.edit_message_text("📨 Seçili Kişilere Mesaj", reply_markup=InlineKeyboardMarkup(kb_cl))
+            return ConversationHandler.END
+
+        if ms_act == "send":
+            sel = context.user_data.get("msgsel_targets", [])
+            if not sel:
+                await query.answer("❌ Kişi seçilmedi", show_alert=True)
+                return ConversationHandler.END
+            context.user_data["action"] = "msgsel_send"
+            await query.edit_message_text(
+                f"✍️ {len(sel)} kişiye gönderilecek mesajı yazın:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ İptal", callback_data="msgsel|panel")]]))
+            return WAIT_BROADCAST_MSG
+
         return ConversationHandler.END
 
     if cb == "close":
@@ -4553,22 +7242,18 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
     # ── Notlar ───────────────────────────────────────
     if cb.startswith("notes|") and not is_admin(uid):
-        action = cb.split("|")[1]
-        if action == "edit":
-            context.user_data["action"] = "edit_note"
+        parts_n = cb.split("|")
+        action_n = parts_n[1]
+
+        if action_n == "new":
+            # Not alma modu — ders adı sor
+            context.user_data["action"] = "note_subject_input"
+            context.user_data.pop("note_subject", None)
+            context.user_data.pop("note_mode", None)
             await query.edit_message_text(
-                L(uid,"notes_prompt"),
+                "📝 اكتب اسم الدرس (أو . للتخطي):",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")
-                ]]))
-            return WAIT_FOLDER  # Metin bekliyoruz
-        if action == "del":
-            set_personal_note(uid, "")
-            await query.answer("✅", show_alert=False)
-            await query.edit_message_text(L(uid,"notes_empty"),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✏️ يكتب", callback_data="notes|edit"),
-                    InlineKeyboardButton(L(uid,"back"), callback_data="nav|root"),
+                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
                 ]]))
             return WAIT_FOLDER
 
@@ -4670,7 +7355,46 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         return ConversationHandler.END
 
-    # ── Hatırlatıcı ──────────────────────────────────
+    if cb.startswith("cd_shift|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        shift_val = cb.split("|")[1]
+        context.user_data["countdown_shift"] = "" if shift_val == "all" else shift_val
+        admin_cls = get_admin_cls(uid)
+        if admin_cls:
+            context.user_data["countdown_cls"] = admin_cls
+        cls_for_grp = admin_cls or context.user_data.get("countdown_cls","")
+        if cls_for_grp:
+            cls_grps = get_class_groups(cls_for_grp)
+            grp_keys = list(cls_grps.keys())
+        else:
+            grp_keys = ["A","B","C"]
+        kb = [[InlineKeyboardButton("الكل", callback_data="cd_grp|all")]]
+        row = [InlineKeyboardButton(g, callback_data=f"cd_grp|{g}") for g in grp_keys]
+        if row: kb.append(row)
+        await query.edit_message_text("📅 المجموعة:", reply_markup=InlineKeyboardMarkup(kb))
+        return WAIT_FOLDER
+
+    if cb.startswith("cd_cls|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        cls_val = cb.split("|")[1]
+        context.user_data["countdown_cls"] = "" if cls_val == "all" else cls_val
+        kb = [
+            [InlineKeyboardButton("الكل",   callback_data="cd_shift|all"),
+             InlineKeyboardButton("صباحي", callback_data="cd_shift|sabahi"),
+             InlineKeyboardButton("مسائي", callback_data="cd_shift|masaiy")],
+        ]
+        await query.edit_message_text("📅 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+        return WAIT_FOLDER
+
+    if cb.startswith("cd_grp|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        grp_val = cb.split("|")[1]
+        context.user_data["countdown_group"] = "" if grp_val == "all" else grp_val
+        context.user_data["action"] = "countdown_date"
+        await query.edit_message_text(
+            L(uid,"countdown_date"),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")
+            ]]))
+        return WAIT_FOLDER
+
     if cb.startswith("reminder|") and not is_admin(uid):
         parts  = cb.split("|")
         action = parts[1]
@@ -4682,6 +7406,52 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")
                 ]]))
             return WAIT_FOLDER
+
+        if action == "quick":
+            minutes = int(parts[2])
+            rem_text = context.user_data.pop("reminder_text_pending", "")
+            if not rem_text:
+                await query.answer("❌", show_alert=True); return ConversationHandler.END
+            import time as _t
+            fire_ts = _t.time() + minutes * 60
+            add_reminder(uid, rem_text, fire_ts)
+            if minutes < 60: label = f"{minutes} دقيقة"
+            elif minutes < 1440: label = f"{minutes//60} ساعة"
+            else: label = f"{minutes//1440} يوم"
+            await query.edit_message_text(L(uid,"reminder_saved").format(label))
+            return ConversationHandler.END
+
+        if action == "manual_date":
+            context.user_data["action"] = "reminder_day"
+            await query.edit_message_text(
+                "📅 كم يوم تريد؟ (0 = اليوم):",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+                ]]))
+            return WAIT_FOLDER
+        if action == "pick_time":
+            # Süre seçildi — callback: reminder|pick_time|DAKIKA
+            minutes = int(parts[2])
+            rem_text = context.user_data.pop("reminder_text_pending", context.user_data.pop("reminder_text","?"))
+            import time
+            fire_ts = time.time() + (minutes * 60)
+            add_reminder(uid, rem_text, fire_ts)
+            if minutes < 60:
+                label = f"{minutes} دقيقة" if not is_main_admin(uid) else f"{minutes} dakika"
+            elif minutes < 1440:
+                label = f"{minutes//60} ساعة" if not is_main_admin(uid) else f"{minutes//60} saat"
+            else:
+                label = f"{minutes//1440} يوم" if not is_main_admin(uid) else f"{minutes//1440} gün"
+            await query.edit_message_text(L(uid,"reminder_saved").format(label))
+            context.user_data.pop("action", None)
+            return ConversationHandler.END
+
+        if action == "manual_date":
+            context.user_data["action"] = "reminder_day"
+            await query.edit_message_text(
+                "📅 اليوم (1-31):" if not is_main_admin(uid) else "📅 Gün (1-31):",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️", callback_data="nav|root")]]))
+            return WAIT_FOLDER
         if action == "del" and len(parts) > 2:
             idx = int(parts[2])
             delete_reminder(uid, idx)
@@ -4690,7 +7460,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Admin: Sınav/Etkinlik Ekle ───────────────────
-    if cb.startswith("countdown|") and is_main_admin(uid):
+    if cb.startswith("countdown|") and is_admin(uid):
         action = cb.split("|")[1]
         if action == "add":
             context.user_data["action"] = "countdown_name"
@@ -4736,25 +7506,141 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Anket işlemleri ───────────────────────────────
-    if cb.startswith("poll|") and is_admin(uid):
+    if cb.startswith("poll|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_poll")):
         action = cb.split("|")[1]
 
         if action == "create":
+            adm_cls = get_admin_cls(uid) if not is_main_admin(uid) else None
+            if adm_cls:
+                # Sınıf sabit — vardiya seç
+                context.user_data["poll_tgt_cls"] = adm_cls
+                kb = [
+                    [InlineKeyboardButton("☀️ صباحي", callback_data="poll|tgt_sft|sabahi"),
+                     InlineKeyboardButton("🌙 مسائي",  callback_data="poll|tgt_sft|masaiy"),
+                     InlineKeyboardButton("📋 الكل",   callback_data="poll|tgt_sft|all")],
+                    [InlineKeyboardButton("◀️ إلغاء",  callback_data="close")],
+                ]
+                await query.message.reply_text("📊 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                # Sınıf seç
+                kb = []
+                for cls_id, cls_def in CLASS_DEFS.items():
+                    kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"poll|tgt_cls|{cls_id}")])
+                kb.append([InlineKeyboardButton("📋 الكل", callback_data="poll|tgt_cls|all")])
+                kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
+                await query.message.reply_text("📊 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action == "tgt_cls":
+            # Sınıf seçildi → "all" ise direkt tip seç, değilse vardiya seç
+            cls_val = cb.split("|")[2] if len(cb.split("|")) > 2 else "all"
+            context.user_data["poll_tgt_cls"] = "" if cls_val == "all" else cls_val
+            if cls_val == "all":
+                # Hepsi seçildi → hedef "all", tip seçimine geç
+                context.user_data["poll_tgt_sft"] = ""
+                context.user_data["poll_tgt_grp"] = ""
+                context.user_data["poll_target"] = "all"
+                kb = [
+                    [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
+                    [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                    [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
+                    [InlineKeyboardButton("◀️ إلغاء",            callback_data="close")],
+                ]
+                await query.message.reply_text(f"📊 الكل\n{TR['poll_type_select']}", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                kb = [
+                    [InlineKeyboardButton("☀️ صباحي", callback_data="poll|tgt_sft|sabahi"),
+                     InlineKeyboardButton("🌙 مسائي",  callback_data="poll|tgt_sft|masaiy"),
+                     InlineKeyboardButton("📋 الكل",   callback_data="poll|tgt_sft|all")],
+                    [InlineKeyboardButton("◀️ رجوع",   callback_data="poll|create")],
+                ]
+                await query.message.reply_text("📊 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action == "tgt_sft":
+            # Vardiya seçildi → "all" ise grup atla, değilse grup seç
+            sft_val = cb.split("|")[2] if len(cb.split("|")) > 2 else "all"
+            context.user_data["poll_tgt_sft"] = "" if sft_val == "all" else sft_val
+            tgt_cls = context.user_data.get("poll_tgt_cls","")
+            adm_grp = get_admin_grp(uid) if not is_main_admin(uid) else None
+            if adm_grp or sft_val == "all":
+                # Grup kısıtı varsa veya "hepsi" seçildiyse grup seçimini atla
+                context.user_data["poll_tgt_grp"] = adm_grp or ""
+                _build_poll_target(context, uid)
+                kb = [
+                    [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
+                    [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                    [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
+                    [InlineKeyboardButton("◀️ إلغاء",            callback_data="close")],
+                ]
+                lbl = target_label(context.user_data.get("poll_target",""))
+                await query.message.reply_text(f"📊 {lbl}\n{TR['poll_type_select']}", reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                grp_keys = list(get_class_groups(tgt_cls).keys()) if tgt_cls else ["A","B","C"]
+                kb = []
+                row = [InlineKeyboardButton("📋 الكل", callback_data="poll|tgt_grp|all")]
+                for g in grp_keys:
+                    row.append(InlineKeyboardButton(g, callback_data=f"poll|tgt_grp|{g}"))
+                kb.append(row)
+                kb.append([InlineKeyboardButton("◀️ رجوع", callback_data="poll|create")])
+                await query.message.reply_text("📊 المجموعة:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action == "tgt_grp":
+            grp_val = cb.split("|")[2] if len(cb.split("|")) > 2 else "all"
+            context.user_data["poll_tgt_grp"] = "" if grp_val == "all" else grp_val
+            _build_poll_target(context, uid)
             kb = [
                 [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
                 [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
+                [InlineKeyboardButton("◀️ إلغاء",            callback_data="close")],
+            ]
+            lbl = target_label(context.user_data.get("poll_target",""))
+            await query.message.reply_text(f"📊 {lbl}\n{TR['poll_type_select']}", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action == "tgt":
+            parts_tgt = cb.split("|")
+            step = parts_tgt[-1]
+            val  = "|".join(parts_tgt[2:-1]) if len(parts_tgt) > 3 else (parts_tgt[2] if len(parts_tgt) > 2 else "")
+            if step == "done":
+                context.user_data["poll_target"] = val
+                lbl = target_label(val)
+                kb = [
+                    [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
+                    [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                    [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
+                    [InlineKeyboardButton(TR["cancel"],           callback_data="close")],
+                ]
+                await query.message.reply_text(
+                    f"🎯 {lbl}\n\n{TR['poll_type_select']}",
+                    reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                kb = build_target_keyboard("poll|tgt", step, val)
+                kb.append([InlineKeyboardButton("◀️", callback_data="close")])
+                labels = {"cls":"السنة","shift":"الفترة","grp":"المجموعة","subgrp":"الفرعية"}
+                await query.message.reply_text(f"📊 {labels.get(step,step)}:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action == "target":
+            poll_target = cb.split("|")[2]
+            context.user_data["poll_target"] = poll_target
+            kb = [
+                [InlineKeyboardButton(TR["poll_type_choice"], callback_data="poll|type|choice")],
+                [InlineKeyboardButton(TR["poll_type_open"],   callback_data="poll|type|open")],
+                [InlineKeyboardButton(TR["poll_type_quiz"],   callback_data="poll|type|quiz")],
                 [InlineKeyboardButton(TR["cancel"],           callback_data="close")],
             ]
-            await query.edit_message_text(
-                TR["poll_type_select"],
-                reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            await query.message.reply_text(TR["poll_type_select"], reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
 
         if action == "type":
             poll_type = cb.split("|")[2]  # "choice" veya "open"
             context.user_data["poll_type"]   = poll_type
             context.user_data["action"]      = "poll_question"
-            await query.edit_message_text(
+            await query.message.reply_text(
                 TR["poll_enter_q"],
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
             return WAIT_POLL_QUESTION
@@ -4765,9 +7651,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(TR["poll_no_polls"], show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"📊 {p['question'][:40]}", callback_data=f"poll|show_result|{pid}")]
                   for pid, p in polls.items()]
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
-            await query.edit_message_text(TR["poll_select"], reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")])
+            await query.message.reply_text(TR["poll_select"], reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         if action == "show_result":
             poll_id = cb.split("|")[2]
@@ -4785,7 +7671,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     f"✍️ Açık Uçlu Anket Sonuçları",
                     f"❓ {poll['question']}",
                     f"👥 Toplam Cevap: {len(answers)}",
-                    f"{'─'*28}",
+                    f"",
                 ]
                 if answers:
                     for a in answers.values():
@@ -4796,16 +7682,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                         )
                 else:
                     lines.append("Henüz cevap yok.")
-                kb = [[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]
-                await query.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+                kb = [[InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")]]
+                await query.message.reply_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
             else:
                 txt = build_poll_results_text(poll, uid, show_voters=False)
                 kb  = [
                     [InlineKeyboardButton("👥 Kim Ne Seçti?", callback_data=f"poll|voter_detail|{poll_id}")],
-                    [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                    [InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")],
                 ]
-                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+                await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         if action == "voter_detail":
             poll_id = cb.split("|")[2]
@@ -4817,10 +7703,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb  = [
                 [InlineKeyboardButton("💬 Yorumlar", callback_data=f"poll|comments|{poll_id}")],
                 [InlineKeyboardButton("📊 Genel Sonuç", callback_data=f"poll|show_result|{poll_id}")],
-                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")],
             ]
-            await query.edit_message_text(txt[:4000], reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            await query.message.reply_text(txt[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         if action == "comments":
             poll_id  = cb.split("|")[2]
@@ -4832,7 +7718,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if not comments:
                 await query.answer(TR["poll_no_comments"], show_alert=True)
                 return ConversationHandler.END
-            lines = [f"💬 Yorumlar — {poll['question'][:40]}\n{'─'*28}"]
+            lines = [f"💬 Yorumlar — {poll['question'][:40]}\n"]
             for c in comments.values():
                 name = c.get("name","?")
                 un   = f" {c['username']}" if c.get("username") else ""
@@ -4847,10 +7733,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 )
             kb = [
                 [InlineKeyboardButton("◀️ Geri", callback_data=f"poll|voter_detail|{poll_id}")],
-                [InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")],
+                [InlineKeyboardButton("◀️ Anket Paneli", callback_data="mgmt|poll")],
             ]
-            await query.edit_message_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            await query.message.reply_text("\n".join(lines)[:4000], reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         if action == "list_delete":
             polls = load_polls()
@@ -4858,9 +7744,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer(TR["poll_no_polls"], show_alert=True); return ConversationHandler.END
             kb = [[InlineKeyboardButton(f"🗑 {p['question'][:40]}", callback_data=f"poll|confirm_delete|{pid}")]
                   for pid, p in polls.items()]
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
-            await query.edit_message_text(TR["poll_select"], reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")])
+            await query.message.reply_text(TR["poll_select"], reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         if action == "confirm_delete":
             poll_id = cb.split("|")[2]
@@ -4869,16 +7755,15 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 del polls[poll_id]
                 save_polls(polls)
             await query.answer(TR["poll_deleted"], show_alert=True)
-            # Panele dön
             kb = [[InlineKeyboardButton(TR["poll_create"], callback_data="poll|create")]]
             if polls:
                 kb.append([InlineKeyboardButton(TR["poll_results"], callback_data="poll|list_results"),
                            InlineKeyboardButton(TR["poll_delete"],  callback_data="poll|list_delete")])
-            kb.append([InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")])
             active = sum(1 for p in polls.values() if p.get("active"))
             txt = f"{TR['poll_panel']}\n\n📊 Toplam anket: {len(polls)}\n✅ Aktif: {active}"
-            await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
+            await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
 
         if action == "send":
             poll_id   = cb.split("|")[2]
@@ -4891,8 +7776,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             q         = poll["question"]
             poll_type = poll.get("type", "choice")
 
-            for uid_, _ in users.items():
-                if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
+            # Hedef kullanıcıları belirle (adminler her zaman dahil)
+            poll_target = poll.get("target", "all")
+            if not poll_target or poll_target == "all":
+                base_uids = [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)]
+            else:
+                base_uids = get_target_users(poll_target)
+            target_uids = include_admins_in_targets(base_uids)
+
+            sender_lbl = get_sender_label(uid)
+            for uid_ in target_uids:
+                if int(uid_) == ADMIN_ID: continue
                 try:
                     if poll_type == "open":
                         # Açık uçlu — "Cevapla" butonu
@@ -4901,7 +7795,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                             callback_data=f"open_ans|{poll_id}")]]
                         await context.bot.send_message(
                             int(uid_),
-                            f"✍️ سؤال مفتوح!\n\n❓ {q}",
+                            f"✍️ سؤال مفتوح!\n\n❓ {q}\n\n📤 {sender_lbl}",
                             reply_markup=InlineKeyboardMarkup(kb_u))
                     else:
                         opts   = poll["options"]
@@ -4909,16 +7803,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                                    for i, o in enumerate(opts)]
                         await context.bot.send_message(
                             int(uid_),
-                            f"📊 استطلاع جديد!\n\n❓ {q}",
+                            f"📊 {q}\n\n📤 {sender_lbl}",
                             reply_markup=InlineKeyboardMarkup(poll_kb))
                     success += 1
                 except: fail += 1
 
             poll["active"] = True
             save_polls(polls)
-            await query.edit_message_text(
+            await query.message.reply_text(
                 TR["poll_sent"].format(s=success, f=fail),
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|root")]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data="mgmt|poll")]]))
             return ConversationHandler.END
 
     # ── Açık uçlu anket cevap butonu ─────────────────
@@ -4956,9 +7850,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         # Oyu kaydet
         votes[uid] = poll["options"][opt_idx]
         save_polls(polls)
-        await query.answer(AR["poll_voted"], show_alert=True)
 
-        # Anket butonlarını güncel oy sayılarıyla güncelle
+        # Quiz: doğru/yanlış bildirimi
+        poll_type   = poll.get("type", "choice")
+        correct_idx = poll.get("correct", -1)
+        if poll_type == "quiz":
+            if opt_idx == correct_idx:
+                await query.answer(L(uid, "quiz_correct_toast"), show_alert=True)
+            else:
+                correct_ans = poll["options"][correct_idx] if 0 <= correct_idx < len(poll["options"]) else "?"
+                await query.answer(L(uid, "quiz_wrong_toast").format(ans=correct_ans), show_alert=True)
+        else:
+            await query.answer(AR["poll_voted"], show_alert=True)
+
+        # Butonları güncelle — quiz ise doğru cevabı ✅ ile işaretle
         opts   = poll["options"]
         total  = len(votes)
         counts = {o: 0 for o in opts}
@@ -4967,18 +7872,24 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         poll_kb = []
         for i, o in enumerate(opts):
-            pct   = int(counts[o] / total * 100) if total else 0
-            label = f"✅ {o}  {pct}%" if i == opt_idx else f"  {o}  {pct}%"
+            pct = int(counts[o] / total * 100) if total else 0
+            if poll_type == "quiz":
+                marker = "✅ " if i == correct_idx else ("☑️ " if i == opt_idx else "  ")
+            else:
+                marker = "✅ " if i == opt_idx else "  "
+            label = f"{marker}{o}  {pct}%"
             poll_kb.append([InlineKeyboardButton(label, callback_data=f"vote|{poll_id}|{i}")])
         try:
             await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(poll_kb))
         except: pass
 
-        # Yorum iste — isteğe bağlı
-        context.user_data["poll_comment_id"] = poll_id
-        context.user_data["action"] = "poll_comment"
-        await query.message.reply_text(L(uid, "poll_comment_prompt"))
-        return WAIT_POLL_COMMENT
+        # Yorum sadece normal anket için
+        if poll_type != "quiz":
+            context.user_data["poll_comment_id"] = poll_id
+            context.user_data["action"] = "poll_comment"
+            await query.message.reply_text(L(uid, "poll_comment_prompt"))
+            return WAIT_POLL_COMMENT
+        return ConversationHandler.END
 
     return ConversationHandler.END
 
@@ -4991,6 +7902,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     text   = (update.message.text or "").strip()
     register_user(user)
 
+    # Engellenmiş kullanıcı
+    if is_blocked(uid) and not is_admin(uid):
+        return ConversationHandler.END
+
+    # Bakım / Güncelleme modu — kullanıcılar tamamen bloklanır
+    if not is_admin(uid):
+        _s_ht = load_settings()
+        if _s_ht.get("maintenance"):
+            await update.message.reply_text(_s_ht.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+            return ConversationHandler.END
+        elif _s_ht.get("update_mode"):
+            await update.message.reply_text(_s_ht.get("update_mode_text", "🔄 البوت في وضع التحديث..."))
+            return ConversationHandler.END
+
     action = context.user_data.get("action","")
 
     # ── Arama — herkes ──────────────────────────────
@@ -5001,31 +7926,170 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await do_search(update.message, uid, text)
         return ConversationHandler.END
 
-    # ── Kişisel Not Düzenleme ───────────────────────
-    if action == "edit_note" and not is_admin(uid):
-        set_personal_note(uid, text)
+    # ── Kişisel Not — Ders adı girişi ─────────────────
+    if action == "note_subject_input" and not is_admin(uid):
+        subject = "" if text.strip() == "." else text.strip()[:50]
+        context.user_data["note_subject"] = subject
+        context.user_data["action"] = "note_taking"
+        lbl = subject if subject else "ملاحظة"
+        kb = [[InlineKeyboardButton("🔒 حفظ وإنهاء", callback_data="notes|done")]]
+        sent = await update.message.reply_text(
+            f"📖 {lbl}\n\nاكتب ملاحظاتك. اضغط 🔒 عند الانتهاء:",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data["last_inline_msg"] = sent.message_id
+        return WAIT_FOLDER  # فقط نص
+
+    # ── Kişisel Not — Not alma modu (metin)
+    if action == "anon_msg" and not is_admin(uid):
+        s = load_settings()
+        group_id = s.get("anon_group_id")
+        if not group_id:
+            await update.message.reply_text(L(uid,"anon_disabled"))
+            context.user_data.pop("action",None); return ConversationHandler.END
+        u = load_users().get(uid,{})
+        name     = u.get("full_name") or u.get("first_name") or f"ID:{uid}"
+        username = f"@{u['username']}" if u.get("username") else f"ID:{uid}"
+        # Gruba anonim mesaj gönder
+        try:
+            await context.bot.send_message(
+                int(group_id),
+                f"✉️ رسالة مجهولة\n\n{text}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Hata: {e}")
+            context.user_data.pop("action",None); return ConversationHandler.END
+        # Süper admin'e kimliği bildir (ayrı mesaj)
+        try:
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"🔍 رسالة مجهولة — هوية المُرسِل\n\n"
+                f"👤 {name}\n"
+                f"📎 {username}\n"
+                f"🆔 {uid}\n"
+                f"📝 {text[:100]}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⚠️ تحذير", callback_data=f"user|warn|{uid}"),
+                    InlineKeyboardButton("🚫 حظر",   callback_data=f"user|block|{uid}"),
+                ]]))
+        except: pass
+        await update.message.reply_text(L(uid,"anon_sent"))
+        log_user_message(user, "anon", text[:100])
+        context.user_data.pop("action",None)
+        return ConversationHandler.END
+
+    if action == "note_taking" and not is_admin(uid):
+        subject = context.user_data.get("note_subject","")
+        add_user_note(uid, "text", text, subject=subject)
+        await update.message.reply_text("✅ " + L(uid,"notes_saved"))
+        return WAIT_FOLDER  # Sadece metin, devam et
+
+    # ── Kişisel Not — Metin notu kaydet (eski uyumluluk)
+    if action == "add_note" and not is_admin(uid):
+        note_type = context.user_data.pop("note_type","text")
+        subject   = context.user_data.pop("note_subject","")
+        add_user_note(uid, note_type, text, subject=subject)
         await update.message.reply_text(L(uid,"notes_saved"))
         context.user_data.pop("action",None)
         return ConversationHandler.END
 
     # ── Hatırlatıcı — Metin ─────────────────────────
     if action == "reminder_text" and not is_admin(uid):
-        context.user_data["reminder_text"] = text
-        context.user_data["action"] = "reminder_when"
-        await update.message.reply_text(L(uid,"reminder_when"))
+        context.user_data["reminder_text_pending"] = text
+        context.user_data.pop("action", None)
+        kb = [
+            [InlineKeyboardButton("15 دقيقة", callback_data="reminder|pick_time|15"),
+             InlineKeyboardButton("30 دقيقة", callback_data="reminder|pick_time|30"),
+             InlineKeyboardButton("1 ساعة",   callback_data="reminder|pick_time|60")],
+            [InlineKeyboardButton("2 ساعة",   callback_data="reminder|pick_time|120"),
+             InlineKeyboardButton("6 ساعات",  callback_data="reminder|pick_time|360"),
+             InlineKeyboardButton("12 ساعة",  callback_data="reminder|pick_time|720")],
+            [InlineKeyboardButton("1 يوم",    callback_data="reminder|pick_time|1440"),
+             InlineKeyboardButton("2 يوم",    callback_data="reminder|pick_time|2880"),
+             InlineKeyboardButton("7 أيام",   callback_data="reminder|pick_time|10080")],
+            [InlineKeyboardButton("📝 إدخال يدوي", callback_data="reminder|manual_date")],
+            [InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")],
+        ]
+        await update.message.reply_text(
+            "⏰ متى تريد التذكير؟",
+            reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    # ── Hatırlatıcı — Zaman (metin fallback, artık kullanılmıyor) ──
+    if action == "reminder_day" and not is_admin(uid):
+        try:
+            day = int(text.strip())
+            assert 0 <= day <= 365
+        except:
+            await update.message.reply_text("اكتب رقم الأيام (0-365)، 0 = اليوم:")
+            return WAIT_FOLDER
+        context.user_data["rem_day"] = day
+        context.user_data["action"]  = "reminder_hour"
+        await update.message.reply_text("🕐 كم ساعة؟ (0-23):")
         return WAIT_FOLDER
 
-    # ── Hatırlatıcı — Zaman ─────────────────────────
+    if action == "reminder_hour" and not is_admin(uid):
+        try:
+            hour = int(text.strip())
+            assert 0 <= hour <= 23
+        except:
+            await update.message.reply_text("اكتب رقم الساعات (0-23):")
+            return WAIT_FOLDER
+        context.user_data["rem_hour"] = hour
+        context.user_data["action"]   = "reminder_minute"
+        await update.message.reply_text("⏱ كم دقيقة؟ (0-59):")
+        return WAIT_FOLDER
+
+    if action == "reminder_minute" and not is_admin(uid):
+        try:
+            minute = int(text.strip())
+            assert 0 <= minute <= 59
+        except:
+            await update.message.reply_text("اكتب رقم الدقائق (0-59):")
+            return WAIT_FOLDER
+        context.user_data["rem_minute"] = minute
+        context.user_data["action"]     = "reminder_second"
+        await update.message.reply_text("⏱ كم ثانية؟ (0-59):")
+        return WAIT_FOLDER
+
+    if action == "reminder_second" and not is_admin(uid):
+        try:
+            second = int(text.strip())
+            assert 0 <= second <= 59
+        except:
+            await update.message.reply_text("اكتب رقم الثواني (0-59):")
+            return WAIT_FOLDER
+        day    = context.user_data.pop("rem_day",    0)
+        hour   = context.user_data.pop("rem_hour",   0)
+        minute = context.user_data.pop("rem_minute", 0)
+        total  = (day * 86400) + (hour * 3600) + (minute * 60) + second
+        if total <= 0:
+            await update.message.reply_text("❌ يجب أن يكون الوقت في المستقبل. حاول مجددًا.")
+            context.user_data.pop("action", None)
+            return ConversationHandler.END
+        import time as _t
+        fire_ts  = _t.time() + total
+        rem_text = context.user_data.pop("reminder_text_pending",
+                   context.user_data.pop("reminder_text", "?"))
+        add_reminder(uid, rem_text, fire_ts)
+        parts_lbl = []
+        if day:    parts_lbl.append(f"{day} يوم")
+        if hour:   parts_lbl.append(f"{hour} ساعة")
+        if minute: parts_lbl.append(f"{minute} دقيقة")
+        if second: parts_lbl.append(f"{second} ثانية")
+        label = " و ".join(parts_lbl) if parts_lbl else "قريباً"
+        await update.message.reply_text(L(uid, "reminder_saved").format(label))
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
     if action == "reminder_when" and not is_admin(uid):
         minutes = parse_time_input(text)
         if not minutes:
             await update.message.reply_text(
-                "❌ " + ("Geçersiz format. Örn: 30d, 2s, 1g" if is_main_admin(uid)
-                         else "تنسيق خاطئ. مثال: 30d, 2s, 1g"))
+                "❌ " + ("Geçersiz. Örn: '2 saat', '30 dakika', '1 gün'" if is_main_admin(uid)
+                         else "❌ غير صحيح. مثال: '2 ساعة' أو '30 دقيقة'"))
             return WAIT_FOLDER
         import time
         fire_ts = time.time() + (minutes * 60)
-        rem_text = context.user_data.pop("reminder_text", text)
+        rem_text = context.user_data.pop("reminder_text_pending", context.user_data.pop("reminder_text", text))
         add_reminder(uid, rem_text, fire_ts)
         if minutes < 60:
             label = f"{minutes} دقيقة" if not is_main_admin(uid) else f"{minutes} dakika"
@@ -5038,40 +8102,302 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Anonim Soru ─────────────────────────────────
-    if action == "anon_q" and not is_admin(uid):
-        qs = load_anon_q()
-        cls = get_user_class(uid)
-        qs.append({"text": text, "cls": cls,
-                   "time": datetime.now().strftime("%Y-%m-%d %H:%M")})
-        save_anon_q(qs)
-        cls_name = CLASS_DEFS.get(cls,{}).get("ar","") if cls else ""
-        notif = (
-            f"❓ سؤال مجهول الهوية\n"
-            f"{'─'*20}\n"
-            f"{text}\n"
-            f"{'─'*20}\n"
-            f"🎓 {cls_name}  🕐 {datetime.now().strftime('%H:%M')}"
-        )
-        kb_admin = [[InlineKeyboardButton("📢 رد علني", callback_data=f"anon|reply|{len(qs)-1}")]]
-        try:
-            await context.bot.send_message(ADMIN_ID, notif, reply_markup=InlineKeyboardMarkup(kb_admin))
-        except: pass
-        await update.message.reply_text(L(uid,"anon_q_sent"))
-        context.user_data.pop("action",None)
+
+    if action == "set_class_name" and is_main_admin(uid):
+        cls_id = context.user_data.pop("cls_name_id", "")
+        if cls_id:
+            names = load_class_names()
+            names[cls_id] = text.strip()
+            save_class_names(names)
+            await update.message.reply_text(f"✅ Sınıf {cls_id} adı güncellendi: {text.strip()}")
+        context.user_data.pop("action", None)
         return ConversationHandler.END
 
-    # ── Sınav Adı (Admin) ───────────────────────────
-    if action == "countdown_name" and is_main_admin(uid):
-        context.user_data["countdown_name"] = text
-        context.user_data["action"] = "countdown_date"
-        await update.message.reply_text(L(uid,"countdown_date"))
+    # ── Alt Admin: Yeni Duyuru (sadmin_bcast) ──────────
+    if action == "sadmin_bcast" and is_admin(uid) and not is_main_admin(uid):
+        context.user_data.pop("action", None)
+        sb_target = context.user_data.pop("sb_target", "")
+        if sb_target and sb_target != "all":
+            targets = get_target_users(sb_target)
+        else:
+            targets = [u for u in load_users() if int(u) != ADMIN_ID]
+        targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
+        _sadmin_sender_lbl = get_sender_label(uid)
+        btext = f"📢 إعلان\n\n{text}\n\n👤 {_sadmin_sender_lbl}\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        success = 0
+        for uid_ in targets:
+            try: await context.bot.send_message(int(uid_), btext); success += 1
+            except: pass
+        u_adm = load_users().get(uid, {})
+        aname = u_adm.get("full_name") or u_adm.get("first_name") or uid
+        lbl = target_label(sb_target) if sb_target and sb_target != "all" else "الجميع"
+        try:
+            await context.bot.send_message(
+                ADMIN_ID,
+                f"📢 إعلان من مسؤول\n👤 {aname} ({uid})\n🎯 {lbl}\n📊 أُرسل إلى {success} مستخدم\n\n{text[:200]}")
+        except: pass
+        log_admin_action(uid, "BROADCAST", f"sadmin:{uid} tgt:{sb_target} n:{success}")
+        log_admin_activity(uid, "BROADCAST", {
+            "text": text[:200],
+            "target": context.user_data.get("sb_target", sb_target) or "all",
+            "sent": success
+        })
+        await update.message.reply_text(f"✅ تم الإرسال إلى {success} مستخدم")
+        return ConversationHandler.END
+
+    if action == "admin_msg_to_super" and is_admin(uid) and not is_main_admin(uid):
+        identity = context.user_data.pop("admin_identity","")
+        context.user_data.pop("action", None)
+        u_adm2 = load_users().get(uid, {})
+        un_adm2 = f" @{u_adm2['username']}" if u_adm2.get("username") else ""
+        notif = (
+            f"📨 رسالة من مسؤول\n\n"
+            f"{identity}\n"
+            f"🆔 {uid}{un_adm2}\n\n"
+            f"📝 {text}\n"
+            f"🕐 {datetime.now(IRAQ_TZ).strftime('%H:%M')}"
+        )
+        kb_reply = [[InlineKeyboardButton("💬 رد", callback_data=f"dm_quick|{uid}")]]
+        try:
+            await context.bot.send_message(ADMIN_ID, notif, reply_markup=InlineKeyboardMarkup(kb_reply))
+            await update.message.reply_text("✅ تم إرسال رسالتك للمسؤول الرئيسي.")
+        except Exception as e:
+            await update.message.reply_text(f"خطأ: {e}")
+        return ConversationHandler.END
+
+    if action == "pending_reason" and is_admin(uid) and not is_main_admin(uid):
+        reason  = text.strip()
+        pact    = context.user_data.pop("pending_action", "")
+        ptgt    = context.user_data.pop("pending_target", "")
+        tname   = context.user_data.pop("pending_tname",  f"ID:{ptgt}")
+        context.user_data.pop("action", None)
+        u_a     = load_users().get(uid, {})
+        aname   = u_a.get("full_name") or u_a.get("first_name") or f"Admin:{uid}"
+        action_ar = "تحذير" if pact == "warn" else "حظر"
+        notif = (
+            f"{'⚠️' if pact=='warn' else '🚫'} طلب {action_ar}\n"
+            f"المسؤول: {aname} ({uid})\n"
+            f"المستهدف: {tname} ({ptgt})\n"
+            f"Sebep: {reason}\n"
+            f"الوقت: {datetime.now(IRAQ_TZ).strftime('%H:%M')}"
+        )
+        approve_label = "✅ موافق — تحذير" if pact == "warn" else "✅ موافق — حظر"
+        kb_approve = [[
+            InlineKeyboardButton(approve_label, callback_data=f"approve|{pact}|{ptgt}|{uid}"),
+            InlineKeyboardButton("❌ رفض",      callback_data=f"approve|deny|{ptgt}|{uid}|{pact}"),
+        ]]
+        try:
+            await context.bot.send_message(
+                ADMIN_ID, notif, reply_markup=InlineKeyboardMarkup(kb_approve))
+            await update.message.reply_text("✅ تم إرسال الطلب، في انتظار موافقة المسؤول الرئيسي.")
+        except Exception as e:
+            await update.message.reply_text(f"خطأ: {e}")
+        return ConversationHandler.END
+
+    if action == "user_search_admin" and is_main_admin(uid):
+        query_str = text.strip().lstrip("@").lower()
+        users_d   = load_users()
+        grps_d    = load_groups()
+        results   = []
+        for uid_, u in users_d.items():
+            if int(uid_) == ADMIN_ID: continue
+            if is_admin(uid_): continue  # Adminleri gizle
+            name  = (u.get("full_name") or u.get("first_name") or "").lower()
+            uname = (u.get("username") or "").lower()
+            if query_str in name or query_str in uname:
+                results.append((uid_, u))
+        if not results:
+            await update.message.reply_text(f"❌ '{text}' bulunamadı.")
+            context.user_data.pop("action", None)
+            return ConversationHandler.END
+        kb = []
+        for uid_, u in results[:30]:
+            name  = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
+            un    = f" @{u['username']}" if u.get("username") else ""
+            cls_s = get_user_class(uid_) or "?"
+            grp_s = grps_d.get(uid_,"?")
+            kb.append([InlineKeyboardButton(
+                f"👤 {name}{un}  [{cls_s}/{grp_s}]",
+                callback_data=f"user|info|{uid_}")])
+        kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|users")])
+        await update.message.reply_text(
+            f"🔍 '{text}' — {len(results)} sonuç:",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "set_anon_group" and is_main_admin(uid):
+        val = text.strip()
+        s = load_settings()
+        if val == "0":
+            s["anon_group_id"] = None
+            await update.message.reply_text("✅ Anonim mesaj özelliği kapatıldı.")
+        else:
+            try:
+                gid = int(val)
+                s["anon_group_id"] = gid
+                await update.message.reply_text(f"✅ Grup ID kaydedildi: {gid}")
+            except:
+                await update.message.reply_text("❌ Geçersiz ID. Örn: -1001234567890")
+                return ConversationHandler.END
+        save_settings(s)
+        context.user_data.pop("action",None); return ConversationHandler.END
+
+    if action == "cgrp_add_name" and is_main_admin(uid):
+        grp_name = text.strip().upper()[:3]
+        cls_id   = context.user_data.pop("cgrp_add_cls","1")
+        shift    = context.user_data.pop("cgrp_add_sft","sabahi")
+        cls_grps = load_class_groups()
+        cls_grps.setdefault(cls_id, {}).setdefault(shift, {})[grp_name] = [f"{grp_name}1",f"{grp_name}2",f"{grp_name}3"]
+        save_class_groups(cls_grps)
+        sft_lbl = "☀️ Sabahcı" if shift == "sabahi" else "🌙 Masaici"
+        await update.message.reply_text(f"✅ {sft_lbl} — Grup {grp_name} eklendi ({grp_name}1/{grp_name}2/{grp_name}3)")
+        context.user_data.pop("action",None); return ConversationHandler.END
+
+    if action == "cgrp_sub_add_name" and is_main_admin(uid):
+        sub_name = text.strip().upper()[:4]
+        cls_id   = context.user_data.pop("cgrp_cls","1")
+        shift    = context.user_data.pop("cgrp_sft","sabahi")
+        grp      = context.user_data.pop("cgrp_grp","A")
+        cls_grps = load_class_groups()
+        cls_grps.setdefault(cls_id,{}).setdefault(shift,{}).setdefault(grp,[]).append(sub_name)
+        save_class_groups(cls_grps)
+        await update.message.reply_text(f"✅ {sub_name} eklendi")
+        context.user_data.pop("action",None); return ConversationHandler.END
+
+    if action == "lab_add_name" and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        context.user_data["pending_lab_name"] = text.strip()[:60]
+        adm_cls = get_admin_cls(uid)
+        if adm_cls:
+            context.user_data["pending_lab_cls"] = adm_cls
+            # Sınıf sabit — vardiya seç
+            kb = [
+                [InlineKeyboardButton("☀️ صباحي", callback_data="lab|lab_sft|sabahi"),
+                 InlineKeyboardButton("🌙 مسائي",  callback_data="lab|lab_sft|masaiy"),
+                 InlineKeyboardButton("📋 الكل",   callback_data="lab|lab_sft|all")],
+                [InlineKeyboardButton("◀️ إلغاء",  callback_data="mgmt|lab")],
+            ]
+            await update.message.reply_text("🔬 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            # Her admin (ana admin dahil) için sınıf seç
+            kb = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"lab|lab_cls|{cls_id}")])
+            kb.append([InlineKeyboardButton("الكل", callback_data="lab|lab_cls|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="mgmt|lab")])
+            await update.message.reply_text("🔬 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
+    if action == "lab_add_date" and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        date_str = text.strip()
+        from datetime import datetime as _dt
+        try:
+            d = _dt.strptime(date_str, "%d/%m/%Y")
+            week_key = d.strftime("%Y-%m-%d")
+        except:
+            await update.message.reply_text("❌ Format hatalı. Örn: 22/04/2026")
+            return ConversationHandler.END
+        # Grup seç — yeni format: {cls: {shift: {grp: [subs]}}}
+        grps_cfg = load_class_groups()
+        all_subs = []
+        for cls_d in grps_cfg.values():
+            for shift_d in cls_d.values():
+                if isinstance(shift_d, dict):
+                    for g_key, subs_list in shift_d.items():
+                        if isinstance(subs_list, list):
+                            all_subs.extend(subs_list)
+                        else:
+                            all_subs.append(g_key)
+        all_subs = sorted(set(all_subs))
+        kb = []
+        row = []
+        for sub in all_subs:
+            row.append(InlineKeyboardButton(sub, callback_data=f"lab|set|{week_key}|{sub}"))
+            if len(row) == 4:
+                kb.append(row); row = []
+        if row: kb.append(row)
+        kb.append([InlineKeyboardButton("◀️ İptal", callback_data="mgmt|lab")])
+        lab_name = context.user_data.get("pending_lab_name","")
+        lab_cls  = context.user_data.get("pending_lab_cls","")
+        context.user_data["pending_lab_date"] = week_key
+        context.user_data.pop("action", None)
+        # Sınıfa özel grupları göster
+        if lab_cls:
+            cls_grps = get_class_groups(lab_cls)
+            all_subs_cls = []
+            for g, subs in cls_grps.items():
+                if isinstance(subs, list):
+                    all_subs_cls.extend(subs)
+            all_subs_cls = sorted(set(all_subs_cls))
+            kb = []
+            row = []
+            for sub in all_subs_cls:
+                row.append(InlineKeyboardButton(sub, callback_data=f"lab|set|{week_key}|{sub}"))
+                if len(row) == 4: kb.append(row); row = []
+            if row: kb.append(row)
+        kb.append([InlineKeyboardButton("◀️ İptal", callback_data="mgmt|lab")])
+        await update.message.reply_text(
+            f"📅 {date_str}  🔬 {lab_name}\nHangi grup giriyor?",
+            reply_markup=InlineKeyboardMarkup(kb))
+        return WAIT_FOLDER
+
+    if action == "lab_fixed_name" and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        context.user_data["lab_fixed_name"] = text.strip()[:60]
+        context.user_data.pop("action", None)
+        WEEKDAYS_TR4 = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"]
+        kb_wd = []
+        for i_wd, wd_name in enumerate(WEEKDAYS_TR4):
+            kb_wd.append([InlineKeyboardButton(wd_name, callback_data=f"lab|fixed_day|{i_wd}")])
+        kb_wd.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+        await update.message.reply_text("📅 Hangi gün tekrar eder?", reply_markup=InlineKeyboardMarkup(kb_wd))
+        return WAIT_FOLDER
+
+    if action == "countdown_name" and is_admin(uid):
+        context.user_data["countdown_name"] = text
+        context.user_data.pop("action", None)
+        adm_cls = get_admin_cls(uid)
+        if adm_cls:
+            context.user_data["countdown_cls"] = adm_cls
+            # Sınıf sabit — vardiya seç
+        else:
+            # Her admin (ana admin dahil) için sınıf seç
+            kb = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"cd_cls|{cls_id}")])
+            kb.append([InlineKeyboardButton("الكل", callback_data="cd_cls|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
+            await update.message.reply_text("📅 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+        # Vardiya seç
+        kb = [
+            [InlineKeyboardButton("الكل",   callback_data="cd_shift|all"),
+             InlineKeyboardButton("صباحي", callback_data="cd_shift|sabahi"),
+             InlineKeyboardButton("مسائي", callback_data="cd_shift|masaiy")],
+        ]
+        await update.message.reply_text(
+            "لمن هذا الامتحان؟" if not is_main_admin(uid) else "Bu sinav kime?",
+            reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
     # ── Sınav Tarihi (Admin) ─────────────────────────
-    if action == "countdown_date" and is_main_admin(uid):
+    if action == "countdown_date" and is_admin(uid):
         name = context.user_data.pop("countdown_name","?")
-        ok   = add_countdown(name, text)
+        # Admin sınıfına göre hedef
+        admin_cls = get_admin_cls(uid) if not is_main_admin(uid) else None
+        shift_val = context.user_data.pop("countdown_shift", "")
+        grp_val   = context.user_data.pop("countdown_group", "")
+        cls_val   = context.user_data.pop("countdown_cls", admin_cls or "")
+        ok = add_countdown(name, text, cls=cls_val, shift=shift_val, group=grp_val)
         if ok:
+            # Bildirimi süper admin'e gönder
+            if not is_main_admin(uid):
+                u_ = load_users().get(uid, {})
+                adm_name = u_.get("full_name") or u_.get("first_name") or uid
+                try:
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        f"Sinav Eklendi\nAdmin: {adm_name}\nSinav: {name}\nTarih: {text}")
+                except: pass
             await update.message.reply_text(L(uid,"countdown_saved").format(name))
         else:
             await update.message.reply_text("❌ Geçersiz tarih. Örn: 20/05/2026")
@@ -5098,64 +8424,75 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             if len(opts) < 2:
                 await update.message.reply_text("❌ En az 2 seçenek gerekli.\nFormat:\nSoru\nA. Seç1\nB. Seç2\nCEVAP: A")
                 return WAIT_FOLDER
-            qid = f"q_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            qid = f"q_{datetime.now(IRAQ_TZ).strftime('%Y%m%d%H%M%S')}"
             quizzes = load_quizzes()
             quizzes.append({
                 "id": qid, "question": question, "options": opts,
                 "correct": correct_idx, "active": True,
-                "answered": {}, "created": datetime.now().strftime("%Y-%m-%d %H:%M")
+                "answered": {}, "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
             })
             save_quizzes(quizzes)
             await update.message.reply_text(
                 f"✅ Quiz oluşturuldu!\n\n"
                 f"❓ {question}\n"
-                f"{'─'*20}\n" +
+                f"\n" +
                 "\n".join(f"{'ABCD'[i]}. {o}" for i,o in enumerate(opts)) +
-                f"\n{'─'*20}\n✅ Doğru: {'ABCD'[correct_idx]}")
+                f"\n\n✅ Doğru: {'ABCD'[correct_idx]}")
         except Exception as e:
             await update.message.reply_text(f"❌ Hata: {e}")
         context.user_data.pop("action",None)
         return ConversationHandler.END
 
     # ── Anonim Soruya Cevap (Admin) ──────────────────
-    if action == "anon_reply" and is_main_admin(uid):
-        q_text = context.user_data.pop("anon_q_text","")
-        # Tüm kullanıcılara gönder (ya da sadece alakalı sınıfa)
-        users_d = load_users()
-        reply_msg = (
-            f"💡 رد على سؤال مجهول\n"
-            f"{'─'*22}\n"
-            f"❓ {q_text[:100]}\n\n"
-            f"💬 {text}\n"
-            f"{'─'*22}\n"
-            f"🕐 {datetime.now().strftime('%H:%M')}"
-        )
-        success = 0
-        for uid_, _ in users_d.items():
-            if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
-            try:
-                await context.bot.send_message(int(uid_), reply_msg)
-                success += 1
-            except: pass
-        await update.message.reply_text(f"✅ {success} kullanıcıya gönderildi.")
-        context.user_data.pop("action",None)
-        return ConversationHandler.END
 
     # ── Kullanıcıdan admin'e mesaj ──────────────────
     if action == "user_msg_to_admin" and not is_admin(uid):
         log_user_message(user, "msg", text)
-        users_d = load_users()
-        u       = users_d.get(uid, {})
-        name    = u.get("full_name") or u.get("first_name") or f"ID:{uid}"
-        un      = f" @{u['username']}" if u.get("username") else ""
-        notif   = f"💬 رسالة جديدة\n\n👤 {name}{un}\n🆔 {uid}\n\n📝 {text}\n🕐 {datetime.now().strftime('%H:%M')}"
-        kb_admin = [[InlineKeyboardButton(f"💬 رد (ID: {uid})", callback_data=f"dm_quick|{uid}")]]
+        users_d  = load_users()
+        u        = users_d.get(uid, {})
+        name     = u.get("full_name") or u.get("first_name") or f"ID:{uid}"
+        un       = f" @{u['username']}" if u.get("username") else ""
+        cls_id   = get_user_class(uid)
+        grp_id   = get_user_group(uid)
+        cls_name = get_class_display_name(cls_id) if cls_id else ""
+        msg_to   = context.user_data.pop("msg_to", "main")
+
+        notif = (
+            f"💬 رسالة جديدة\n\n"
+            f"👤 {name}{un}\n"
+            f"🆔 {uid}\n"
+            f"🎓 {cls_name}  👥 {grp_id or '-'}\n"
+            f"\n"
+            f"📝 {text}\n"
+            f"🕐 {datetime.now(IRAQ_TZ).strftime('%H:%M')}"
+        )
+        kb_admin = [[InlineKeyboardButton("💬 رد", callback_data=f"dm_quick|{uid}")]]
+
+        # Süper admin her zaman alır
         try:
-            await context.bot.send_message(ADMIN_ID, notif, reply_markup=InlineKeyboardMarkup(kb_admin))
+            await context.bot.send_message(
+                ADMIN_ID, notif, reply_markup=InlineKeyboardMarkup(kb_admin))
         except Exception as e:
-            logger.error(f"Admin bildirim hatası: {e}")
-        await update.message.reply_text(L(uid,"msg_to_admin_sent"))
-        context.user_data.pop("action",None)
+            logger.error(f"Süper admin bildirimi: {e}")
+
+        # Sınıf adminine de gönder
+        if cls_id:
+            perms_data = load_admin_perms()
+            for adm_id_str, adm_perms in perms_data.items():
+                if adm_perms.get("cls") == cls_id and adm_id_str != str(ADMIN_ID):
+                    try:
+                        await context.bot.send_message(
+                            int(adm_id_str), notif,
+                            reply_markup=InlineKeyboardMarkup(kb_admin))
+                    except: pass
+
+        # Kullanıcıya onay
+        if msg_to == "class_admin":
+            conf = "✅ تم إرسال رسالتك لمسؤول صفك وللمسؤول الرئيسي."
+        else:
+            conf = L(uid, "msg_to_admin_sent")
+        await update.message.reply_text(conf)
+        context.user_data.pop("action", None)
         return ConversationHandler.END
 
     # ── Açık uçlu anket cevabı ────────────────────────
@@ -5174,10 +8511,28 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                     "name":    name,
                     "username": un,
                     "answer":  text[:500],
-                    "time":    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "time":    datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M"),
                 }
                 save_polls(polls)
                 await update.message.reply_text(L(uid, "poll_comment_saved"))
+                # Admin bildirimi
+                q_text = poll.get("question", "")[:60]
+                notif = (
+                    f"📊 *إجابة سؤال مفتوح*\n"
+                    f"❓ {q_text}\n"
+                    f"👤 {name} {un}\n"
+                    f"✍️ {text[:300]}"
+                )
+                try:
+                    await context.bot.send_message(ADMIN_ID, notif, parse_mode="Markdown")
+                except Exception:
+                    pass
+                for adm_id in load_admins():
+                    if get_admin_perm(str(adm_id), "can_poll"):
+                        try:
+                            await context.bot.send_message(int(adm_id), notif, parse_mode="Markdown")
+                        except Exception:
+                            pass
         return ConversationHandler.END
 
     # ── Anket yorumu (kullanıcıdan) ───────────────────
@@ -5202,7 +8557,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                         "username": un,
                         "vote":    poll.get("votes", {}).get(uid, "—"),
                         "comment": text[:300],
-                        "time":    datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "time":    datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M"),
                     }
                     save_polls(polls)
                     await update.message.reply_text(L(uid, "poll_comment_saved"))
@@ -5248,7 +8603,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     # ── Uyarı Sebebi (admin) ─────────────────────────
     if action == "warn_reason" and is_main_admin(uid):
-        target = context.user_data.pop("warn_target","")
+        target   = context.user_data.pop("warn_target","")
+        req_admin = context.user_data.pop("warn_req_admin","")
         if target:
             count = add_warn(target, text, uid)
             await update.message.reply_text(TR["user_warned"].format(target, count, MAX_WARNS))
@@ -5259,6 +8615,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                     int(target),
                     AR["warn_msg_to_user"].format(reason=text, count=count, max=MAX_WARNS))
             except: pass
+            # Talep eden alt admin'e bildir
+            if req_admin:
+                try:
+                    u = load_users().get(target,{})
+                    name = u.get("full_name") or u.get("first_name") or f"ID:{target}"
+                    await context.bot.send_message(
+                        int(req_admin),
+                        f"✅ Uyarı onaylandı ve gönderildi.\n"
+                        f"👤 {name} ({target})\n"
+                        f"📋 Sebep: {text[:80]}\n"
+                        f"⚠️ Uyarı sayısı: {count}/{MAX_WARNS}")
+                except: pass
             # Otomatik engel
             if count >= MAX_WARNS:
                 blocked = load_blocked()
@@ -5306,8 +8674,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Hedefli Broadcast (admin) ────────────────────
-    if action == "broadcast_targeted" and is_admin(uid):
-        targets = context.user_data.pop("broadcast_targets", [])
+    if action == "broadcast_targeted" and is_main_admin(uid):
+        targets = include_admins_in_targets(context.user_data.pop("bcast_targets", []))
         success = fail = 0
         for uid_ in targets:
             try:
@@ -5317,7 +8685,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                     f"╠══════════════════════╣\n\n"
                     f"{text}\n\n"
                     f"╚══════════════════════╝\n"
-                    f"  🕐  {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
                 )
                 await context.bot.send_message(int(uid_), bcast_msg); success += 1
             except: fail += 1
@@ -5326,7 +8694,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         # Duyuru log kaydet
         bcast_log = load_bcast_log()
         bcast_log.append({
-            "time":  datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "time":  datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M"),
             "text":  text[:100],
             "count": success,
             "type":  "targeted"
@@ -5349,9 +8717,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             polls   = load_polls()
             polls[poll_id] = {
                 "question": q, "type": "open",
-                "options": [], "votes": {}, "answers": {}, "active": False
+                "options": [], "votes": {}, "answers": {}, "active": False,
+                "target": context.user_data.get("poll_target","all")
             }
             save_polls(polls)
+            log_admin_activity(uid, "POLL_CREATED", {
+                "poll_id": poll_id,
+                "question": q,
+                "type": "open",
+                "options": [],
+                "correct": None,
+                "target": context.user_data.get("poll_target", "all")
+            })
             kb = [
                 [InlineKeyboardButton(TR["poll_send_btn"],   callback_data=f"poll|send|{poll_id}")],
                 [InlineKeyboardButton(TR["poll_cancel_btn"], callback_data="close")],
@@ -5374,12 +8751,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         opts = [o.strip() for o in text.split("\n") if o.strip()][:6]
         if len(opts) < 2:
             await update.message.reply_text("❌ En az 2 seçenek girin!"); return WAIT_POLL_OPTIONS
+        poll_type = context.user_data.get("poll_type", "choice")
+        context.user_data["poll_opts_temp"] = opts
+        if poll_type == "quiz":
+            # Quiz: doğru cevabı sor
+            opts_text = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(opts))
+            context.user_data["action"] = "poll_correct_answer"
+            await update.message.reply_text(
+                f"📋 Seçenekler:\n{opts_text}\n\n" +
+                TR["poll_correct_prompt"].format(n=len(opts)))
+            return WAIT_POLL_CORRECT
+        # choice: direkt kaydet ve önizle
         q       = context.user_data.get("poll_question", "?")
         poll_id = make_poll_id()
-        # Anketi kaydet (henüz gönderilmedi)
         polls = load_polls()
-        polls[poll_id] = {"question": q, "options": opts, "votes": {}, "active": False}
+        polls[poll_id] = {"question": q, "type": "choice", "options": opts, "votes": {}, "active": False, "target": context.user_data.get("poll_target","all")}
         save_polls(polls)
+        log_admin_activity(uid, "POLL_CREATED", {
+            "poll_id": poll_id,
+            "question": q,
+            "type": "choice",
+            "options": opts,
+            "correct": None,
+            "target": context.user_data.get("poll_target", "all")
+        })
         opts_text = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(opts))
         kb = [
             [InlineKeyboardButton(TR["poll_send_btn"],   callback_data=f"poll|send|{poll_id}")],
@@ -5390,6 +8785,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             reply_markup=InlineKeyboardMarkup(kb))
         context.user_data.pop("action", None)
         context.user_data.pop("poll_question", None)
+        context.user_data.pop("poll_opts_temp", None)
+        return ConversationHandler.END
+
+    # ── Quiz doğru cevap numarası ─────────────────────
+    if action == "poll_correct_answer" and is_admin(uid):
+        opts = context.user_data.get("poll_opts_temp", [])
+        try:
+            correct_idx = int(text.strip()) - 1
+            if not (0 <= correct_idx < len(opts)):
+                raise ValueError
+        except ValueError:
+            await update.message.reply_text(f"❌ Lütfen 1 ile {len(opts)} arasında bir sayı girin!")
+            return WAIT_POLL_CORRECT
+        q       = context.user_data.get("poll_question", "?")
+        poll_id = make_poll_id()
+        polls   = load_polls()
+        polls[poll_id] = {
+            "question": q, "type": "quiz", "options": opts,
+            "correct": correct_idx, "votes": {}, "active": False,
+            "target": context.user_data.get("poll_target", "all")
+        }
+        save_polls(polls)
+        log_admin_activity(uid, "POLL_CREATED", {
+            "poll_id": poll_id,
+            "question": q,
+            "type": "quiz",
+            "options": opts,
+            "correct": correct_idx,
+            "target": context.user_data.get("poll_target", "all")
+        })
+        opts_text = "\n".join(
+            f"  {i+1}. {'✅ ' if i == correct_idx else ''}{o}"
+            for i, o in enumerate(opts))
+        kb = [
+            [InlineKeyboardButton(TR["poll_send_btn"],   callback_data=f"poll|send|{poll_id}")],
+            [InlineKeyboardButton(TR["poll_cancel_btn"], callback_data="close")],
+        ]
+        await update.message.reply_text(
+            f"🎯 Quiz Önizleme:\n\n❓ {q}\n\n{opts_text}\n\n✅ Doğru: {opts[correct_idx]}\n\nGönderilsin mi?",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data.pop("action", None)
+        context.user_data.pop("poll_question", None)
+        context.user_data.pop("poll_opts_temp", None)
         return ConversationHandler.END
 
     # ── Admin değilse: AI motorunu çalıştır ─────────────────
@@ -5401,12 +8839,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             await update.message.reply_text(L(uid, "spam_warning"))
             return ConversationHandler.END
 
-        # Selamlama kontrolü
-        if _is_greeting(text):
-            log_user_message(user, "msg", text)
-            await update.message.reply_text(L(uid, "greeting_reply"))
-            return ConversationHandler.END
-
         # Sabit mesaj (ilk kez)
         if context.user_data.get("shown_pinned") is None:
             pinned = get_pinned_msg()
@@ -5414,92 +8846,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                 context.user_data["shown_pinned"] = True
                 await update.message.reply_text(L(uid, "pinned_msg_label").format(pinned))
 
-        subject    = _detect_subject(text)
-        is_q       = _is_question(text)
-        subj_label = _subject_label(uid, subject)
-        ai_mode    = context.user_data.get("action") == "ai_chat"
-
-        # AI chat modunda VEYA soru/konu tespit edilirse AI'ya gönder
-        if ai_mode or ((subject or is_q) and len(text.strip()) >= 3):
-            typing_msg = None
-            try:
-                typing_msg = await update.message.reply_text(
-                    L(uid,"ai_detected").format(subj_label) if subject
-                    else L(uid,"ai_searching"))
-            except Exception: pass
-
-            try:
-                answer = await smart_ai_answer(uid, text)
-            except Exception as e:
-                logger.warning(f"AI yanıt hatası: {e}")
-                answer = None
-
-            if typing_msg:
-                try: await typing_msg.delete()
-                except: pass
-
-            if answer:
-                ans_text, source = answer
-                if source == "calc":
-                    reply_text = L(uid,"ai_math_result").format(result=ans_text)
-                elif source in ("rule","faq"):
-                    reply_text = ans_text
-                elif "Wikipedia" in source:
-                    url = source.replace("Wikipedia — ","")
-                    reply_text = L(uid,"ai_wiki_result").format(result=ans_text, url=url or "Wikipedia")
-                else:
-                    reply_text = L(uid,"ai_search_result").format(
-                        result=ans_text, source=source or "Web")
-                if len(reply_text) > 4000:
-                    reply_text = reply_text[:3997] + "..."
-                file_key = text[:50]
-                kb_rate = [[
-                    InlineKeyboardButton("⭐1", callback_data=f"rate|{file_key}|1"),
-                    InlineKeyboardButton("⭐2", callback_data=f"rate|{file_key}|2"),
-                    InlineKeyboardButton("⭐3", callback_data=f"rate|{file_key}|3"),
-                    InlineKeyboardButton("⭐4", callback_data=f"rate|{file_key}|4"),
-                    InlineKeyboardButton("⭐5", callback_data=f"rate|{file_key}|5"),
-                ]]
-                # ai_chat modunda geri butonu ekle
-                if ai_mode:
-                    kb_rate.append([InlineKeyboardButton("◀️ رجوع", callback_data="nav|root")])
-                try:
-                    await update.message.reply_text(
-                        reply_text, parse_mode="Markdown",
-                        reply_markup=InlineKeyboardMarkup(kb_rate))
-                except Exception:
-                    await update.message.reply_text(
-                        reply_text,
-                        reply_markup=InlineKeyboardMarkup(kb_rate))
-                update_leaderboard(uid, 1)
-            else:
-                # Yanıt bulunamadı
-                await update.message.reply_text(
-                    L(uid, "ai_no_web_result") + 
-                    ("\n\n💬 يمكنك إعادة الصياغة أو طرح سؤال مختلف."
-                     if not is_main_admin(uid) else "\n\nBaşka türlü sormayı deneyin."),
-                    reply_markup=InlineKeyboardMarkup([[
-                        InlineKeyboardButton("◀️ رجوع", callback_data="nav|root")
-                    ]])
-                )
-                return ConversationHandler.END
-        else:
-            # Kısa/konu dışı mesaj — sadece kaydet
-            log_user_message(user, "msg", text)
+        # Mesajı kaydet
+        log_user_message(user, "msg", text)
         return ConversationHandler.END
 
     # ── Admin işlemleri ──────────────────────────────
     content = load_content(); path = context.user_data.get("path",[]); folder = get_folder(content,path)
 
     if action == "admin_add" and is_main_admin(uid):
-        try: new_id = int(text)
-        except: await update.message.reply_text(TR["invalid_id"]); return WAIT_ADMIN_ID
+        raw = text.strip()
+        new_id = None
+        # ID mi yoksa @kullanıcı adı mı?
+        if raw.isdigit() or (raw.startswith("-") and raw[1:].isdigit()):
+            new_id = int(raw)
+        else:
+            # @username ile ara
+            username_search = raw.lstrip("@").lower()
+            users_d = load_users()
+            for uid_, u in users_d.items():
+                if u.get("username","").lower() == username_search:
+                    new_id = int(uid_)
+                    break
+            if not new_id:
+                await update.message.reply_text(
+                    f"❌ @{username_search} bulunamadı. ID veya @kullanıcı adı girin:")
+                return WAIT_ADMIN_ID
         admins = load_admins()
         if new_id in admins or new_id == ADMIN_ID:
             await update.message.reply_text(TR["admin_exists"])
-        else:
-            admins.append(new_id); save_admins(admins)
-            await update.message.reply_text(TR["admin_added"].format(new_id))
+            context.user_data.pop("action",None); return ConversationHandler.END
+        admins.append(new_id); save_admins(admins)
+        # Önceden seçilen sınıf/grup varsa uygula
+        pre_cls = context.user_data.pop("pending_admin_cls", None)
+        pre_grp = context.user_data.pop("pending_admin_grp", None)
+        if pre_cls: set_admin_perm(str(new_id), "cls", pre_cls)
+        if pre_grp: set_admin_perm(str(new_id), "grp", pre_grp)
+        log_admin_action(uid, "ADD_ADMIN", f"ID:{new_id} cls:{pre_cls} grp:{pre_grp}")
+        found_user = load_users().get(str(new_id), {})
+        display = found_user.get("full_name") or f"@{found_user.get('username','')}" or str(new_id)
+        cls_lbl = f"Sinif: {pre_cls}" if pre_cls else "Kisitsiz"
+        grp_lbl = f"  Grup: {pre_grp}" if pre_grp else ""
+        await update.message.reply_text(
+            f"✅ Admin eklendi: {display} ({new_id})\n{cls_lbl}{grp_lbl}\n\n"
+            f"Yetkiler: Ayarlar → Admin Yetkileri")
         context.user_data.pop("action",None); return ConversationHandler.END
 
     if action == "dm_manual_id" and is_main_admin(uid):
@@ -5514,23 +8903,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if not target: await update.message.reply_text(TR["dm_no_target"]); return ConversationHandler.END
         dm_formatted = (
             f"💌  رسالة شخصية\n"
-            f"{'─'*22}\n"
+            f"\n"
             f"{text}\n"
-            f"{'─'*22}\n"
-            f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            f"\n"
+            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
         )
         try:
             await context.bot.send_message(int(target), dm_formatted)
             await update.message.reply_text(TR["dm_sent"].format(target))
         except Exception as e:
             await update.message.reply_text(TR["dm_fail"].format(e))
+        log_admin_activity(uid, "DM_SENT", {
+            "target_uid": context.user_data.get("dm_target", "?"),
+            "text": text[:200]
+        })
         context.user_data.pop("action",None); context.user_data.pop("dm_target",None)
         return ConversationHandler.END
 
-    if action == "broadcast" and is_admin(uid):
+    if action == "broadcast" and is_main_admin(uid):
         users = load_users(); success = fail = 0
-        for uid_,u in users.items():
-            if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
+        all_targets = include_admins_in_targets(
+            [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)])
+        sender_lbl = get_sender_label(uid)
+        for uid_ in all_targets:
+            if int(uid_) == ADMIN_ID: continue
             try:
                 bcast_msg = (
                     f"╔══════════════════════╗\n"
@@ -5538,21 +8934,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
                     f"╠══════════════════════╣\n\n"
                     f"{text}\n\n"
                     f"╚══════════════════════╝\n"
-                    f"  🕐  {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                    f"  👤  {sender_lbl}\n"
+                    f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
                 )
                 await context.bot.send_message(int(uid_), bcast_msg); success += 1
             except: fail += 1
-        await update.message.reply_text(L(uid, "broadcast_done").format(success,fail))
+        await update.message.reply_text(TR["broadcast_done"].format(success,fail))
         # Log kaydet
         bcast_log = load_bcast_log()
         bcast_log.append({
-            "time":  datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "time":  datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M"),
             "text":  text[:100],
             "count": success,
             "type":  "all"
         })
         save_bcast_log(bcast_log)
         log_admin_action(uid, "BROADCAST_ALL", f"{success} gönderildi")
+        log_admin_activity(uid, "BROADCAST", {
+            "text": text[:200],
+            "target": "all",
+            "sent": success
+        })
+        context.user_data.pop("action",None); return ConversationHandler.END
+
+    if action == "msgsel_send" and is_main_admin(uid):
+        sel = context.user_data.pop("msgsel_targets", [])
+        success = fail = 0
+        _msgsel_sender_lbl = get_sender_label(uid)
+        bcast_msg = (
+            f"╔══════════════════════╗\n"
+            f"  📨  رسالة مخصصة\n"
+            f"╠══════════════════════╣\n\n"
+            f"{text}\n\n"
+            f"╚══════════════════════╝\n"
+            f"  👤  {_msgsel_sender_lbl}\n"
+            f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        )
+        for uid_ in sel:
+            try:
+                await context.bot.send_message(int(uid_), bcast_msg)
+                success += 1
+            except: fail += 1
+        await update.message.reply_text(f"✅ {success} kişiye gönderildi. ❌ {fail} başarısız.")
+        log_admin_action(uid, "MSGSEL_SEND", f"{success} kişi, '{text[:40]}'")
         context.user_data.pop("action",None); return ConversationHandler.END
 
     if action == "set_name" and is_main_admin(uid):
@@ -5584,18 +9008,35 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         log_admin_action(uid, "PIN_MSG", text[:50])
         context.user_data.pop("action",None); return ConversationHandler.END
 
+    if action == "set_rules_text" and is_main_admin(uid):
+        s = load_settings()
+        s["rules_text"] = text.strip()
+        save_settings(s)
+        await update.message.reply_text("✅ Kural metni kaydedildi.")
+        log_admin_action(uid, "SET_RULES", text[:50])
+        context.user_data.pop("action",None); return ConversationHandler.END
+
     if action == "add_folder":
         if not text: await update.message.reply_text(L(uid,"folder_empty")); return WAIT_FOLDER
-        if text in folder.get("folders",{}):
+        # Çoklu satır — her satır ayrı klasör
+        names = [n.strip() for n in text.split("\n") if n.strip()]
+        added_names = []
+        for name in names:
+            if name and name not in folder.get("folders",{}):
+                folder.setdefault("folders",{})[name] = {"folders":{},"files":[]}
+                added_names.append(name)
+        if added_names:
+            save_content(content)
+        if not added_names:
             await update.message.reply_text(L(uid,"folder_exists").format(text)); return WAIT_FOLDER
-        folder.setdefault("folders",{})[text] = {"folders":{},"files":[]}; save_content(content)
+        text = ", ".join(added_names)  # sayaç mesajı için
         count     = context.user_data.get("add_folder_count", 0) + 1
         context.user_data["add_folder_count"] = count
         status_id = context.user_data.get("add_folder_status_id")
         kb = [[InlineKeyboardButton(L(uid,"close"), callback_data="nav|root")]]
         status_text = (
             f"{'✅ Klasörler ekleniyor...' if is_main_admin(uid) else '✅ جارٍ إضافة المجلدات...'}\n"
-            f"{'─'*20}\n"
+            f"\n"
             f"📁 {count} {'klasör eklendi' if is_main_admin(uid) else 'مجلد تمت إضافته'}\n\n"
             f"{'Devam yaz, bitince Kapat.' if is_main_admin(uid) else 'اكتب المزيد أو اضغط إغلاق.'}"
         )
@@ -5612,7 +9053,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             context.user_data["add_folder_status_id"] = sent.message_id
         return WAIT_FOLDER
 
-    if action == "rename_folder" and is_admin(uid):
+    if action == "rename_folder" and is_main_admin(uid):
         old = context.user_data.get("target","")
         if not text: await update.message.reply_text(L(uid,"folder_empty")); return WAIT_RENAME_FOLDER
         if text in folder.get("folders",{}):
@@ -5644,7 +9085,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         kb = [[InlineKeyboardButton(L(uid,"close"), callback_data="nav|root")]]
         status_text = (
             f"{'✅ Dosyalar ekleniyor...' if is_main_admin(uid) else '✅ جارٍ إضافة الملفات...'}\n"
-            f"{'─'*20}\n"
+            f"\n"
             f"📎 {count} {'dosya/link eklendi' if is_main_admin(uid) else 'ملف/رابط تمت إضافته'}\n\n"
             f"{'Devam gönder, bitince Kapat.' if is_main_admin(uid) else 'أرسل المزيد أو اضغط إغلاق.'}"
         )
@@ -5671,65 +9112,68 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     user = update.effective_user; uid = str(user.id); msg = update.message
     register_user(user)
 
-    # ── Geri Yükleme: admin "restore" başlıklı JSON gönderince ──
-    # Sadece action="add_file" yokken devreye girer
-    if is_main_admin(uid) and msg.document and context.user_data.get("action") != "add_file":
-        _rcap = (msg.caption or "").strip().lower()
-        _rfname = msg.document.file_name or ""
-        if _rcap == "restore" or _rfname.startswith("tam_yedek_"):
-            await msg.reply_text(TR["restore_start"])
-            try:
-                tg_file = await msg.document.get_file()
-                raw = await tg_file.download_as_bytearray()
-                ok, count, err = restore_full_backup(bytes(raw))
-                if ok:
-                    await msg.reply_text(TR["restore_done"].format(count))
-                    log_admin_action(uid, "RESTORE", f"{count} dosya geri yüklendi")
-                else:
-                    await msg.reply_text(TR["restore_fail"].format(err))
-            except Exception as e:
-                await msg.reply_text(TR["restore_fail"].format(str(e)))
-            return ConversationHandler.END
-
-    if not is_admin(uid):
+    if not is_main_admin(uid):
         if is_blocked(uid): return ConversationHandler.END
         s = load_settings()
-        if s["maintenance"]:
+        if s["maintenance"] and not is_admin(uid):
             await msg.reply_text(s.get("maintenance_text","🔧")); return ConversationHandler.END
-        if   msg.photo:
-            fid = msg.photo[-1].file_id; cap = msg.caption or "(photo)"
-            log_user_message(user,"photo", cap, file_id=fid)
-        elif msg.video:
-            fid = msg.video.file_id; cap = msg.caption or msg.video.file_name or "(video)"
-            log_user_message(user,"video", cap, file_id=fid)
-        elif msg.document:
-            fid = msg.document.file_id; cap = msg.document.file_name or "(doc)"
-            log_user_message(user,"document", cap, file_id=fid)
-        elif msg.audio:
-            fid = msg.audio.file_id; cap = msg.audio.file_name or "(audio)"
-            log_user_message(user,"audio", cap, file_id=fid)
-        elif msg.voice:
-            fid = msg.voice.file_id
-            log_user_message(user,"voice","(voice)", file_id=fid)
-        elif msg.animation:
-            fid = msg.animation.file_id
-            log_user_message(user,"animation","(gif)", file_id=fid)
-        elif msg.sticker:
-            fid = msg.sticker.file_id; emoji = msg.sticker.emoji or "(sticker)"
-            log_user_message(user,"sticker", emoji, file_id=fid)
-        return ConversationHandler.END
+        # Alt admin add_file veya dm_msg modundaysa devam et
+        _a = context.user_data.get("action","")
+        if is_admin(uid) and _a in ("add_file", "dm_msg", "set_photo", "admin_bcast_msg"):
+            pass  # handle_media'nın geri kalanına düş
+        else:
+            if   msg.photo:
+                fid = msg.photo[-1].file_id; cap = msg.caption or "(photo)"
+                log_user_message(user,"photo", cap, file_id=fid)
+            elif msg.video:
+                fid = msg.video.file_id; cap = msg.caption or msg.video.file_name or "(video)"
+                log_user_message(user,"video", cap, file_id=fid)
+            elif msg.document:
+                fid = msg.document.file_id; cap = msg.document.file_name or "(doc)"
+                log_user_message(user,"document", cap, file_id=fid)
+            elif msg.audio:
+                fid = msg.audio.file_id; cap = msg.audio.file_name or "(audio)"
+                log_user_message(user,"audio", cap, file_id=fid)
+            elif msg.voice:
+                fid = msg.voice.file_id
+                log_user_message(user,"voice","(voice)", file_id=fid)
+            elif msg.animation:
+                fid = msg.animation.file_id
+                log_user_message(user,"animation","(gif)", file_id=fid)
+            elif msg.sticker:
+                fid = msg.sticker.file_id; emoji = msg.sticker.emoji or "(sticker)"
+                log_user_message(user,"sticker", emoji, file_id=fid)
+            return ConversationHandler.END
 
     action = context.user_data.get("action","")
 
-    if action == "broadcast" and is_admin(uid):
+    # ── Tam yedek geri yükleme (restore) ─────────────
+    if (is_main_admin(uid) and action != "add_file" and msg.document):
+        _cap   = (msg.caption or "").strip().lower()
+        _fname = msg.document.file_name or ""
+        if _cap == "restore" or _fname.startswith("tam_yedek_"):
+            await msg.reply_text(TR["restore_start"])
+            try:
+                f_obj  = await context.bot.get_file(msg.document.file_id)
+                raw    = await f_obj.download_as_bytearray()
+                ok, count, err = restore_full_backup(bytes(raw))
+                if ok:
+                    await msg.reply_text(TR["restore_done"].format(count=count))
+                else:
+                    await msg.reply_text(TR["restore_fail"].format(err=err))
+            except Exception as e:
+                await msg.reply_text(TR["restore_fail"].format(err=str(e)))
+            return ConversationHandler.END
+
+    if action == "broadcast" and is_main_admin(uid):
         users = load_users(); success = fail = 0
         cap_raw  = msg.caption or ""
         cap_text = (
             f"📢  إعلان رسمي\n"
-            f"{'─'*22}\n"
+            f"\n"
             f"{cap_raw}\n"
-            f"{'─'*22}\n"
-            f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            f"\n"
+            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
         ) if cap_raw else None
         for uid_,u in users.items():
             if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
@@ -5750,10 +9194,10 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         if not target: await msg.reply_text(TR["dm_no_target"]); return ConversationHandler.END
         cap_text = (
             f"💌  رسالة شخصية\n"
-            f"{'─'*22}\n"
+            f"\n"
             f"{cap_raw}\n"
-            f"{'─'*22}\n"
-            f"🕐 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            f"\n"
+            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
         ) if cap_raw else None
         try:
             if   msg.photo:     await context.bot.send_photo(int(target),    msg.photo[-1].file_id, caption=cap_text)
@@ -5768,6 +9212,28 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         context.user_data.pop("action",None); context.user_data.pop("dm_target",None)
         return ConversationHandler.END
 
+    if action in ("add_note","note_taking") and not is_admin(uid):
+        subject = context.user_data.get("note_subject","")
+        fid = None; cap = msg.caption or ""; note_type = "media"
+        if msg.photo:
+            fid = msg.photo[-1].file_id; note_type = "photo"
+        elif msg.video:
+            fid = msg.video.file_id; note_type = "video"
+        elif msg.voice:
+            fid = msg.voice.file_id; note_type = "voice"
+        elif msg.audio:
+            fid = msg.audio.file_id; note_type = "audio"
+        elif msg.document:
+            fid = msg.document.file_id; cap = cap or msg.document.file_name or ""; note_type = "document"
+        elif msg.video_note:
+            fid = msg.video_note.file_id; note_type = "video"
+        add_user_note(uid, note_type, cap, file_id=fid, subject=subject)
+        await msg.reply_text("✅ " + L(uid,"notes_saved"))
+        if action == "note_taking":
+            return WAIT_FILE  # Not alma modu devam
+        context.user_data.pop("action",None); context.user_data.pop("note_subject",None)
+        return ConversationHandler.END
+
     if action == "set_photo" and is_main_admin(uid):
         if not msg.photo:
             await msg.reply_text(TR["set_photo_fail"]); return WAIT_PHOTO
@@ -5779,7 +9245,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if action != "add_file": return ConversationHandler.END
 
     content = load_content(); path = context.user_data.get("path",[]); folder = get_folder(content,path)
-    now  = datetime.now().strftime("%Y%m%d%H%M%S")
+    now  = datetime.now(IRAQ_TZ).strftime("%Y%m%d%H%M%S")
     cap  = msg.caption or ""
     fobj = None
 
@@ -5863,7 +9329,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         kb = [[InlineKeyboardButton(L(uid,"close"), callback_data="nav|root")]]
         status_text = (
             f"{'✅ Dosyalar ekleniyor...' if is_main_admin(uid) else '✅ جارٍ إضافة الملفات...'}\n"
-            f"{'─'*20}\n"
+            f"\n"
             f"📎 {count} {'dosya eklendi' if is_main_admin(uid) else 'ملف تمت إضافته'}\n\n"
             f"{'📤 Devam gönder, bitince Kapat.' if is_main_admin(uid) else '📤 أرسل المزيد أو اضغط إغلاق.'}"
         )
@@ -5928,15 +9394,19 @@ def main():
     text_f  = filters.TEXT & ~filters.COMMAND
 
     import re
-    escaped     = [re.escape(b) for b in ALL_BTNS]
-    reply_btn_f = filters.Regex(f"^({'|'.join(escaped)})$")
+    try:
+        escaped     = [re.escape(b) for b in ALL_BTNS]
+        reply_btn_f = filters.Regex(f"^({'|'.join(escaped)})$")
+    except Exception as e:
+        logger.warning(f"reply_btn_f hatası: {e}")
+        reply_btn_f = filters.Regex("^NOMATCH$")  # fallback
 
     conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(callback),
         ],
         states={
-            WAIT_FOLDER:        [MessageHandler(text_f & ~reply_btn_f, handle_text)],
+            WAIT_FOLDER:        [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
             WAIT_FILE:          [MessageHandler(text_f & ~reply_btn_f, handle_text),
                                  MessageHandler(media_f, handle_media), CallbackQueryHandler(callback)],
             WAIT_ADMIN_ID:      [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
@@ -5966,6 +9436,7 @@ def main():
             WAIT_SCHEDULE_MSG:  [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
             WAIT_TAG:           [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
             WAIT_SECRET_ID:     [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
+            WAIT_POLL_CORRECT:  [MessageHandler(text_f & ~reply_btn_f, handle_text), CallbackQueryHandler(callback)],
         },
         fallbacks=[
             CommandHandler("start", start),
@@ -5975,6 +9446,7 @@ def main():
             CallbackQueryHandler(callback),
         ],
         allow_reentry=True,
+        conversation_timeout=259200,  # 3 gün (saniye)
     )
 
     app.add_handler(CommandHandler("start", start))
@@ -5989,7 +9461,7 @@ def main():
     print("✅ Bot başlatıldı!")
     print(f"👑 Süper Admin  : {ADMIN_ID}")
     print(f"💾 Veri dizini  : {BASE_DIR}")
-    print("─" * 40)
+    print("")
     print("📌 Yeni özellikler:")
     print("  🆕 Yeni kullanıcı bildirimi")
     print("  🗑 Silme onay ekranı")
@@ -6023,52 +9495,128 @@ def main():
                 except Exception as e:
                     logger.warning(f"Hatırlatıcı gönderilemedi: {e}")
 
-    # ── Startup: veri yoksa pinli mesajdan otomatik geri yükle ──
-    async def _startup_check(ctx):
-        users = load_users()
-        if users:
-            try:
-                await ctx.bot.send_message(ADMIN_ID, TR["startup_msg"])
-            except Exception:
-                pass
-            return
+    async def _check_exam_reminders(ctx):
+        """Sınavdan N gün önce kullanıcılara bildirim gönder (çoklu gün destekli)."""
+        from datetime import datetime as _dt, timedelta
+        s = load_settings()
+        remind_days_cfg = s.get("exam_remind_days", [1])
+        if isinstance(remind_days_cfg, int): remind_days_cfg = [remind_days_cfg]
+        cds = load_countdowns()
+        changed = False
+        for cd in cds:
+            notified_days = cd.get("notified_days", [])
+            # Eski tek-flag sistemini geçişe uğrat
+            if cd.get("notified") and not notified_days:
+                notified_days = [1]
+            for remind_days in remind_days_cfg:
+                if remind_days in notified_days:
+                    continue
+                target_date = (_dt.now() + timedelta(days=remind_days)).strftime("%d/%m/%Y")
+                if cd.get("date","") != target_date:
+                    continue
+                name_cd = cd.get("name","Sinav")
+                cls_cd  = cd.get("cls","")
+                shft_cd = cd.get("shift","")
+                tgt_val = f"cls_{cls_cd}" if cls_cd else "all"
+                targets = get_target_users(tgt_val)
+                if shft_cd:
+                    shfts = load_shifts()
+                    targets = [u for u in targets if shfts.get(u,"") in (shft_cd,"sabah" if shft_cd=="sabahi" else "gece")]
+                day_lbl = "غداً" if remind_days == 1 else f"بعد {remind_days} أيام"
+                msg = f"⏰ تذكير بالامتحان\n\n📚 {name_cd}\n📅 {day_lbl} — {target_date}"
+                for uid_ in targets:
+                    try: await ctx.bot.send_message(int(uid_), msg)
+                    except: pass
+                try:
+                    await ctx.bot.send_message(ADMIN_ID,
+                        f"📋 Sinav bildirimi gönderildi\nSinav: {name_cd}\nTarih: {target_date}\nKisi: {len(targets)}")
+                except: pass
+                notified_days.append(remind_days)
+                cd["notified_days"] = notified_days
+                cd["notified"] = True
+                changed = True
+        if changed: save_countdowns(cds)
 
-        # Veri yok — admin sohbetindeki pinli mesajı bul ve geri yükle
-        restored = False
-        try:
-            chat   = await ctx.bot.get_chat(ADMIN_ID)
-            pinned = chat.pinned_message
-            if pinned and pinned.document:
-                fname = pinned.document.file_name or ""
-                cap   = pinned.caption or ""
-                if fname.startswith("tam_yedek_") or "AUTO_BACKUP" in cap:
-                    tg_file = await pinned.document.get_file()
-                    raw     = await tg_file.download_as_bytearray()
-                    ok, count, err = restore_full_backup(bytes(raw))
-                    if ok:
-                        await ctx.bot.send_message(
-                            ADMIN_ID,
-                            f"✅ Veriler otomatik geri yüklendi!\n"
-                            f"📦 {count} dosya → Telegram yedeğinden")
-                        restored = True
-                    else:
-                        logger.warning(f"Otomatik geri yükleme başarısız: {err}")
-        except Exception as e:
-            logger.warning(f"Startup geri yükleme hatası: {e}")
-
-        if not restored:
-            try:
-                await ctx.bot.send_message(ADMIN_ID, TR["data_missing_warn"])
-            except Exception:
-                pass
+    async def _check_lab_reminders(ctx):
+        """Laboratuvar gününden N gün önce grubu bildir (çoklu gün destekli)."""
+        from datetime import datetime as _dt, timedelta, date as _date
+        s_r = load_settings()
+        lab_days_cfg = s_r.get("lab_remind_days", [1])
+        if isinstance(lab_days_cfg, int): lab_days_cfg = [lab_days_cfg]
+        schedule = load_lab_schedule()
+        changed = False
+        for entry in schedule:
+            notified_days = entry.get("notified_days", [])
+            if entry.get("notified") and not notified_days:
+                notified_days = [1]
+            for lab_days in lab_days_cfg:
+                if lab_days in notified_days:
+                    continue
+                target_week = (_dt.now() + timedelta(days=lab_days)).strftime("%Y-%m-%d")
+                if entry.get("week") != target_week:
+                    continue
+                grp  = entry.get("group","?")
+                note = entry.get("note","")
+                day_lbl = "غداً" if lab_days == 1 else f"بعد {lab_days} أيام"
+                msg = (f"🔬 تذكير المختبر\n\n"
+                       f"📅 {day_lbl} يدخل: {grp}\n"
+                       + (f"📝 {note}" if note else ""))
+                grps_d  = load_groups()
+                users_d = load_users()
+                for uid_, u in users_d.items():
+                    if is_blocked(uid_): continue
+                    if grps_d.get(uid_,"") == grp:
+                        try: await ctx.bot.send_message(int(uid_), msg)
+                        except: pass
+                try: await ctx.bot.send_message(ADMIN_ID, f"🔬 Lab {day_lbl}: {grp}")
+                except: pass
+                admins_list = load_admins()
+                for adm in admins_list:
+                    try: await ctx.bot.send_message(adm, f"🔬 Lab {day_lbl}: {grp}")
+                    except: pass
+                notified_days.append(lab_days)
+                entry["notified_days"] = notified_days
+                entry["notified"] = True
+                changed = True
+        if changed: save_lab_schedule(schedule)
 
     job_queue = app.job_queue
     if job_queue:
-        job_queue.run_repeating(_check_reminders, interval=60, first=10)
-        job_queue.run_once(_startup_check,        when=5)
+        job_queue.run_repeating(_check_reminders, interval=30, first=5)
+        job_queue.run_repeating(_check_exam_reminders, interval=3600, first=30)
+        job_queue.run_repeating(_check_lab_reminders, interval=3600, first=60)
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
 
-    app.run_polling(drop_pending_updates=True)
+    # ── Startup: otomatik yedek geri yükleme ────────────────
+    async def _startup_restore(application):
+        if load_users():
+            return  # Veri zaten var, geri yüklemeye gerek yok
+        try:
+            chat = await application.bot.get_chat(ADMIN_ID)
+            pinned = chat.pinned_message
+            if pinned and pinned.document:
+                fname = pinned.document.file_name or ""
+                if fname.startswith("tam_yedek_"):
+                    logger.info("Startup: pinned backup found, restoring...")
+                    f_obj = await application.bot.get_file(pinned.document.file_id)
+                    raw   = await f_obj.download_as_bytearray()
+                    ok, count, err = restore_full_backup(bytes(raw))
+                    if ok:
+                        logger.info(f"Startup restore: {count} files restored")
+                        await application.bot.send_message(
+                            ADMIN_ID, TR["restore_done"].format(count=count))
+                    else:
+                        logger.warning(f"Startup restore failed: {err}")
+        except Exception as e:
+            logger.warning(f"Startup restore check failed: {e}")
+
+    app.post_init = _startup_restore
+
+    # Mevcut webhook varsa sil — run_polling başlamadan önce
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message","callback_query","my_chat_member"],
+    )
 
 if __name__ == "__main__":
     main()
