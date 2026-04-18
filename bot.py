@@ -2756,11 +2756,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await update.message.delete()
     except: pass
 
-    # Bakım modu kontrolü (kullanıcılar için)
-    if not is_admin(uid) and s["maintenance"]:
-        await update.message.chat.send_message(
-            s.get("maintenance_text", "🔧"),
-            reply_markup=reply_kb(uid))
+    # Bakım / Güncelleme modu kontrolü (kullanıcılar için)
+    if not is_admin(uid) and (s.get("maintenance") or s.get("update_mode")):
+        msg_text = s.get("maintenance_text" if s.get("maintenance") else "update_mode_text",
+                         "🔧 البوت قيد الصيانة...")
+        await update.message.chat.send_message(msg_text, reply_markup=reply_kb(uid))
         return
 
     # Klavyeyi gönder
@@ -3407,6 +3407,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if is_blocked(uid) and not adm: return ConversationHandler.END
     if not is_main_admin(uid):
         s = load_settings()
+        # Callbacks allowed during any restricted mode (lab+exam flow only)
+        def _mode_cb_ok(cb):
+            return (cb.startswith("countdown|") or cb.startswith("lab|") or
+                    cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
+                    cb.startswith("group_pick|") or cb == "class_change" or
+                    cb == "group_pick_start")
         if s.get("maintenance"):
             if adm:
                 # İkincil admin — tam bakımda bloklanır
@@ -3417,25 +3423,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 if when: msg += f" | {when}"
                 await query.answer(msg, show_alert=True)
                 return ConversationHandler.END
-            else:
-                _maint_ok = (
-                    cb.startswith("countdown|") or cb.startswith("lab|") or
-                    cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
-                    cb.startswith("group_pick|") or cb == "class_change" or
-                    cb == "group_pick_start"
-                )
-                if not _maint_ok:
-                    await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
-                    return ConversationHandler.END
+            elif not _mode_cb_ok(cb):
+                await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
+                return ConversationHandler.END
         elif s.get("update_mode") and not adm:
-            # Güncelleme modu — sadece kullanıcılar bloklanır
-            _um_ok = (
-                cb.startswith("countdown|") or cb.startswith("lab|") or
-                cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
-                cb.startswith("group_pick|") or cb == "class_change" or
-                cb == "group_pick_start"
-            )
-            if not _um_ok:
+            # Güncelleme modu — sadece kullanıcılar bloklanır, aynı kural
+            if not _mode_cb_ok(cb):
                 await query.answer(s.get("update_mode_text","🔄"), show_alert=True)
                 return ConversationHandler.END
 
@@ -7903,6 +7896,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     # Engellenmiş kullanıcı
     if is_blocked(uid) and not is_admin(uid):
         return ConversationHandler.END
+
+    # Bakım / Güncelleme modu — kullanıcılar tamamen bloklanır
+    if not is_admin(uid):
+        _s_ht = load_settings()
+        if _s_ht.get("maintenance"):
+            await update.message.reply_text(_s_ht.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+            return ConversationHandler.END
+        elif _s_ht.get("update_mode"):
+            await update.message.reply_text(_s_ht.get("update_mode_text", "🔄 البوت في وضع التحديث..."))
+            return ConversationHandler.END
 
     action = context.user_data.get("action","")
 
