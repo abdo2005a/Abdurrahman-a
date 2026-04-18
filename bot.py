@@ -1995,7 +1995,7 @@ def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
                    "search": "E8F5E9", "ai_query": "E3F2FD"}
     for r, m in enumerate(msgs_d.get(uid_, []), 2):
         color = TYPE_COLORS.get(m.get("type", ""), ("F9F9F9" if r % 2 == 0 else None))
-        _excel_row(ws2, r, [m.get("time", ""), m.get("type", ""), m.get("text", "")[:200]], color)
+        _excel_row(ws2, r, [m.get("time", ""), m.get("type", ""), m.get("content", m.get("text", ""))[:300]], color)
     _auto_col_width(ws2)
 
     # Sayfa 3: Uyarılar
@@ -2065,12 +2065,35 @@ def log_admin_activity(admin_uid: str, action_type: str, detail: dict):
 def get_sender_label(sender_uid: str) -> str:
     """Returns display label for poll/broadcast sender."""
     if str(sender_uid) == str(ADMIN_ID):
-        return "مشرف البوت"  # Bot supervisor
+        return "منشئ البوت"
     users_d = load_users()
     u = users_d.get(str(sender_uid), {})
     name = u.get("full_name") or u.get("first_name") or f"ID:{sender_uid}"
-    un = f" @{u['username']}" if u.get("username") else ""
-    return f"مسؤول الفصل: {name}{un}"
+    un = f" (@{u['username']})" if u.get("username") else ""
+    return f"{name}{un}"
+
+def fmt_bcast(header_emoji: str, header_ar: str, body: str, sender_uid: str, ts: str = None) -> str:
+    """Clean broadcast format — no box borders."""
+    from datetime import datetime as _dt
+    t = ts or datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+    sender = get_sender_label(sender_uid)
+    return (
+        f"{header_emoji} {header_ar}\n\n"
+        f"{body}\n\n"
+        f"▸ 👤 {sender}\n"
+        f"▸ 🕐 {t}"
+    )
+
+def fmt_dm(body: str, sender_uid: str) -> str:
+    """Clean DM format with sender attribution."""
+    t = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+    sender = get_sender_label(sender_uid)
+    return (
+        f"💌 رسالة شخصية\n"
+        f"▸ من: {sender}\n\n"
+        f"{body}\n\n"
+        f"▸ 🕐 {t}"
+    )
 
 # ── Uyarı Sistemi ─────────────────────────────────────────────
 def get_warns(uid: str) -> list:
@@ -4516,11 +4539,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             WEEKDAYS_FV = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
             if 0 <= idx_fv < len(fixed_fv):
                 f_fv = fixed_fv[idx_fv]
+                _fv_grps = f_fv.get("groups", [f_fv.get("group","—")])
+                _fv_rot  = "🔄 تناوب أسبوعي" if f_fv.get("rotation") else "📅 كل أسبوع"
                 txt_fv = (
                     f"📌 Sabit Lab Şablonu\n\n"
                     f"🔬 Ad: {f_fv.get('name','—')}\n"
                     f"📅 Gün: {WEEKDAYS_FV.get(f_fv.get('weekday',0),'—')}\n"
-                    f"👥 Grup: {f_fv.get('group','—')}"
+                    f"👥 Gruplar: {', '.join(_fv_grps)}\n"
+                    f"🔁 Mod: {_fv_rot}"
                 )
                 kb_fv = [[InlineKeyboardButton("🗑 Sil", callback_data=f"lab|fixed_del|{idx_fv}"),
                            InlineKeyboardButton("◀️ Geri", callback_data="lab|fixed_panel")]]
@@ -4631,7 +4657,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb_fp = []
             for i, f in enumerate(fixed):
                 day_name = WEEKDAYS_TR.get(f.get("weekday",0),"?")
-                lbl = f"{f.get('name','?')[:20]} — {day_name} [{f.get('group','?')}]"
+                _fp_grps = f.get("groups", [f.get("group","?")])
+                _fp_rot  = "🔄" if f.get("rotation") else "📅"
+                lbl = f"{f.get('name','?')[:18]} {_fp_rot} {day_name} [{','.join(_fp_grps)}]"
                 kb_fp.append([
                     InlineKeyboardButton(f"📌 {lbl}", callback_data=f"lab|fixed_view|{i}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i}"),
@@ -4660,7 +4688,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb_fd2 = []
             for i2, f2 in enumerate(fixed_d):
                 day_name2 = WEEKDAYS_TR2.get(f2.get("weekday",0),"?")
-                lbl2 = f"{f2.get('name','?')[:20]} — {day_name2} [{f2.get('group','?')}]"
+                _fd2_grps = f2.get("groups", [f2.get("group","?")])
+                _fd2_rot  = "🔄" if f2.get("rotation") else "📅"
+                lbl2 = f"{f2.get('name','?')[:18]} {_fd2_rot} {day_name2} [{','.join(_fd2_grps)}]"
                 kb_fd2.append([
                     InlineKeyboardButton(f"📌 {lbl2}", callback_data=f"lab|fixed_view|{i2}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i2}"),
@@ -4675,7 +4705,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if lab_act == "fixed_day":
             day_idx = int(lab_parts[2]) if len(lab_parts) > 2 else 0
             context.user_data["lab_fixed_weekday"] = day_idx
-            # Şimdi grup seç
+            context.user_data["lab_fixed_groups"]  = []   # multi-select list
+            # Build group toggle keyboard
             grps_cfg2 = load_class_groups()
             all_grps2 = set()
             for cls_dv in grps_cfg2.values():
@@ -4683,34 +4714,118 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     if isinstance(sft_dv, dict):
                         for g_key in sft_dv:
                             all_grps2.add(g_key)
-                        for subs2 in sft_dv.values():
-                            if isinstance(subs2, list):
-                                all_grps2.update(subs2)
+            sorted_grps = sorted(all_grps2) or ["A","B","C"]
             kb_fg = []
             row_fg = []
-            for g_opt in sorted(all_grps2):
-                row_fg.append(InlineKeyboardButton(g_opt, callback_data=f"lab|fixed_grp|{g_opt}"))
-                if len(row_fg) == 4:
+            for g_opt in sorted_grps:
+                row_fg.append(InlineKeyboardButton(f"⬜ {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
+                if len(row_fg) == 3:
                     kb_fg.append(row_fg); row_fg = []
             if row_fg: kb_fg.append(row_fg)
-            kb_fg.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
-            await query.edit_message_text("👥 Lab grubu seç:", reply_markup=InlineKeyboardMarkup(kb_fg))
+            kb_fg.append([InlineKeyboardButton("🔄 تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
+                          InlineKeyboardButton("📅 كل أسبوع", callback_data="lab|fixed_rotation|0")])
+            kb_fg.append([InlineKeyboardButton("✅ حفظ", callback_data="lab|fixed_save"),
+                          InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            await query.edit_message_text(
+                "👥 اختر المجموعات (يمكن اختيار أكثر من واحدة):",
+                reply_markup=InlineKeyboardMarkup(kb_fg))
             return ConversationHandler.END
 
-        if lab_act == "fixed_grp":
-            grp_val = lab_parts[2] if len(lab_parts) > 2 else ""
-            fname   = context.user_data.pop("lab_fixed_name", "")
-            weekday = context.user_data.pop("lab_fixed_weekday", 0)
-            fixed_new = load_lab_fixed()
-            fixed_new.append({"name": fname, "weekday": weekday, "group": grp_val})
-            save_lab_fixed(fixed_new)
+        if lab_act == "fixed_tgrp":
+            # Toggle group selection
+            grp_t = lab_parts[2] if len(lab_parts) > 2 else ""
+            sel   = context.user_data.get("lab_fixed_groups", [])
+            if grp_t in sel: sel.remove(grp_t)
+            else:            sel.append(grp_t)
+            context.user_data["lab_fixed_groups"] = sel
+            # Rebuild group keyboard with current selections
+            grps_cfg3 = load_class_groups()
+            all_grps3 = set()
+            for cls_dv in grps_cfg3.values():
+                for sft_dv in cls_dv.values():
+                    if isinstance(sft_dv, dict):
+                        for g_key in sft_dv:
+                            all_grps3.add(g_key)
+            sorted_grps3 = sorted(all_grps3) or ["A","B","C"]
+            rotation = context.user_data.get("lab_fixed_rotation", False)
+            kb_t = []
+            row_t = []
+            for g_opt in sorted_grps3:
+                icon = "✅" if g_opt in sel else "⬜"
+                row_t.append(InlineKeyboardButton(f"{icon} {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
+                if len(row_t) == 3:
+                    kb_t.append(row_t); row_t = []
+            if row_t: kb_t.append(row_t)
+            rot_icon = "✅" if rotation else "⬜"
+            kb_t.append([InlineKeyboardButton(f"{rot_icon} تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
+                         InlineKeyboardButton("📅 كل أسبوع", callback_data="lab|fixed_rotation|0")])
+            sel_txt = ", ".join(sel) if sel else "—"
+            kb_t.append([InlineKeyboardButton(f"✅ حفظ [{sel_txt}]", callback_data="lab|fixed_save"),
+                         InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            await query.edit_message_text(
+                f"👥 المجموعات المختارة: {sel_txt}",
+                reply_markup=InlineKeyboardMarkup(kb_t))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_rotation":
+            rotation = (lab_parts[2] == "1") if len(lab_parts) > 2 else False
+            context.user_data["lab_fixed_rotation"] = rotation
+            # Rebuild keyboard
+            sel = context.user_data.get("lab_fixed_groups", [])
+            grps_cfg4 = load_class_groups()
+            all_grps4 = set()
+            for cls_dv in grps_cfg4.values():
+                for sft_dv in cls_dv.values():
+                    if isinstance(sft_dv, dict):
+                        for g_key in sft_dv: all_grps4.add(g_key)
+            sorted_grps4 = sorted(all_grps4) or ["A","B","C"]
+            kb_r = []
+            row_r = []
+            for g_opt in sorted_grps4:
+                icon = "✅" if g_opt in sel else "⬜"
+                row_r.append(InlineKeyboardButton(f"{icon} {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
+                if len(row_r) == 3:
+                    kb_r.append(row_r); row_r = []
+            if row_r: kb_r.append(row_r)
+            rot_icon = "✅" if rotation else "⬜"
+            kb_r.append([InlineKeyboardButton(f"{rot_icon} تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
+                         InlineKeyboardButton("📅 كل أسبوع", callback_data="lab|fixed_rotation|0")])
+            sel_txt = ", ".join(sel) if sel else "—"
+            kb_r.append([InlineKeyboardButton(f"✅ حفظ [{sel_txt}]", callback_data="lab|fixed_save"),
+                         InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            mode_txt = "تناوب أسبوعي ✅" if rotation else "كل أسبوع (جميع المجموعات)"
+            await query.edit_message_text(
+                f"👥 المجموعات: {sel_txt}\n🔄 الوضع: {mode_txt}",
+                reply_markup=InlineKeyboardMarkup(kb_r))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_save":
+            fname    = context.user_data.pop("lab_fixed_name", "")
+            weekday  = context.user_data.pop("lab_fixed_weekday", 0)
+            groups   = context.user_data.pop("lab_fixed_groups", [])
+            rotation = context.user_data.pop("lab_fixed_rotation", False)
+            if not groups:
+                await query.answer("⚠️ اختر مجموعة واحدة على الأقل", show_alert=True)
+                return ConversationHandler.END
             WEEKDAYS_TR3 = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
-            await query.answer(f"✅ {fname} — {WEEKDAYS_TR3.get(weekday,'?')} [{grp_val}]", show_alert=True)
+            fixed_new = load_lab_fixed()
+            fixed_new.append({
+                "name":           fname,
+                "weekday":        weekday,
+                "groups":         groups,
+                "rotation":       rotation,
+                "rotation_index": 0,
+            })
+            save_lab_fixed(fixed_new)
+            grps_txt = ", ".join(groups)
+            await query.answer(f"✅ {fname} — {WEEKDAYS_TR3.get(weekday,'?')} [{grps_txt}]", show_alert=True)
             # Rebuild fixed panel
             kb_fg2 = []
             for i3, f3 in enumerate(fixed_new):
-                day3 = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
-                lbl3 = f"{f3.get('name','?')[:20]} — {day3} [{f3.get('group','?')}]"
+                day3  = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
+                grps3 = f3.get("groups", [f3.get("group","?")])
+                rot3  = "🔄" if f3.get("rotation") else "📅"
+                lbl3  = f"{f3.get('name','?')[:18]} {rot3} {day3} [{','.join(grps3)}]"
                 kb_fg2.append([
                     InlineKeyboardButton(f"📌 {lbl3}", callback_data=f"lab|fixed_view|{i3}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i3}"),
@@ -5605,7 +5720,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.edit_message_text(f"👥 {cls_name} / {sft_lbl} — Grup Seç:", reply_markup=InlineKeyboardMarkup(kb))
                 return ConversationHandler.END
 
-            # Adım 3: Liste göster
+            # Adım 3: Liste göster (sayfalama: parts[5] = page offset)
+            page_off = int(parts[5]) if len(parts) > 5 and parts[5].lstrip("-").isdigit() else 0
+            PAGE_SZ  = 25
             result = []
             for uid_, u in u_d.items():
                 if int(uid_) == ADMIN_ID: continue
@@ -5616,15 +5733,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     if sft_f == "sabahi" and us not in ("sabahi","sabah"): continue
                     if sft_f == "masaiy" and us not in ("masaiy","gece"): continue
                 if grp_f not in ("_","all"):
-                    if not grps_d.get(uid_,"").startswith(grp_f): continue
+                    ug = grps_d.get(uid_,"")
+                    if ug != grp_f and not ug.startswith(grp_f + "_"): continue
                 result.append((uid_, u))
 
             if not result:
-                await query.answer("Bu filtrede kullanıcı yok", show_alert=True)
+                back_cb0 = f"mgmt|ulist|{cls_f}|{sft_f}|_" if grp_f not in ("_","all") else f"mgmt|ulist|{cls_f}|_|_" if sft_f != "_" else "mgmt|users"
+                await query.edit_message_text(
+                    "لا يوجد مستخدمون بهذه الفلاتر.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data=back_cb0)]]))
                 return ConversationHandler.END
 
+            page_result = result[page_off: page_off + PAGE_SZ]
             kb = []
-            for uid_, u in result[:40]:
+            for uid_, u in page_result:
                 name   = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
                 un     = f" @{u['username']}" if u.get("username") else ""
                 grp_s  = grps_d.get(uid_,"?")
@@ -5634,10 +5756,18 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(
                     f"{adm_mk}👤 {name}{un} {sft_s}[{cls_s}/{grp_s}]",
                     callback_data=f"user|info|{uid_}")])
+            # Pagination row
+            nav_row = []
+            if page_off > 0:
+                nav_row.append(InlineKeyboardButton("◀◀", callback_data=f"mgmt|ulist|{cls_f}|{sft_f}|{grp_f}|{page_off - PAGE_SZ}"))
+            if page_off + PAGE_SZ < len(result):
+                nav_row.append(InlineKeyboardButton("▶▶", callback_data=f"mgmt|ulist|{cls_f}|{sft_f}|{grp_f}|{page_off + PAGE_SZ}"))
+            if nav_row: kb.append(nav_row)
             back_cb = f"mgmt|ulist|{cls_f}|{sft_f}|_" if grp_f not in ("_","all") else f"mgmt|ulist|{cls_f}|_|_" if sft_f != "_" else "mgmt|users"
             kb.append([InlineKeyboardButton("◀️ Geri", callback_data=back_cb)])
+            shown_start = page_off + 1; shown_end = page_off + len(page_result)
             await query.edit_message_text(
-                f"👥 {len(result)} kullanıcı:",
+                f"👥 {len(result)} kullanıcı ({shown_start}–{shown_end}):",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -5821,35 +5951,33 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 recent.append(f"  {icon} {t}  {c}")
 
             info = (
-                f"╔══════════════════════════╗\n"
-                f"  👤  {name}\n"
-                f"  🔗  {un}\n"
-                f"  🆔  {target}\n"
-                f"  🎓  {TR['class_label'].format(cls)}\n"
-                f"  📅  {last}\n"
-                f"  🚫  Engel: {'✅' if blkd else '❌'}\n"
-                f"  ⚠️   Uyarı: {len(warns_list)}/{MAX_WARNS}\n"
+                f"👤  {name}\n"
+                f"🔗  {un}\n"
+                f"🆔  {target}\n"
+                f"🎓  {TR['class_label'].format(cls)}\n"
+                f"📅  {last}\n"
+                f"🚫  Engel: {'✅' if blkd else '❌'}\n"
+                f"⚠️  Uyarı: {len(warns_list)}/{MAX_WARNS}\n"
             )
             if note:
-                info += f"  📝  Not: {note[:60]}\n"
+                info += f"📝  Not: {note[:60]}\n"
             info += (
-                f"╠══════════════════════════╣\n"
-                f"  📊  Toplam: {total}\n"
-                f"  ✍️   Mesaj: {type_counts.get('msg',0)}\n"
-                f"  🔍  Arama: {type_counts.get('search',0)}\n"
-                f"  👁   Görüntüleme: {type_counts.get('file_view',0)}\n"
-                f"  🖼   Medya: {media_cnt}\n"
+                f"\n"
+                f"📊  Toplam: {total}\n"
+                f"✍️  Mesaj: {type_counts.get('msg',0)}\n"
+                f"🔍  Arama: {type_counts.get('search',0)}\n"
+                f"👁  Görüntüleme: {type_counts.get('file_view',0)}\n"
+                f"🖼  Medya: {media_cnt}\n"
             )
             if searches:
-                info += f"╠══════════════════════════╣\n  🔍  Son Aramalar:\n"
-                for s_ in searches: info += f"     • {s_[:35]}\n"
+                info += f"\n🔍 Son Aramalar:\n"
+                for s_ in searches: info += f"  • {s_[:35]}\n"
             if top_viewed:
-                info += f"  👁   Çok Açılan:\n"
-                for fname, cnt in top_viewed: info += f"     • {fname[:30]} ({cnt}×)\n"
+                info += f"👁 Çok Açılan:\n"
+                for fname, cnt in top_viewed: info += f"  • {fname[:30]} ({cnt}×)\n"
             if recent:
-                info += f"╠══════════════════════════╣\n  🕐  Son Aktivite:\n"
+                info += f"\n🕐 Son Aktivite:\n"
                 for line in recent[-5:]: info += f"{line}\n"
-            info += "╚══════════════════════════╝"
 
             media_files = [m for m in msgs if m.get("file_id") and
                            m["type"] in ("photo","video","document","audio","voice","animation")]
@@ -8122,8 +8250,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         else:
             targets = [u for u in load_users() if int(u) != ADMIN_ID]
         targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
-        _sadmin_sender_lbl = get_sender_label(uid)
-        btext = f"📢 إعلان\n\n{text}\n\n👤 {_sadmin_sender_lbl}\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        btext = fmt_bcast("📢", "إعلان رسمي", text, uid)
         success = 0
         for uid_ in targets:
             try: await context.bot.send_message(int(uid_), btext); success += 1
@@ -8901,13 +9028,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if action == "dm_msg" and is_main_admin(uid):
         target = context.user_data.get("dm_target")
         if not target: await update.message.reply_text(TR["dm_no_target"]); return ConversationHandler.END
-        dm_formatted = (
-            f"💌  رسالة شخصية\n"
-            f"\n"
-            f"{text}\n"
-            f"\n"
-            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        )
+        dm_formatted = fmt_dm(text, uid)
         try:
             await context.bot.send_message(int(target), dm_formatted)
             await update.message.reply_text(TR["dm_sent"].format(target))
@@ -8924,19 +9045,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         users = load_users(); success = fail = 0
         all_targets = include_admins_in_targets(
             [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)])
-        sender_lbl = get_sender_label(uid)
         for uid_ in all_targets:
             if int(uid_) == ADMIN_ID: continue
             try:
-                bcast_msg = (
-                    f"╔══════════════════════╗\n"
-                    f"  📢  إعلان رسمي\n"
-                    f"╠══════════════════════╣\n\n"
-                    f"{text}\n\n"
-                    f"╚══════════════════════╝\n"
-                    f"  👤  {sender_lbl}\n"
-                    f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-                )
+                bcast_msg = fmt_bcast("📢", "إعلان رسمي", text, uid)
                 await context.bot.send_message(int(uid_), bcast_msg); success += 1
             except: fail += 1
         await update.message.reply_text(TR["broadcast_done"].format(success,fail))
@@ -8960,16 +9072,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if action == "msgsel_send" and is_main_admin(uid):
         sel = context.user_data.pop("msgsel_targets", [])
         success = fail = 0
-        _msgsel_sender_lbl = get_sender_label(uid)
-        bcast_msg = (
-            f"╔══════════════════════╗\n"
-            f"  📨  رسالة مخصصة\n"
-            f"╠══════════════════════╣\n\n"
-            f"{text}\n\n"
-            f"╚══════════════════════╝\n"
-            f"  👤  {_msgsel_sender_lbl}\n"
-            f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        )
+        bcast_msg = fmt_bcast("📨", "رسالة مخصصة", text, uid)
         for uid_ in sel:
             try:
                 await context.bot.send_message(int(uid_), bcast_msg)
@@ -9168,13 +9271,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if action == "broadcast" and is_main_admin(uid):
         users = load_users(); success = fail = 0
         cap_raw  = msg.caption or ""
-        cap_text = (
-            f"📢  إعلان رسمي\n"
-            f"\n"
-            f"{cap_raw}\n"
-            f"\n"
-            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        ) if cap_raw else None
+        cap_text = fmt_bcast("📢", "إعلان رسمي", cap_raw, uid) if cap_raw else \
+                   fmt_bcast("📢", "إعلان رسمي", "", uid)
         for uid_,u in users.items():
             if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
             try:
@@ -9192,13 +9290,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if action == "dm_msg" and is_main_admin(uid):
         target = context.user_data.get("dm_target"); cap_raw = msg.caption or ""
         if not target: await msg.reply_text(TR["dm_no_target"]); return ConversationHandler.END
-        cap_text = (
-            f"💌  رسالة شخصية\n"
-            f"\n"
-            f"{cap_raw}\n"
-            f"\n"
-            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        ) if cap_raw else None
+        cap_text = fmt_dm(cap_raw, uid) if cap_raw else fmt_dm("", uid)
         try:
             if   msg.photo:     await context.bot.send_photo(int(target),    msg.photo[-1].file_id, caption=cap_text)
             elif msg.video:     await context.bot.send_video(int(target),    msg.video.file_id,     caption=cap_text)
