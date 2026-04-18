@@ -2846,14 +2846,24 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("🚫 تم حظرك من استخدام البوت.")
         return
 
-    # Bakım modu — sadece Lab ve Sınav butonlarına izin ver
-    if not is_admin(uid):
+    # Bakım modu — sadece ana admin kullanabilir; diğerleri Lab/Sınav hariç bloklanır
+    if not is_main_admin(uid):
         s_maint = load_settings()
         if s_maint.get("maintenance"):
-            allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
-            if text not in allowed_maint:
-                await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+            if is_admin(uid):
+                # İkincil admin — sadece bilgilendirme
+                by   = s_maint.get("maintenance_by_name", "")
+                when = s_maint.get("maintenance_time", "")
+                msg  = f"🔧 البوت في وضع الصيانة"
+                if by: msg += f"\nبواسطة: {by}"
+                if when: msg += f"\nمنذ: {when}"
+                await update.message.reply_text(msg)
                 return
+            else:
+                allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
+                if text not in allowed_maint:
+                    await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+                    return
 
     # Kullanıcı/alt-admin buton seçimini kaydet
     if not is_main_admin(uid) and not is_blocked(uid):
@@ -3251,7 +3261,18 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Bakım (tüm adminler) ─────────────────────────
     if text in (TR["btn_maint"], AR["btn_maint"]):
-        s = load_settings(); s["maintenance"] = not s["maintenance"]; save_settings(s)
+        s = load_settings()
+        s["maintenance"] = not s["maintenance"]
+        if s["maintenance"]:
+            u_maint = load_users().get(uid, {})
+            s["maintenance_by"]   = uid
+            s["maintenance_by_name"] = u_maint.get("full_name") or u_maint.get("first_name") or f"ID:{uid}"
+            s["maintenance_time"] = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+        else:
+            s.pop("maintenance_by", None)
+            s.pop("maintenance_by_name", None)
+            s.pop("maintenance_time", None)
+        save_settings(s)
         durum = L(uid,"maint_on_str") if s["maintenance"] else L(uid,"maint_off_str")
         await update.message.reply_text(L(uid,"maint_toggle").format(durum))
         return
@@ -3260,7 +3281,13 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_main_admin(uid): return
 
     if text == TR["btn_mgmt"]:
+        _s_mgmt = load_settings()
+        _maint_on = _s_mgmt.get("maintenance", False)
+        _maint_by = _s_mgmt.get("maintenance_by_name", "")
+        _maint_t  = _s_mgmt.get("maintenance_time", "")
+        _maint_lbl = f"🔧 Bakım AÇIK — {_maint_by} ({_maint_t})" if _maint_on and _maint_by else ("🔧 Bakım AÇIK" if _maint_on else "✅ Bakım KAPALI")
         kb = [
+            [InlineKeyboardButton(_maint_lbl,             callback_data="mgmt|toggle_maint")],
             [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
              InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
             [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
@@ -3339,21 +3366,31 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user = query.from_user; uid = str(user.id); adm = is_admin(uid); cb = query.data
 
     if is_blocked(uid) and not adm: return ConversationHandler.END
-    if not adm:
+    if not is_main_admin(uid):
         s = load_settings()
-        if s["maintenance"]:
-            _maint_ok = (
-                cb.startswith("countdown|") or
-                cb.startswith("lab|") or
-                cb.startswith("class_pick|") or
-                cb.startswith("shift_pick|") or
-                cb.startswith("group_pick|") or
-                cb == "class_change" or
-                cb == "group_pick_start"
-            )
-            if not _maint_ok:
-                await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
+        if s.get("maintenance"):
+            if adm:
+                # İkincil admin — inline butonları çalışmaz, bilgilendirme
+                by   = s.get("maintenance_by_name", "")
+                when = s.get("maintenance_time", "")
+                msg  = "🔧 البوت في وضع الصيانة"
+                if by: msg += f" (بواسطة: {by})"
+                if when: msg += f" | {when}"
+                await query.answer(msg, show_alert=True)
                 return ConversationHandler.END
+            else:
+                _maint_ok = (
+                    cb.startswith("countdown|") or
+                    cb.startswith("lab|") or
+                    cb.startswith("class_pick|") or
+                    cb.startswith("shift_pick|") or
+                    cb.startswith("group_pick|") or
+                    cb == "class_change" or
+                    cb == "group_pick_start"
+                )
+                if not _maint_ok:
+                    await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
+                    return ConversationHandler.END
 
     content = load_content()
     path    = context.user_data.get("path", [])
@@ -5059,7 +5096,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         elif action == "mgmt_panel":
             # Yönetim panelini inline göster (süper admin)
             if is_main_admin(uid):
+                _s_mp = load_settings()
+                _mp_on  = _s_mp.get("maintenance", False)
+                _mp_by  = _s_mp.get("maintenance_by_name", "")
+                _mp_t   = _s_mp.get("maintenance_time", "")
+                _mp_lbl = (f"🔧 Bakım AÇIK — {_mp_by} ({_mp_t})" if _mp_on and _mp_by
+                           else ("🔧 Bakım AÇIK" if _mp_on else "✅ Bakım KAPALI"))
                 kb = [
+                    [InlineKeyboardButton(_mp_lbl,                callback_data="mgmt|toggle_maint")],
                     [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                      InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
                     [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
@@ -5235,6 +5279,52 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text(
                 f"🔬 Lab Programı\n(Bugün: {today_str})",
                 reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action == "toggle_maint":
+            _s_tm = load_settings()
+            _s_tm["maintenance"] = not _s_tm.get("maintenance", False)
+            if _s_tm["maintenance"]:
+                _s_tm["maintenance_by"]      = uid
+                _s_tm["maintenance_by_name"] = load_users().get(uid,{}).get("full_name") or load_users().get(uid,{}).get("first_name") or f"ID:{uid}"
+                _s_tm["maintenance_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+            else:
+                _s_tm.pop("maintenance_by", None)
+                _s_tm.pop("maintenance_by_name", None)
+                _s_tm.pop("maintenance_time", None)
+            save_settings(_s_tm)
+            _tm_on  = _s_tm["maintenance"]
+            _tm_by  = _s_tm.get("maintenance_by_name", "")
+            _tm_t   = _s_tm.get("maintenance_time", "")
+            _tm_lbl = (f"🔧 Bakım AÇIK — {_tm_by} ({_tm_t})" if _tm_on and _tm_by
+                       else ("🔧 Bakım AÇIK" if _tm_on else "✅ Bakım KAPALI"))
+            await query.answer(f"{'🔧 Bakım AÇILDI' if _tm_on else '✅ Bakım KAPATILDI'}", show_alert=True)
+            # Yönetim panelini güncelle
+            kb_tm = [
+                [InlineKeyboardButton(_tm_lbl,                callback_data="mgmt|toggle_maint")],
+                [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
+                 InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+                [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+                 InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
+                [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
+                [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
+                 InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
+                [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
+                 InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
+                [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
+                 InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
+                 InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
+                [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+                 InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+                [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
+                 InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+                 InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+            ]
+            await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tm))
             return ConversationHandler.END
 
         if action == "admin_log_export":
