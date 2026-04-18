@@ -2275,6 +2275,11 @@ ALL_BTNS = {
     TR["anon_q_btn"],    AR["anon_q_btn"],
     TR["countdown_btn"], AR["countdown_btn"],
     TR["quiz_btn"],      AR["quiz_btn"],
+    TR["rules_btn"],     AR["rules_btn"],
+    "\U0001f52c \u0627\u0644\u0645\u062e\u062a\u0628\u0631",
+    "🔬 المختبر",
+    "🔄 وضع التحديث",
+    "🔄 إيقاف التحديث ✅",
 }
 
 # ================================================================
@@ -4565,6 +4570,104 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     InlineKeyboardButton("✏️ يكتب", callback_data="notes|edit"),
                     InlineKeyboardButton(L(uid,"back"), callback_data="nav|root"),
                 ]]))
+            return WAIT_FOLDER
+
+        if action_n == "pick_subject":
+            context.user_data["action"] = "note_subject_input"
+            context.user_data.pop("note_subject", None)
+            context.user_data.pop("note_mode", None)
+            await query.edit_message_text(
+                "📝 اكتب اسم الدرس (أو . للتخطي):",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+                ]]))
+            return WAIT_FOLDER
+
+        if action_n == "sel_subj":
+            subject = "|".join(parts_n[2:]) if len(parts_n) > 2 else ""
+            context.user_data["note_subject"] = subject
+            context.user_data["action"] = "note_taking"
+            kb = [[InlineKeyboardButton("🔒 حفظ وإنهاء", callback_data="notes|done")]]
+            sent = await query.edit_message_text(
+                f"📖 {subject or 'ملاحظة'}\n\nاكتب ملاحظاتك:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action_n == "subject":
+            subject = "|".join(parts_n[2:]) if len(parts_n) > 2 else "أخرى"
+            notes = [n for n in get_user_notes(uid) if n.get("subject","أخرى") == subject]
+            kb = []
+            for n in notes[-10:]:
+                icon = {"text":"✍️","photo":"🖼","voice":"🎙","document":"📄","video":"🎥"}.get(n["type"],"📌")
+                cap  = n.get("content","")[:22] or n["type"]
+                kb.append([
+                    InlineKeyboardButton(f"{icon} {cap}", callback_data=f"notes|view|{n['id']}"),
+                    InlineKeyboardButton("🗑", callback_data=f"notes|del|{n['id']}"),
+                ])
+            kb.append([InlineKeyboardButton("➕", callback_data="notes|pick_subject"),
+                       InlineKeyboardButton("◀️", callback_data="nav|root")])
+            await query.edit_message_text(
+                f"📖 {subject} ({len(notes)})",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if action_n == "add":
+            # Sadece metin notu
+            context.user_data["action"] = "note_taking"
+            context.user_data.setdefault("note_subject","")
+            kb = [[InlineKeyboardButton("🔒 حفظ وإنهاء", callback_data="notes|done")]]
+            await query.edit_message_text(
+                "✍️ اكتب ملاحظاتك:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if action_n == "view":
+            note_id = parts_n[2] if len(parts_n) > 2 else ""
+            notes = get_user_notes(uid)
+            note = next((n for n in notes if n.get("id") == note_id), None)
+            if not note:
+                await query.answer("❌", show_alert=True); return ConversationHandler.END
+            fid = note.get("file_id")
+            cap = note.get("content","") + f"\n🕐 {note.get('time','')}"
+            kb = [[InlineKeyboardButton("🗑 حذف", callback_data=f"notes|del|{note_id}"),
+                   InlineKeyboardButton("◀️", callback_data="nav|root")]]
+            try:
+                ntype = note.get("type","text")
+                if ntype == "photo" and fid:
+                    await query.message.reply_photo(fid, caption=cap, reply_markup=InlineKeyboardMarkup(kb))
+                elif ntype == "video" and fid:
+                    await query.message.reply_video(fid, caption=cap, reply_markup=InlineKeyboardMarkup(kb))
+                elif ntype in ("voice","audio") and fid:
+                    await query.message.reply_voice(fid, caption=cap, reply_markup=InlineKeyboardMarkup(kb))
+                elif ntype == "document" and fid:
+                    await query.message.reply_document(fid, caption=cap, reply_markup=InlineKeyboardMarkup(kb))
+                elif fid:
+                    # Bilinmeyen tip — doküman olarak gönder
+                    try:
+                        await query.message.reply_document(fid, caption=cap, reply_markup=InlineKeyboardMarkup(kb))
+                    except:
+                        await query.edit_message_text(cap, reply_markup=InlineKeyboardMarkup(kb))
+                else:
+                    await query.edit_message_text(cap, reply_markup=InlineKeyboardMarkup(kb))
+            except: pass
+            return ConversationHandler.END
+
+        if action_n == "done":
+            # Not alma modunu kapat
+            subject = context.user_data.pop("note_subject","")
+            context.user_data.pop("action",None)
+            notes = get_user_notes(uid)
+            cnt   = len(notes)
+            await query.edit_message_text(f"✅ تم حفظ الملاحظات ({cnt} ملاحظة)")
+            return ConversationHandler.END
+
+        if action_n == "del":
+            note_id = parts_n[2] if len(parts_n) > 2 else ""
+            delete_user_note(uid, note_id)
+            await query.answer("✅ حُذف", show_alert=False)
+            await query.delete_message()
+            return ConversationHandler.END
+
         return ConversationHandler.END
 
     # ── Hatırlatıcı ──────────────────────────────────
