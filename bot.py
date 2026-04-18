@@ -3041,30 +3041,29 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Hatırlatıcım ─────────────────────────────────
     if text in (TR["btn_reminder"], AR["btn_reminder"]):
-        if not is_admin(uid):
-            rems = get_user_reminders(uid)
-            if not rems:
-                kb = [
-                    [InlineKeyboardButton("➕ " + ("Ekle" if is_main_admin(uid) else "إضافة"),
-                                          callback_data="reminder|add")],
-                    [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
-                ]
-                await update.message.reply_text(L(uid,"reminder_none"), reply_markup=InlineKeyboardMarkup(kb))
-            else:
-                import time
-                now = time.time()
-                lines = [L(uid,"reminder_list").format(len(rems))]
-                kb = []
-                for i, r in enumerate(rems[:10]):
-                    left = int((r["fire_ts"] - now) / 60)
-                    left_str = f"{left}dk" if left < 60 else f"{left//60}sa"
-                    lines.append(f"\n🔔 {r['text'][:40]}\n   ⏰ {left_str} kaldı")
-                    kb.append([InlineKeyboardButton(f"🗑 {r['text'][:25]}", callback_data=f"reminder|del|{i}")])
-                kb.append([InlineKeyboardButton("➕ Yeni", callback_data="reminder|add")])
-                kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
-                sent = await update.message.reply_text(
-                    "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
-                context.user_data["last_inline_msg"] = sent.message_id
+        rems = get_user_reminders(uid)
+        if not rems:
+            kb = [
+                [InlineKeyboardButton("➕ " + ("Ekle" if is_main_admin(uid) else "إضافة"),
+                                      callback_data="reminder|add")],
+                [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
+            ]
+            await update.message.reply_text(L(uid,"reminder_none"), reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            import time
+            now = time.time()
+            lines = [L(uid,"reminder_list").format(len(rems))]
+            kb = []
+            for i, r in enumerate(rems[:10]):
+                left = int((r["fire_ts"] - now) / 60)
+                left_str = f"{left}dk" if left < 60 else f"{left//60}sa"
+                lines.append(f"\n🔔 {r['text'][:40]}\n   ⏰ {left_str} kaldı")
+                kb.append([InlineKeyboardButton(f"🗑 {r['text'][:25]}", callback_data=f"reminder|del|{i}")])
+            kb.append([InlineKeyboardButton("➕ Yeni", callback_data="reminder|add")])
+            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+            sent = await update.message.reply_text(
+                "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["last_inline_msg"] = sent.message_id
         return
 
     # ── Anonim Soru ──────────────────────────────────
@@ -7523,7 +7522,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             ]]))
         return WAIT_FOLDER
 
-    if cb.startswith("reminder|") and not is_admin(uid):
+    if cb.startswith("reminder|"):
         parts  = cb.split("|")
         action = parts[1]
         if action == "add":
@@ -8120,7 +8119,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Hatırlatıcı — Metin ─────────────────────────
-    if action == "reminder_text" and not is_admin(uid):
+    if action == "reminder_text":
         context.user_data["reminder_text_pending"] = text
         context.user_data.pop("action", None)
         kb = [
@@ -8142,7 +8141,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Hatırlatıcı — Zaman (metin fallback, artık kullanılmıyor) ──
-    if action == "reminder_day" and not is_admin(uid):
+    if action == "reminder_day":
         try:
             day = int(text.strip())
             assert 0 <= day <= 365
@@ -8154,7 +8153,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("🕐 كم ساعة؟ (0-23):")
         return WAIT_FOLDER
 
-    if action == "reminder_hour" and not is_admin(uid):
+    if action == "reminder_hour":
         try:
             hour = int(text.strip())
             assert 0 <= hour <= 23
@@ -8166,7 +8165,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("⏱ كم دقيقة؟ (0-59):")
         return WAIT_FOLDER
 
-    if action == "reminder_minute" and not is_admin(uid):
+    if action == "reminder_minute":
         try:
             minute = int(text.strip())
             assert 0 <= minute <= 59
@@ -8178,7 +8177,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("⏱ كم ثانية؟ (0-59):")
         return WAIT_FOLDER
 
-    if action == "reminder_second" and not is_admin(uid):
+    if action == "reminder_second":
         try:
             second = int(text.strip())
             assert 0 <= second <= 59
@@ -8208,7 +8207,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action", None)
         return ConversationHandler.END
 
-    if action == "reminder_when" and not is_admin(uid):
+    if action == "reminder_when":
         minutes = parse_time_input(text)
         if not minutes:
             await update.message.reply_text(
