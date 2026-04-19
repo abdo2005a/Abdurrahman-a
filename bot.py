@@ -556,7 +556,7 @@ TR = {
     "anon_q_sent":        "✅ Sorunuz iletildi.",
     "countdown_none":     "Yaklaşan sınav eklenmemiş.",
     "countdown_prompt":   "Sınav adını yazın:",
-    "countdown_date":     "Tarih yazın (örn: 20/05/2026):",
+    "countdown_date":     "Tarih yazın (örn: 20/05/2026 veya 20/05/2026 09:30):",
     "countdown_saved":    "✅ {} kaydedildi.",
     "quiz_none":          "Aktif test yok.",
     "group_select":       "👥 Grubunu seç (A/B/C → alt grup):",
@@ -937,7 +937,7 @@ AR = {
     "anon_q_sent":        "✅ تم إرسال سؤالك.",
     "countdown_none":     "لا توجد امتحانات مضافة.",
     "countdown_prompt":   "اكتب اسم الامتحان:",
-    "countdown_date":     "اكتب التاريخ (مثال: 20/05/2026):",
+    "countdown_date":     "اكتب التاريخ (مثال: 20/05/2026) أو التاريخ والوقت (20/05/2026 09:30):",
     "countdown_saved":    "✅ تم حفظ {}.",
     "quiz_none":          "لا يوجد اختبار نشط.",
     "group_select":       "👥 اختر مجموعتك (A/B/C → مجموعة فرعية):",
@@ -1383,12 +1383,19 @@ def parse_time_input(text: str) -> int:
     return total if total > 0 else 0
 
 def add_countdown(name: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
-    """date_str: 'DD/MM/YYYY'. shift: sabahi/masaiy. group: A/B/C veya boş=hepsi"""
+    """date_str: 'DD/MM/YYYY' or 'DD/MM/YYYY HH:MM'. shift: sabahi/masaiy. group: A/B/C or empty."""
     try:
         from datetime import datetime as dt
-        target = dt.strptime(date_str.strip(), "%d/%m/%Y")
+        parts_dt = date_str.strip().split()
+        date_only = parts_dt[0]
+        time_only = parts_dt[1] if len(parts_dt) >= 2 and ":" in parts_dt[1] else ""
+        if time_only:
+            target = dt.strptime(f"{date_only} {time_only}", "%d/%m/%Y %H:%M")
+        else:
+            target = dt.strptime(date_only, "%d/%m/%Y")
         cd = load_countdowns()
-        cd.append({"name": name, "date": date_str, "ts": target.timestamp(),
+        cd.append({"name": name, "date": date_only, "time": time_only,
+                   "ts": target.timestamp(),
                    "cls": cls, "shift": shift, "group": group,
                    "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
         save_countdowns(cd)
@@ -3140,7 +3147,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     when = f"🟡 {days} {'أيام' if not is_main_admin(uid) else 'gün'}"
                 else:
                     when = f"🟢 {days} {'يوم' if not is_main_admin(uid) else 'gün'}"
-                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}")
+                _cd_time = f" ⏰ {cd['time']}" if cd.get("time") else ""
+                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}{_cd_time}")
                 if is_admin(uid):
                     remind_kb.append([InlineKeyboardButton(
                         f"📢 تذكير: {cd['name'][:20]}",
@@ -3423,6 +3431,52 @@ async def safe_edit(query, text, reply_markup=None):
         try:
             await query.message.reply_text(text, reply_markup=reply_markup)
         except: pass
+
+LAB_FIXED_TIMES = [
+    "07:00","08:00","09:00","10:00","11:00","12:00",
+    "13:00","14:00","15:00","16:00","17:00","18:00",
+]
+
+def _lab_fixed_kb(context) -> "InlineKeyboardMarkup":
+    """Build the group/rotation/time/save keyboard for fixed lab template creation."""
+    sel      = context.user_data.get("lab_fixed_groups", [])
+    rotation = context.user_data.get("lab_fixed_rotation", False)
+    time_val = context.user_data.get("lab_fixed_time", "")
+
+    grps_cfg = load_class_groups()
+    all_grps: set = set()
+    for cls_dv in grps_cfg.values():
+        for sft_dv in cls_dv.values():
+            if isinstance(sft_dv, dict):
+                for g_key in sft_dv:
+                    all_grps.add(g_key)
+    sorted_grps = sorted(all_grps) or ["A", "B", "C"]
+
+    kb: list = []
+    row: list = []
+    for g_opt in sorted_grps:
+        icon = "✅" if g_opt in sel else "⬜"
+        row.append(InlineKeyboardButton(f"{icon} {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
+        if len(row) == 3:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+
+    rot_icon = "✅" if rotation else "⬜"
+    kb.append([
+        InlineKeyboardButton(f"{rot_icon} تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
+        InlineKeyboardButton("📅 كل أسبوع",              callback_data="lab|fixed_rotation|0"),
+    ])
+
+    time_lbl = f"⏰ {time_val}" if time_val else "⏰ الوقت (اختياري)"
+    kb.append([InlineKeyboardButton(time_lbl, callback_data="lab|fixed_show_time")])
+
+    sel_txt = ", ".join(sel) if sel else "—"
+    kb.append([
+        InlineKeyboardButton(f"✅ حفظ [{sel_txt}]", callback_data="lab|fixed_save"),
+        InlineKeyboardButton("◀️ İptal",             callback_data="lab|fixed_panel"),
+    ])
+    return InlineKeyboardMarkup(kb)
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
@@ -4540,10 +4594,12 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f_fv = fixed_fv[idx_fv]
                 _fv_grps = f_fv.get("groups", [f_fv.get("group","—")])
                 _fv_rot  = "🔄 تناوب أسبوعي" if f_fv.get("rotation") else "📅 كل أسبوع"
+                _fv_time = f_fv.get("time", "")
                 txt_fv = (
                     f"📌 Sabit Lab Şablonu\n\n"
                     f"🔬 Ad: {f_fv.get('name','—')}\n"
                     f"📅 Gün: {WEEKDAYS_FV.get(f_fv.get('weekday',0),'—')}\n"
+                    + (f"⏰ Saat: {_fv_time}\n" if _fv_time else "") +
                     f"👥 Gruplar: {', '.join(_fv_grps)}\n"
                     f"🔁 Mod: {_fv_rot}"
                 )
@@ -4658,7 +4714,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 day_name = WEEKDAYS_TR.get(f.get("weekday",0),"?")
                 _fp_grps = f.get("groups", [f.get("group","?")])
                 _fp_rot  = "🔄" if f.get("rotation") else "📅"
-                lbl = f"{f.get('name','?')[:18]} {_fp_rot} {day_name} [{','.join(_fp_grps)}]"
+                _fp_time = f" ⏰{f['time']}" if f.get("time") else ""
+                lbl = f"{f.get('name','?')[:15]} {_fp_rot}{_fp_time} {day_name} [{','.join(_fp_grps)}]"
                 kb_fp.append([
                     InlineKeyboardButton(f"📌 {lbl}", callback_data=f"lab|fixed_view|{i}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i}"),
@@ -4689,7 +4746,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 day_name2 = WEEKDAYS_TR2.get(f2.get("weekday",0),"?")
                 _fd2_grps = f2.get("groups", [f2.get("group","?")])
                 _fd2_rot  = "🔄" if f2.get("rotation") else "📅"
-                lbl2 = f"{f2.get('name','?')[:18]} {_fd2_rot} {day_name2} [{','.join(_fd2_grps)}]"
+                _fd2_time = f" ⏰{f2['time']}" if f2.get("time") else ""
+                lbl2 = f"{f2.get('name','?')[:15]} {_fd2_rot}{_fd2_time} {day_name2} [{','.join(_fd2_grps)}]"
                 kb_fd2.append([
                     InlineKeyboardButton(f"📌 {lbl2}", callback_data=f"lab|fixed_view|{i2}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i2}"),
@@ -4703,99 +4761,60 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         if lab_act == "fixed_day":
             day_idx = int(lab_parts[2]) if len(lab_parts) > 2 else 0
-            context.user_data["lab_fixed_weekday"] = day_idx
-            context.user_data["lab_fixed_groups"]  = []   # multi-select list
-            # Build group toggle keyboard
-            grps_cfg2 = load_class_groups()
-            all_grps2 = set()
-            for cls_dv in grps_cfg2.values():
-                for sft_dv in cls_dv.values():
-                    if isinstance(sft_dv, dict):
-                        for g_key in sft_dv:
-                            all_grps2.add(g_key)
-            sorted_grps = sorted(all_grps2) or ["A","B","C"]
-            kb_fg = []
-            row_fg = []
-            for g_opt in sorted_grps:
-                row_fg.append(InlineKeyboardButton(f"⬜ {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
-                if len(row_fg) == 3:
-                    kb_fg.append(row_fg); row_fg = []
-            if row_fg: kb_fg.append(row_fg)
-            kb_fg.append([InlineKeyboardButton("🔄 تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
-                          InlineKeyboardButton("📅 كل أسبوع", callback_data="lab|fixed_rotation|0")])
-            kb_fg.append([InlineKeyboardButton("✅ حفظ", callback_data="lab|fixed_save"),
-                          InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            context.user_data["lab_fixed_weekday"]  = day_idx
+            context.user_data["lab_fixed_groups"]   = []
+            context.user_data["lab_fixed_rotation"] = False
+            context.user_data["lab_fixed_time"]     = ""
             await query.edit_message_text(
                 "👥 اختر المجموعات (يمكن اختيار أكثر من واحدة):",
-                reply_markup=InlineKeyboardMarkup(kb_fg))
+                reply_markup=_lab_fixed_kb(context))
             return ConversationHandler.END
 
         if lab_act == "fixed_tgrp":
-            # Toggle group selection
             grp_t = lab_parts[2] if len(lab_parts) > 2 else ""
-            sel   = context.user_data.get("lab_fixed_groups", [])
-            if grp_t in sel: sel.remove(grp_t)
-            else:            sel.append(grp_t)
-            context.user_data["lab_fixed_groups"] = sel
-            # Rebuild group keyboard with current selections
-            grps_cfg3 = load_class_groups()
-            all_grps3 = set()
-            for cls_dv in grps_cfg3.values():
-                for sft_dv in cls_dv.values():
-                    if isinstance(sft_dv, dict):
-                        for g_key in sft_dv:
-                            all_grps3.add(g_key)
-            sorted_grps3 = sorted(all_grps3) or ["A","B","C"]
-            rotation = context.user_data.get("lab_fixed_rotation", False)
-            kb_t = []
-            row_t = []
-            for g_opt in sorted_grps3:
-                icon = "✅" if g_opt in sel else "⬜"
-                row_t.append(InlineKeyboardButton(f"{icon} {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
-                if len(row_t) == 3:
-                    kb_t.append(row_t); row_t = []
-            if row_t: kb_t.append(row_t)
-            rot_icon = "✅" if rotation else "⬜"
-            kb_t.append([InlineKeyboardButton(f"{rot_icon} تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
-                         InlineKeyboardButton("📅 كل أسبوع", callback_data="lab|fixed_rotation|0")])
+            if grp_t != "__back__":
+                sel = context.user_data.get("lab_fixed_groups", [])
+                if grp_t in sel: sel.remove(grp_t)
+                else:            sel.append(grp_t)
+                context.user_data["lab_fixed_groups"] = sel
+            sel     = context.user_data.get("lab_fixed_groups", [])
             sel_txt = ", ".join(sel) if sel else "—"
-            kb_t.append([InlineKeyboardButton(f"✅ حفظ [{sel_txt}]", callback_data="lab|fixed_save"),
-                         InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
             await query.edit_message_text(
                 f"👥 المجموعات المختارة: {sel_txt}",
-                reply_markup=InlineKeyboardMarkup(kb_t))
+                reply_markup=_lab_fixed_kb(context))
             return ConversationHandler.END
 
         if lab_act == "fixed_rotation":
             rotation = (lab_parts[2] == "1") if len(lab_parts) > 2 else False
             context.user_data["lab_fixed_rotation"] = rotation
-            # Rebuild keyboard
-            sel = context.user_data.get("lab_fixed_groups", [])
-            grps_cfg4 = load_class_groups()
-            all_grps4 = set()
-            for cls_dv in grps_cfg4.values():
-                for sft_dv in cls_dv.values():
-                    if isinstance(sft_dv, dict):
-                        for g_key in sft_dv: all_grps4.add(g_key)
-            sorted_grps4 = sorted(all_grps4) or ["A","B","C"]
-            kb_r = []
-            row_r = []
-            for g_opt in sorted_grps4:
-                icon = "✅" if g_opt in sel else "⬜"
-                row_r.append(InlineKeyboardButton(f"{icon} {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
-                if len(row_r) == 3:
-                    kb_r.append(row_r); row_r = []
-            if row_r: kb_r.append(row_r)
-            rot_icon = "✅" if rotation else "⬜"
-            kb_r.append([InlineKeyboardButton(f"{rot_icon} تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
-                         InlineKeyboardButton("📅 كل أسبوع", callback_data="lab|fixed_rotation|0")])
-            sel_txt = ", ".join(sel) if sel else "—"
-            kb_r.append([InlineKeyboardButton(f"✅ حفظ [{sel_txt}]", callback_data="lab|fixed_save"),
-                         InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
+            sel      = context.user_data.get("lab_fixed_groups", [])
+            sel_txt  = ", ".join(sel) if sel else "—"
             mode_txt = "تناوب أسبوعي ✅" if rotation else "كل أسبوع (جميع المجموعات)"
             await query.edit_message_text(
                 f"👥 المجموعات: {sel_txt}\n🔄 الوضع: {mode_txt}",
-                reply_markup=InlineKeyboardMarkup(kb_r))
+                reply_markup=_lab_fixed_kb(context))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_show_time":
+            kb_tp = []
+            row_tp = []
+            for t_opt in LAB_FIXED_TIMES:
+                row_tp.append(InlineKeyboardButton(t_opt, callback_data=f"lab|fixed_time|{t_opt}"))
+                if len(row_tp) == 4:
+                    kb_tp.append(row_tp); row_tp = []
+            if row_tp: kb_tp.append(row_tp)
+            kb_tp.append([InlineKeyboardButton("◀️ رجوع", callback_data="lab|fixed_tgrp|__back__")])
+            await query.edit_message_text("⏰ اختر الوقت:", reply_markup=InlineKeyboardMarkup(kb_tp))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_time":
+            time_val = lab_parts[2] if len(lab_parts) > 2 else ""
+            context.user_data["lab_fixed_time"] = time_val
+            sel     = context.user_data.get("lab_fixed_groups", [])
+            sel_txt = ", ".join(sel) if sel else "—"
+            await query.edit_message_text(
+                f"👥 المجموعات: {sel_txt}",
+                reply_markup=_lab_fixed_kb(context))
             return ConversationHandler.END
 
         if lab_act == "fixed_save":
@@ -4803,6 +4822,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             weekday  = context.user_data.pop("lab_fixed_weekday", 0)
             groups   = context.user_data.pop("lab_fixed_groups", [])
             rotation = context.user_data.pop("lab_fixed_rotation", False)
+            time_val = context.user_data.pop("lab_fixed_time", "")
             if not groups:
                 await query.answer("⚠️ اختر مجموعة واحدة على الأقل", show_alert=True)
                 return ConversationHandler.END
@@ -4811,6 +4831,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             fixed_new.append({
                 "name":           fname,
                 "weekday":        weekday,
+                "time":           time_val,
                 "groups":         groups,
                 "rotation":       rotation,
                 "rotation_index": 0,
@@ -4824,7 +4845,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 day3  = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
                 grps3 = f3.get("groups", [f3.get("group","?")])
                 rot3  = "🔄" if f3.get("rotation") else "📅"
-                lbl3  = f"{f3.get('name','?')[:18]} {rot3} {day3} [{','.join(grps3)}]"
+                time3 = f" ⏰{f3['time']}" if f3.get("time") else ""
+                lbl3  = f"{f3.get('name','?')[:15]} {rot3}{time3} {day3} [{','.join(grps3)}]"
                 kb_fg2.append([
                     InlineKeyboardButton(f"📌 {lbl3}", callback_data=f"lab|fixed_view|{i3}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i3}"),
@@ -7545,7 +7567,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if minutes < 60: label = f"{minutes} دقيقة"
             elif minutes < 1440: label = f"{minutes//60} ساعة"
             else: label = f"{minutes//1440} يوم"
-            await query.edit_message_text(L(uid,"reminder_saved").format(label))
+            await query.edit_message_text(
+                L(uid,"reminder_saved").format(label),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️", callback_data="nav|root")]]))
             return ConversationHandler.END
 
         if action == "manual_date":
@@ -7569,7 +7593,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 label = f"{minutes//60} ساعة" if not is_main_admin(uid) else f"{minutes//60} saat"
             else:
                 label = f"{minutes//1440} يوم" if not is_main_admin(uid) else f"{minutes//1440} gün"
-            await query.edit_message_text(L(uid,"reminder_saved").format(label))
+            await query.edit_message_text(
+                L(uid,"reminder_saved").format(label),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️", callback_data="nav|root")]]))
             context.user_data.pop("action", None)
             return ConversationHandler.END
 
@@ -8203,7 +8229,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if minute: parts_lbl.append(f"{minute} دقيقة")
         if second: parts_lbl.append(f"{second} ثانية")
         label = " و ".join(parts_lbl) if parts_lbl else "قريباً"
-        await update.message.reply_text(L(uid, "reminder_saved").format(label))
+        await update.message.reply_text(L(uid, "reminder_saved").format(label), reply_markup=reply_kb(uid))
         context.user_data.pop("action", None)
         return ConversationHandler.END
 
@@ -8224,7 +8250,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             label = f"{minutes//60} ساعة" if not is_main_admin(uid) else f"{minutes//60} saat"
         else:
             label = f"{minutes//1440} يوم" if not is_main_admin(uid) else f"{minutes//1440} gün"
-        await update.message.reply_text(L(uid,"reminder_saved").format(label))
+        await update.message.reply_text(L(uid,"reminder_saved").format(label), reply_markup=reply_kb(uid))
         context.user_data.pop("action",None)
         return ConversationHandler.END
 
