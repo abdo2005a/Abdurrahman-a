@@ -52,6 +52,7 @@ WHITELIST_FILE   = os.path.join(BASE_DIR, "whitelist.json")
 SCHEDULED_FILE   = os.path.join(BASE_DIR, "scheduled.json")
 TAGS_FILE        = os.path.join(BASE_DIR, "file_tags.json")
 REMINDERS_FILE   = os.path.join(BASE_DIR, "reminders.json")
+REPORTS_FILE     = os.path.join(BASE_DIR, "reports.json")
 SEARCH_CACHE_FILE= os.path.join(BASE_DIR, "search_cache.json")
 LEADERBOARD_FILE = os.path.join(BASE_DIR, "leaderboard.json")
 ACHIEVEMENTS_FILE= os.path.join(BASE_DIR, "achievements.json")
@@ -102,6 +103,7 @@ BACKUP_SCHEMA = {
     "user_notes":    USER_NOTES_FILE,
     "quizzes":       QUIZ_FILE,
     "reports":       REPORT_FILE,
+    "user_reports":  REPORTS_FILE,
     "admin_perms":   ADMIN_PERMS_FILE,
 }
 
@@ -540,6 +542,11 @@ TR = {
     "btn_reminder":       "⏰ Hatırlatıcım",
     "anon_q_btn":         "❓ Anonim Soru",
     "countdown_btn":      "⏳ Yaklaşan Sınavlar",
+    "btn_reports":        "📋 Raporlarım",
+    "reports_none":       "Yaklaşan rapor yok.",
+    "report_name_prompt": "Rapor adını yazın:",
+    "report_subj_prompt": "Dersin adını yazın:",
+    "report_saved":       "✅ {} kaydedildi.",
     "rules_btn":          "📜 Kurallar",
     "quiz_btn":           "📝 Mini Test",
     "notes_empty":        "Henüz not yok.",
@@ -921,6 +928,11 @@ AR = {
     "btn_reminder":       "⏰ تذكيراتي",
     "anon_q_btn":         "❓ سؤال مجهول",
     "countdown_btn":      "⏳ الامتحانات القادمة",
+    "btn_reports":        "📋 تقاريري",
+    "reports_none":       "لا توجد تقارير قريبة.",
+    "report_name_prompt": "اكتب اسم التقرير:",
+    "report_subj_prompt": "اكتب اسم المادة:",
+    "report_saved":       "✅ تم حفظ {}.",
     "rules_btn":          "📜 القواعد",
     "quiz_btn":           "📝 اختبار قصير",
     "notes_empty":        "لا توجد ملاحظات بعد.",
@@ -1129,6 +1141,57 @@ def load_tags():          return load_json(TAGS_FILE, {})
 def save_tags(d):         save_json(TAGS_FILE, d)
 def load_reminders():     return load_json(REMINDERS_FILE, [])
 def save_reminders(d):    save_json(REMINDERS_FILE, d)
+
+def load_reports():    return load_json(REPORTS_FILE, [])
+def save_reports(d):   save_json(REPORTS_FILE, d)
+
+def add_report(name: str, subject: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
+    try:
+        from datetime import datetime as dt
+        parts_dt = date_str.strip().split()
+        date_only = parts_dt[0]
+        time_only = parts_dt[1] if len(parts_dt) >= 2 and ":" in parts_dt[1] else ""
+        if time_only:
+            target = dt.strptime(f"{date_only} {time_only}", "%d/%m/%Y %H:%M")
+        else:
+            target = dt.strptime(date_only, "%d/%m/%Y")
+        reps = load_reports()
+        reps.append({"name": name, "subject": subject, "date": date_only, "time": time_only,
+                     "ts": target.timestamp(), "cls": cls, "shift": shift, "group": group,
+                     "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
+        save_reports(reps)
+        return True
+    except: return False
+
+def get_reports(cls: str = "", shift: str = "", uid: str = "") -> list:
+    import time
+    now = time.time()
+    reps = load_reports()
+    extra_cls = []
+    if uid:
+        extra_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+        extra_cls  = extra_data.get(str(uid), [])
+    all_cls = []
+    if cls: all_cls.append(cls)
+    for ec in extra_cls:
+        if ec not in all_cls: all_cls.append(ec)
+    result = []
+    for r in reps:
+        if r.get("ts", 0) > now:
+            r_cls   = r.get("cls", "")
+            r_shift = r.get("shift", "")
+            if all_cls and r_cls and r_cls not in all_cls: continue
+            r_grp = r.get("group", "")
+            if r_grp and uid:
+                u_grp = load_groups().get(str(uid), "")
+                if not u_grp.startswith(r_grp): continue
+            if r_shift and shift:
+                u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
+                c_norm = "sabahi" if r_shift in ("sabahi","sabah") else "masaiy"
+                if u_norm != c_norm: continue
+            days_left = int((r["ts"] - now) / 86400)
+            result.append({**r, "days_left": days_left})
+    return sorted(result, key=lambda x: x["ts"])
 def load_search_cache():  return load_json(SEARCH_CACHE_FILE, {})
 def save_search_cache(d): save_json(SEARCH_CACHE_FILE, d)
 def load_leaderboard():   return load_json(LEADERBOARD_FILE, {})
@@ -2450,6 +2513,7 @@ ALL_BTNS = {
     TR["btn_notes"],     AR["btn_notes"],
     TR["btn_reminder"],  AR["btn_reminder"],
     TR["countdown_btn"], AR["countdown_btn"],
+    TR["btn_reports"],   AR["btn_reports"],
     TR["quiz_btn"],      AR["quiz_btn"],
     TR["rules_btn"],     AR["rules_btn"],
     "\U0001f52c \u0627\u0644\u0645\u062e\u062a\u0628\u0631",
@@ -3491,7 +3555,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return (cb.startswith("countdown|") or cb.startswith("lab|") or
                     cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
                     cb.startswith("group_pick|") or cb == "class_change" or
-                    cb == "group_pick_start")
+                    cb == "group_pick_start" or cb.startswith("reminder|") or
+                    cb.startswith("notes|") or cb == "nav|root" or cb == "close")
         if s.get("maintenance"):
             if adm:
                 # İkincil admin — tam bakımda bloklanır
