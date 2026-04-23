@@ -63,8 +63,10 @@ GROUP_FILE       = os.path.join(BASE_DIR, "user_groups.json")
 ANON_Q_FILE      = os.path.join(BASE_DIR, "anon_questions.json")
 USER_NOTES_FILE  = os.path.join(BASE_DIR, "personal_notes.json")
 QUIZ_FILE        = os.path.join(BASE_DIR, "quizzes.json")
-REPORT_FILE      = os.path.join(BASE_DIR, "file_reports.json")
-ADMIN_PERMS_FILE = os.path.join(BASE_DIR, "admin_perms.json")
+REPORT_FILE           = os.path.join(BASE_DIR, "file_reports.json")
+ADMIN_PERMS_FILE      = os.path.join(BASE_DIR, "admin_perms.json")
+REPORTS_SCHEDULE_FILE = os.path.join(BASE_DIR, "reports_schedule.json")
+CHAT_LOG_FILE         = os.path.join(BASE_DIR, "chat_activity_log.json")
 
 # ── Tam Yedek Şeması ─────────────────────────────────────────
 BACKUP_SCHEMA = {
@@ -101,8 +103,10 @@ BACKUP_SCHEMA = {
     "anon_q":        ANON_Q_FILE,
     "user_notes":    USER_NOTES_FILE,
     "quizzes":       QUIZ_FILE,
-    "reports":       REPORT_FILE,
-    "admin_perms":   ADMIN_PERMS_FILE,
+    "reports":            REPORT_FILE,
+    "admin_perms":        ADMIN_PERMS_FILE,
+    "reports_schedule":   REPORTS_SCHEDULE_FILE,
+    "chat_log":           CHAT_LOG_FILE,
 }
 
 # ── Arama / AI ayarları ──────────────────────────────────────
@@ -563,6 +567,23 @@ TR = {
     "group_selected":     "✅ Grubun kaydedildi: {}",
     "group_change_btn":   "👥 Grubumu Değiştir",
     "group_label":        "👥 Grup: {}",
+    # ═══ RAPOR SİSTEMİ ═══
+    "btn_report":         "📋 تقاريري",
+    "report_none":        "لا توجد مواعيد تسليم تقارير.",
+    "report_list":        "📋 مواعيد التقارير ({} موعد):",
+    "report_add_btn":     "➕ إضافة تقرير",
+    "report_name_prompt": "📋 اكتب اسم التقرير أو المادة:",
+    "report_date_prompt": "📅 اكتب تاريخ التسليم (DD/MM/YYYY):",
+    "report_time_prompt": "⏰ أدخل وقت التسليم (مثال: 10:30) أو اكتب تخطى:",
+    "report_saved":       "✅ تم حفظ موعد التقرير: {}",
+    "report_deleted":     "✅ تم حذف التقرير.",
+    "report_btn_add":     "📋 Rapor Ekle",
+    # ═══ SABAH HATIRLATICI ═══
+    "morning_title":      "🌅 صباح الخير!\n\n📅 مواعيد اليوم:\n",
+    "morning_no_events":  "لا توجد مواعيد اليوم.",
+    # ═══ SINAV SAATİ ═══
+    "exam_time_prompt":   "⏰ أدخل وقت الامتحان (مثال: 10:30) أو اكتب تخطى:",
+    "lab_time_prompt":    "⏰ أدخل وقت المختبر (مثال: 09:00) أو اكتب تخطى:",
 }
 
 AR = {
@@ -944,6 +965,23 @@ AR = {
     "group_selected":     "✅ تم حفظ مجموعتك: {}",
     "group_change_btn":   "👥 تغيير المجموعة",
     "group_label":        "👥 المجموعة: {}",
+    # ═══ نظام التقارير ═══
+    "btn_report":         "📋 تقاريري",
+    "report_none":        "لا توجد مواعيد تسليم تقارير.",
+    "report_list":        "📋 مواعيد التقارير ({} موعد):",
+    "report_add_btn":     "➕ إضافة تقرير",
+    "report_name_prompt": "📋 اكتب اسم التقرير أو المادة:",
+    "report_date_prompt": "📅 اكتب تاريخ التسليم (DD/MM/YYYY):",
+    "report_time_prompt": "⏰ أدخل وقت التسليم (مثال: 10:30) أو اكتب تخطى:",
+    "report_saved":       "✅ تم حفظ موعد التقرير: {}",
+    "report_deleted":     "✅ تم حذف التقرير.",
+    "report_btn_add":     "📋 إضافة تقرير",
+    # ═══ تذكير صباحي ═══
+    "morning_title":      "🌅 صباح الخير!\n\n📅 مواعيد اليوم:\n",
+    "morning_no_events":  "لا توجد مواعيد اليوم.",
+    # ═══ وقت الامتحان والمختبر ═══
+    "exam_time_prompt":   "⏰ أدخل وقت الامتحان (مثال: 10:30) أو اكتب تخطى:",
+    "lab_time_prompt":    "⏰ أدخل وقت المختبر (مثال: 09:00) أو اكتب تخطى:",
 }
 
 DEFAULT_WELCOME_AR = (
@@ -1172,10 +1210,68 @@ def load_personal_notes():return load_json(USER_NOTES_FILE, {})
 def save_personal_notes(d):save_json(USER_NOTES_FILE, d)
 def load_quizzes():       return load_json(QUIZ_FILE, [])
 def save_quizzes(d):      save_json(QUIZ_FILE, d)
-def load_reports():       return load_json(REPORT_FILE, [])
-def load_admin_perms():   return load_json(ADMIN_PERMS_FILE, {})
-def save_admin_perms(d):  save_json(ADMIN_PERMS_FILE, d)
-def save_reports(d):      save_json(REPORT_FILE, d)
+def load_reports():               return load_json(REPORT_FILE, [])
+def load_admin_perms():           return load_json(ADMIN_PERMS_FILE, {})
+def save_admin_perms(d):          save_json(ADMIN_PERMS_FILE, d)
+def save_reports(d):              save_json(REPORT_FILE, d)
+def load_reports_schedule():      return load_json(REPORTS_SCHEDULE_FILE, [])
+def save_reports_schedule(d):     save_json(REPORTS_SCHEDULE_FILE, d)
+def load_chat_log():              return load_json(CHAT_LOG_FILE, [])
+def save_chat_log(d):             save_json(CHAT_LOG_FILE, d[-5000:])
+
+def log_chat_activity(direction: str, uid: str, text: str, msg_type: str = "msg"):
+    """Tüm gelen/giden mesajları kaydeder. direction: 'in' veya 'out'."""
+    log = load_chat_log()
+    log.append({
+        "time":      datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+        "direction": direction,
+        "uid":       str(uid),
+        "type":      msg_type,
+        "text":      str(text)[:500],
+    })
+    save_chat_log(log)
+
+def add_report_deadline(name: str, date_str: str, cls: str = "", shift: str = "", group: str = "", time_str: str = "") -> bool:
+    """Rapor teslim tarihi ekle."""
+    try:
+        from datetime import datetime as _dt
+        target = _dt.strptime(date_str.strip(), "%d/%m/%Y")
+        reps = load_reports_schedule()
+        reps.append({"name": name, "date": date_str, "ts": target.timestamp(),
+                     "cls": cls, "shift": shift, "group": group, "time": time_str,
+                     "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
+        save_reports_schedule(reps)
+        return True
+    except:
+        return False
+
+def get_report_deadlines(cls: str = "", shift: str = "", uid: str = "") -> list:
+    """Gelecekteki rapor teslim tarihlerini döndür."""
+    import time as _time
+    now = _time.time()
+    reps = load_reports_schedule()
+    extra_cls = []
+    if uid:
+        extra_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+        extra_cls  = extra_data.get(str(uid), [])
+    all_cls = [cls] if cls else []
+    for ec in extra_cls:
+        if ec not in all_cls: all_cls.append(ec)
+    result = []
+    for r in reps:
+        if r.get("ts", 0) > now:
+            r_cls = r.get("cls", "")
+            if all_cls and r_cls and r_cls not in all_cls:
+                continue
+            r_shift = r.get("shift", "")
+            if r_shift and shift:
+                u_norm = "sabahi" if shift in ("sabahi", "sabah") else "masaiy"
+                c_norm = "sabahi" if r_shift in ("sabahi", "sabah") else "masaiy"
+                if u_norm != c_norm:
+                    continue
+            days_left = int((r["ts"] - now) / 86400)
+            result.append({**r, "days_left": days_left})
+    return sorted(result, key=lambda x: x["ts"])
 
 def get_user_notes(uid: str) -> list:
     """Kullanıcının tüm notlarını döndür (liste formatı)."""
@@ -1276,19 +1372,20 @@ def get_current_lab_week():
             return entry
     return None
 
-def add_lab_week(week_start_str: str, group: str, note: str = ""):
+def add_lab_week(week_start_str: str, group: str, note: str = "", time_str: str = ""):
     """Tarihe grup+lab ata. Aynı tarih-grup varsa güncelle, yoksa ekle."""
     schedule = load_lab_schedule()
-    # Aynı tarih + aynı grup varsa güncelle
     for entry in schedule:
         if entry.get("week") == week_start_str and entry.get("group") == group:
             entry["note"] = note
+            if time_str:
+                entry["time"] = time_str
             save_lab_schedule(schedule)
             return
-    # Yeni ekle — Aynı tarihte farklı gruplar olabilir
     schedule.append({"week": week_start_str, "group": group, "note": note,
+                     "time": time_str,
                      "added": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")})
-    schedule = sorted(schedule, key=lambda x: (x["week"], x.get("group","")))
+    schedule = sorted(schedule, key=lambda x: (x["week"], x.get("group", "")))
     save_lab_schedule(schedule)
 
 def get_upcoming_lab_weeks(n=4):
@@ -1382,14 +1479,14 @@ def parse_time_input(text: str) -> int:
 
     return total if total > 0 else 0
 
-def add_countdown(name: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
-    """date_str: 'DD/MM/YYYY'. shift: sabahi/masaiy. group: A/B/C veya boş=hepsi"""
+def add_countdown(name: str, date_str: str, cls: str = "", shift: str = "", group: str = "", time_str: str = "") -> bool:
+    """date_str: 'DD/MM/YYYY'. shift: sabahi/masaiy. group: A/B/C veya boş=hepsi. time_str: 'HH:MM' opsiyonel."""
     try:
         from datetime import datetime as dt
         target = dt.strptime(date_str.strip(), "%d/%m/%Y")
         cd = load_countdowns()
         cd.append({"name": name, "date": date_str, "ts": target.timestamp(),
-                   "cls": cls, "shift": shift, "group": group,
+                   "cls": cls, "shift": shift, "group": group, "time": time_str,
                    "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
         save_countdowns(cd)
         return True
@@ -2445,6 +2542,7 @@ ALL_BTNS = {
     TR["btn_notes"],     AR["btn_notes"],
     TR["btn_reminder"],  AR["btn_reminder"],
     TR["countdown_btn"], AR["countdown_btn"],
+    TR["btn_report"],    AR["btn_report"],
     TR["quiz_btn"],      AR["quiz_btn"],
     TR["rules_btn"],     AR["rules_btn"],
     "\U0001f52c \u0627\u0644\u0645\u062e\u062a\u0628\u0631",
@@ -2553,10 +2651,11 @@ def reply_kb(uid):
         if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
         if row4: rows.append(row4)
-        # Satır 5: Sınavlar + Lab
+        # Satır 5: Sınavlar + Lab + Rapor
         row5 = []
         if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
         row5.append(KeyboardButton("🔬 المختبر"))
+        row5.append(KeyboardButton(AR["btn_report"]))
         if row5: rows.append(row5)
         # Satır 6: Liderboard + Quiz
         row6 = []
@@ -2591,10 +2690,11 @@ def reply_kb(uid):
         if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
         if row4: rows.append(row4)
-        # Satır 5: Sınavlar + Lab
+        # Satır 5: Sınavlar + Lab + Rapor
         row5 = []
         if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
         row5.append(KeyboardButton("🔬 المختبر"))
+        row5.append(KeyboardButton(AR["btn_report"]))
         if row5: rows.append(row5)
         # Satır 6: Liderboard + Test
         row6 = []
@@ -2866,6 +2966,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     user = update.effective_user; uid = str(user.id)
     text = (update.message.text or "").strip()
     register_user(user)
+    log_chat_activity("in", uid, text)
     await _delete_last_inline(context, update.effective_chat.id)
     try: await update.message.delete()
     except: pass
@@ -3046,11 +3147,11 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             rems = get_user_reminders(uid)
             if not rems:
                 kb = [
-                    [InlineKeyboardButton("➕ " + ("Ekle" if is_main_admin(uid) else "إضافة"),
-                                          callback_data="reminder|add")],
+                    [InlineKeyboardButton("➕ إضافة تذكير", callback_data="reminder|add")],
                     [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
                 ]
-                await update.message.reply_text(L(uid,"reminder_none"), reply_markup=InlineKeyboardMarkup(kb))
+                sent = await update.message.reply_text(L(uid,"reminder_none"), reply_markup=InlineKeyboardMarkup(kb))
+                context.user_data["last_inline_msg"] = sent.message_id
             else:
                 import time
                 now = time.time()
@@ -3058,10 +3159,11 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 kb = []
                 for i, r in enumerate(rems[:10]):
                     left = int((r["fire_ts"] - now) / 60)
-                    left_str = f"{left}dk" if left < 60 else f"{left//60}sa"
-                    lines.append(f"\n🔔 {r['text'][:40]}\n   ⏰ {left_str} kaldı")
+                    if left < 0: left = 0
+                    left_str = f"{left} دقيقة" if left < 60 else f"{left//60} ساعة"
+                    lines.append(f"\n🔔 {r['text'][:40]}\n   ⏰ بعد {left_str}")
                     kb.append([InlineKeyboardButton(f"🗑 {r['text'][:25]}", callback_data=f"reminder|del|{i}")])
-                kb.append([InlineKeyboardButton("➕ Yeni", callback_data="reminder|add")])
+                kb.append([InlineKeyboardButton("➕ تذكير جديد", callback_data="reminder|add")])
                 kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
                 sent = await update.message.reply_text(
                     "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
@@ -3099,7 +3201,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
                     date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
                     note = e.get("note","")
-                    my_labs.append((date_disp, note, False))
+                    time_e = e.get("time","")
+                    my_labs.append((date_disp, note, False, time_e))
             except: pass
 
         # Fixed/recurring lab entries for user's group
@@ -3107,7 +3210,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         for fl in fixed_labs:
             if fl.get("group","") == user_grp:
                 day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
-                my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
+                my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True, ""))
 
         if not my_labs:
             await update.message.reply_text(
@@ -3115,9 +3218,10 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             return
 
         lines = [f"🔬 مواعيد مختبر مجموعة {user_grp}\n"]
-        for date_disp, note, is_fixed in my_labs[:8]:
+        for date_disp, note, is_fixed, time_e in my_labs[:8]:
             nt = f"\n     📝 {note}" if note else ""
-            lines.append(f"  {'📌' if is_fixed else '📅'} {date_disp}{nt}")
+            tm = f"\n     ⏰ {time_e}" if time_e else ""
+            lines.append(f"  {'📌' if is_fixed else '📅'} {date_disp}{tm}{nt}")
 
         await update.message.reply_text("\n".join(lines))
         return
@@ -3142,7 +3246,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     when = f"🟡 {days} {'أيام' if not is_main_admin(uid) else 'gün'}"
                 else:
                     when = f"🟢 {days} {'يوم' if not is_main_admin(uid) else 'gün'}"
-                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}")
+                cd_time = cd.get("time","")
+                time_lbl = f" ⏰ {cd_time}" if cd_time else ""
+                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}{time_lbl}")
                 if is_admin(uid):
                     remind_kb.append([InlineKeyboardButton(
                         f"📢 تذكير: {cd['name'][:20]}",
@@ -3151,6 +3257,31 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(
                 "\n".join(lines),
                 reply_markup=InlineKeyboardMarkup(remind_kb) if remind_kb else None)
+        return
+
+    # ── Raporlarım (Teslim Tarihleri) ───────────────────
+    if text in (TR["btn_report"], AR["btn_report"]) and not is_admin(uid):
+        cls   = get_user_class(uid)
+        shift = get_user_shift(uid)
+        reps  = get_report_deadlines(cls, shift, uid=uid)
+        if not reps:
+            await update.message.reply_text(L(uid,"report_none"))
+        else:
+            lines = [L(uid,"report_list").format(len(reps)), ""]
+            for r in reps[:10]:
+                days = r["days_left"]
+                if days == 0:
+                    when = "🔴 اليوم!"
+                elif days == 1:
+                    when = "🟠 غداً"
+                elif days <= 7:
+                    when = f"🟡 {days} أيام"
+                else:
+                    when = f"🟢 {days} يوم"
+                t = r.get("time","")
+                time_lbl = f" ⏰ {t}" if t else ""
+                lines.append(f"📋 {r['name']}\n   {when} — {r['date']}{time_lbl}")
+            await update.message.reply_text("\n".join(lines))
         return
 
     # ── Mini Test (Quiz) ─────────────────────────────
@@ -3275,6 +3406,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             if get_admin_perm(uid, "can_countdown"):
                 kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown")])
                 kb.append([InlineKeyboardButton("🔬 إضافة موعد مختبر", callback_data="lab|add_new")])
+                kb.append([InlineKeyboardButton("📋 إضافة تقرير", callback_data="report|admin_add")])
             if get_admin_perm(uid, "can_poll"):
                 kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
             if get_admin_perm(uid, "can_broadcast"):
@@ -3364,7 +3496,10 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
             [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
              InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
-            [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+            [InlineKeyboardButton("📋 Rapor Ekle",        callback_data="report|admin_add"),
+             InlineKeyboardButton("📋 Raporları Görüntüle", callback_data="report|admin_list")],
+            [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full"),
+             InlineKeyboardButton("📋 سجل المحادثة",    callback_data="export|chat_log")],
             [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
         sent = await update.message.reply_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
@@ -3846,6 +3981,41 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             log_admin_action(uid, "EXCEL_USER", target)
         except Exception as e:
             await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
+        return ConversationHandler.END
+
+    # ── Chat Log Export ───────────────────────────────
+    if cb == "export|chat_log" and is_main_admin(uid):
+        await query.answer("⏳ جارٍ إنشاء الملف...", show_alert=False)
+        try:
+            chat_log = load_chat_log()
+            if not chat_log:
+                await context.bot.send_message(int(uid), "📋 سجل المحادثة فارغ.")
+                return ConversationHandler.END
+            import csv as _csv_cl
+            bio_cl = io.StringIO()
+            w_cl = _csv_cl.writer(bio_cl)
+            w_cl.writerow(["الوقت", "الاتجاه", "المستخدم", "النوع", "النص"])
+            users_cl = load_users()
+            for entry_cl in chat_log:
+                uid_cl   = entry_cl.get("uid", "")
+                u_cl     = users_cl.get(uid_cl, {})
+                name_cl  = u_cl.get("full_name") or u_cl.get("first_name") or uid_cl
+                w_cl.writerow([
+                    entry_cl.get("time", ""),
+                    entry_cl.get("direction", ""),
+                    f"{name_cl} ({uid_cl})",
+                    entry_cl.get("type", ""),
+                    entry_cl.get("text", ""),
+                ])
+            b_cl = io.BytesIO(bio_cl.getvalue().encode("utf-8-sig"))
+            b_cl.seek(0)
+            fname_cl = f"chat_log_{datetime.now(IRAQ_TZ).strftime('%Y%m%d_%H%M')}.csv"
+            await context.bot.send_document(
+                int(uid), b_cl, filename=fname_cl,
+                caption=f"📋 سجل المحادثة — {len(chat_log)} سطر")
+            log_admin_action(uid, "CHAT_LOG_EXPORT", f"{len(chat_log)} kayıt")
+        except Exception as e:
+            await context.bot.send_message(int(uid), f"❌ خطأ: {e}")
         return ConversationHandler.END
 
     # ── Hedefli Duyuru ────────────────────────────────
@@ -4626,8 +4796,27 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if lab_act == "set":
             week  = lab_parts[2]
             group = lab_parts[3]
+            # Store week+group, ask for time
+            context.user_data["pending_lab_week"]  = week
+            context.user_data["pending_lab_group"] = group
+            context.user_data["action"] = "lab_add_time"
+            kb_lt = [
+                [InlineKeyboardButton("⏭ تخطى (بدون وقت)", callback_data=f"lab|set_time_skip|{week}|{group}")],
+                [InlineKeyboardButton("◀️ إلغاء", callback_data="mgmt|lab")],
+            ]
+            await query.edit_message_text(
+                L(uid,"lab_time_prompt"),
+                reply_markup=InlineKeyboardMarkup(kb_lt))
+            return WAIT_FOLDER
+
+        if lab_act == "set_time_skip":
+            week  = lab_parts[2]
+            group = lab_parts[3]
             lab_name = context.user_data.pop("pending_lab_name", "")
-            add_lab_week(week, group, note=lab_name)
+            context.user_data.pop("pending_lab_week", None)
+            context.user_data.pop("pending_lab_group", None)
+            context.user_data.pop("action", None)
+            add_lab_week(week, group, note=lab_name, time_str="")
             from datetime import datetime as _dt2
             try:
                 d2 = _dt2.strptime(week, "%Y-%m-%d")
@@ -5410,7 +5599,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
                 [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
                  InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
-                [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+                [InlineKeyboardButton("📋 Rapor Ekle",        callback_data="report|admin_add"),
+                 InlineKeyboardButton("📋 Raporları Görüntüle", callback_data="report|admin_list")],
+                [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full"),
+                 InlineKeyboardButton("📋 سجل المحادثة",    callback_data="export|chat_log")],
             ]
             await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tm))
             return ConversationHandler.END
@@ -7376,6 +7568,132 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             ]]))
         return WAIT_FOLDER
 
+    if cb == "countdown_time|skip" and is_admin(uid):
+        date_text = context.user_data.pop("countdown_date_pending","")
+        name      = context.user_data.pop("countdown_name","?")
+        admin_cls = get_admin_cls(uid) if not is_main_admin(uid) else None
+        shift_val = context.user_data.pop("countdown_shift", "")
+        grp_val   = context.user_data.pop("countdown_group", "")
+        cls_val   = context.user_data.pop("countdown_cls", admin_cls or "")
+        ok = add_countdown(name, date_text, cls=cls_val, shift=shift_val, group=grp_val, time_str="")
+        if ok:
+            await query.edit_message_text(L(uid,"countdown_saved").format(name))
+        else:
+            await query.edit_message_text("❌ خطأ في حفظ الامتحان.")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    # ── Report Admin Callbacks ────────────────────────
+    if cb.startswith("report|") and is_admin(uid):
+        r_parts = cb.split("|")
+        r_act   = r_parts[1] if len(r_parts) > 1 else ""
+
+        if r_act == "admin_add":
+            context.user_data["action"] = "report_name"
+            await query.edit_message_text(
+                L(uid, "report_name_prompt"),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|root")
+                ]]))
+            return WAIT_FOLDER
+
+        if r_act == "time_skip":
+            context.user_data["report_time"] = ""
+            context.user_data.pop("action", None)
+            adm_cls_rs = get_admin_cls(uid)
+            if adm_cls_rs:
+                r_name_s = context.user_data.pop("report_name", "?")
+                r_date_s = context.user_data.pop("report_date", "")
+                context.user_data.pop("report_time", None)
+                ok_rs = add_report_deadline(r_name_s, r_date_s, cls=adm_cls_rs, time_str="")
+                if ok_rs:
+                    await query.edit_message_text(f"✅ تم حفظ التقرير: {r_name_s}\n📅 {r_date_s}")
+                    if not is_main_admin(uid):
+                        u_rs = load_users().get(uid, {})
+                        try:
+                            await context.bot.send_message(ADMIN_ID,
+                                f"تقرير أُضيف\nAdmin: {u_rs.get('first_name', uid)}\nالتقرير: {r_name_s}\nالتاريخ: {r_date_s}")
+                        except: pass
+                else:
+                    await query.edit_message_text("❌ خطأ في حفظ التقرير.")
+                return ConversationHandler.END
+            kb_rcls_s = []
+            for cls_id_s, cls_def_s in CLASS_DEFS.items():
+                kb_rcls_s.append([InlineKeyboardButton(cls_def_s["ar"], callback_data=f"report|set_cls|{cls_id_s}")])
+            kb_rcls_s.append([InlineKeyboardButton("الكل", callback_data="report|set_cls|all")])
+            kb_rcls_s.append([InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|root")])
+            await query.edit_message_text("📅 لأي سنة دراسية هذا التقرير؟",
+                                          reply_markup=InlineKeyboardMarkup(kb_rcls_s))
+            return WAIT_FOLDER
+
+        if r_act == "set_cls":
+            cls_sel = r_parts[2] if len(r_parts) > 2 else "all"
+            if cls_sel == "all": cls_sel = ""
+            r_name_c = context.user_data.pop("report_name", "?")
+            r_date_c = context.user_data.pop("report_date", "")
+            r_time_c = context.user_data.pop("report_time", "")
+            ok_rc = add_report_deadline(r_name_c, r_date_c, cls=cls_sel, time_str=r_time_c)
+            if ok_rc:
+                conf_rc = f"✅ تم حفظ التقرير: {r_name_c}\n📅 {r_date_c}"
+                if r_time_c: conf_rc += f"\n⏰ {r_time_c}"
+                await query.edit_message_text(conf_rc)
+            else:
+                await query.edit_message_text("❌ خطأ في حفظ التقرير.")
+            return ConversationHandler.END
+
+        if r_act == "admin_list":
+            reps_l = load_reports_schedule()
+            from datetime import datetime as _dt_rl
+            now_rl = _dt_rl.now(IRAQ_TZ)
+            lines_l = []
+            for r_l in reps_l:
+                try:
+                    if _dt_rl.strptime(r_l["date"], "%d/%m/%Y").date() < now_rl.date():
+                        continue
+                except: pass
+                cls_lbl   = f" [{r_l.get('cls','')}]" if r_l.get("cls") else " [الكل]"
+                time_lbl  = f" ⏰{r_l['time']}" if r_l.get("time") else ""
+                lines_l.append(f"• {r_l.get('name','?')} — {r_l.get('date','')}{time_lbl}{cls_lbl}")
+            txt_l = ("📋 قائمة التقارير القادمة:\n\n" + "\n".join(lines_l)) if lines_l else "📋 لا توجد تقارير قادمة."
+            await query.edit_message_text(
+                txt_l,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🗑 حذف تقرير", callback_data="report|admin_del_panel")],
+                    [InlineKeyboardButton("◀️ رجوع",      callback_data="nav|root")],
+                ]))
+            return ConversationHandler.END
+
+        if r_act == "admin_del_panel":
+            reps_dp = load_reports_schedule()
+            from datetime import datetime as _dt_rdp
+            now_rdp = _dt_rdp.now(IRAQ_TZ)
+            kb_rdp = []
+            for i_rdp, r_rdp in enumerate(reps_dp):
+                try:
+                    if _dt_rdp.strptime(r_rdp["date"], "%d/%m/%Y").date() < now_rdp.date():
+                        continue
+                except: pass
+                name_rdp = r_rdp.get("name", "?")[:25]
+                kb_rdp.append([InlineKeyboardButton(
+                    f"🗑 {name_rdp} — {r_rdp.get('date', '')}",
+                    callback_data=f"report|admin_del|{i_rdp}")])
+            kb_rdp.append([InlineKeyboardButton("◀️ رجوع", callback_data="report|admin_list")])
+            await query.edit_message_text(
+                "اختر التقرير للحذف:",
+                reply_markup=InlineKeyboardMarkup(kb_rdp))
+            return ConversationHandler.END
+
+        if r_act == "admin_del":
+            idx_rd = int(r_parts[2]) if len(r_parts) > 2 else -1
+            reps_d2 = load_reports_schedule()
+            if 0 <= idx_rd < len(reps_d2):
+                reps_d2.pop(idx_rd)
+                save_reports_schedule(reps_d2)
+                await query.answer("✅ تم الحذف", show_alert=True)
+            else:
+                await query.answer("❌", show_alert=True)
+            return ConversationHandler.END
+
     if cb.startswith("reminder|") and not is_admin(uid):
         parts  = cb.split("|")
         action = parts[1]
@@ -7882,6 +8200,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     user   = update.effective_user; uid = str(user.id)
     text   = (update.message.text or "").strip()
     register_user(user)
+    log_chat_activity("in", uid, text)
 
     # Engellenmiş kullanıcı
     if is_blocked(uid) and not is_admin(uid):
@@ -8330,6 +8649,55 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("📅 Hangi gün tekrar eder?", reply_markup=InlineKeyboardMarkup(kb_wd))
         return WAIT_FOLDER
 
+    if action == "lab_add_time" and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
+        import re as _re_la
+        time_text_la = text.strip()
+        time_str_la  = ""
+        if time_text_la.lower() not in ("تخطى", "skip", "0", "-", "لا"):
+            m_la = _re_la.match(r'^(\d{1,2})[:.،](\d{2})$', time_text_la)
+            if m_la:
+                time_str_la = f"{int(m_la.group(1)):02d}:{m_la.group(2)}"
+            else:
+                await update.message.reply_text("⏰ صيغة غير صحيحة. مثال: 10:30 — أو اكتب تخطى:")
+                return WAIT_FOLDER
+        week_la  = context.user_data.pop("pending_lab_week", "")
+        group_la = context.user_data.pop("pending_lab_group", "")
+        lab_name_la = context.user_data.pop("pending_lab_name", "")
+        context.user_data.pop("action", None)
+        add_lab_week(week_la, group_la, note=lab_name_la, time_str=time_str_la)
+        from datetime import datetime as _dt_la
+        try:
+            d_la = _dt_la.strptime(week_la, "%Y-%m-%d")
+            ARABIC_DAYS_LA = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
+            date_disp_la = f"{ARABIC_DAYS_LA.get(d_la.weekday(),'')} {d_la.strftime('%d/%m/%Y')}"
+        except:
+            date_disp_la = week_la
+        confirm_la = (
+            f"✅ تم إضافة موعد المختبر\n\n"
+            f"🔬 المختبر: {lab_name_la or '—'}\n"
+            f"📅 التاريخ: {date_disp_la}\n"
+            f"👥 المجموعة: {group_la}"
+            + (f"\n⏰ الوقت: {time_str_la}" if time_str_la else "")
+        )
+        await update.message.reply_text(confirm_la)
+        from datetime import date as _date_la
+        future_la = get_upcoming_lab_weeks(10)
+        kb_la = []
+        for e_la in future_la:
+            g_la = e_la.get("group", "?"); w_la = e_la.get("week", "")
+            n_la = f" — {e_la['note']}" if e_la.get("note") else ""
+            kb_la.append([
+                InlineKeyboardButton(f"🔬 {w_la}: {g_la}{n_la}", callback_data=f"lab|view|{w_la}"),
+                InlineKeyboardButton("🗑", callback_data=f"lab|del|{w_la}"),
+            ])
+        kb_la.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
+        kb_la.append([InlineKeyboardButton("📌 Sabit Lab Şablonları", callback_data="lab|fixed_panel")])
+        kb_la.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+        await update.message.reply_text(
+            f"🔬 Lab Programı\n(Bugün: {_date_la.today().strftime('%d/%m/%Y')})",
+            reply_markup=InlineKeyboardMarkup(kb_la))
+        return ConversationHandler.END
+
     if action == "countdown_name" and is_admin(uid):
         context.user_data["countdown_name"] = text
         context.user_data.pop("action", None)
@@ -8359,28 +8727,129 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 
     # ── Sınav Tarihi (Admin) ─────────────────────────
     if action == "countdown_date" and is_admin(uid):
-        name = context.user_data.pop("countdown_name","?")
-        # Admin sınıfına göre hedef
+        from datetime import datetime as _dtv
+        date_text = text.strip()
+        try:
+            _dtv.strptime(date_text, "%d/%m/%Y")
+        except:
+            await update.message.reply_text("❌ Geçersiz tarih. Örn: 20/05/2026")
+            return ConversationHandler.END
+        # Store date and ask for time
+        context.user_data["countdown_date_pending"] = date_text
+        context.user_data["action"] = "countdown_time"
+        kb_skip = [[InlineKeyboardButton("⏭ تخطى (بدون وقت)", callback_data="countdown_time|skip")],
+                   [InlineKeyboardButton(L(uid,"cancel"), callback_data="nav|root")]]
+        await update.message.reply_text(
+            L(uid,"exam_time_prompt"),
+            reply_markup=InlineKeyboardMarkup(kb_skip))
+        return WAIT_FOLDER
+
+    if action == "countdown_time" and is_admin(uid):
+        import re as _re_t
+        time_text = text.strip()
+        time_str = ""
+        if time_text.lower() not in ("تخطى","skip","0","-","لا"):
+            m_t = _re_t.match(r'^(\d{1,2})[:.،](\d{2})$', time_text)
+            if m_t:
+                time_str = f"{int(m_t.group(1)):02d}:{m_t.group(2)}"
+            else:
+                await update.message.reply_text("⏰ أدخل الوقت بصيغة صحيحة (مثال: 10:30) أو اكتب تخطى:")
+                return WAIT_FOLDER
+        date_text = context.user_data.pop("countdown_date_pending","")
+        name      = context.user_data.pop("countdown_name","?")
         admin_cls = get_admin_cls(uid) if not is_main_admin(uid) else None
         shift_val = context.user_data.pop("countdown_shift", "")
         grp_val   = context.user_data.pop("countdown_group", "")
         cls_val   = context.user_data.pop("countdown_cls", admin_cls or "")
-        ok = add_countdown(name, text, cls=cls_val, shift=shift_val, group=grp_val)
+        ok = add_countdown(name, date_text, cls=cls_val, shift=shift_val, group=grp_val, time_str=time_str)
         if ok:
-            # Bildirimi süper admin'e gönder
             if not is_main_admin(uid):
                 u_ = load_users().get(uid, {})
                 adm_name = u_.get("full_name") or u_.get("first_name") or uid
                 try:
                     await context.bot.send_message(
                         ADMIN_ID,
-                        f"Sinav Eklendi\nAdmin: {adm_name}\nSinav: {name}\nTarih: {text}")
+                        f"Sinav Eklendi\nAdmin: {adm_name}\nSinav: {name}\nTarih: {date_text}" +
+                        (f"\nSaat: {time_str}" if time_str else ""))
                 except: pass
-            await update.message.reply_text(L(uid,"countdown_saved").format(name))
+            conf = L(uid,"countdown_saved").format(name)
+            if time_str: conf += f"\n⏰ {time_str}"
+            await update.message.reply_text(conf)
         else:
             await update.message.reply_text("❌ Geçersiz tarih. Örn: 20/05/2026")
-        context.user_data.pop("action",None)
+        context.user_data.pop("action", None)
         return ConversationHandler.END
+
+    # ── Report Text Handlers (Admin) ─────────────────
+    if action == "report_name" and is_admin(uid):
+        context.user_data["report_name"] = text.strip()[:80]
+        context.user_data["action"] = "report_date"
+        await update.message.reply_text(
+            L(uid, "report_date_prompt"),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|root")
+            ]]))
+        return WAIT_FOLDER
+
+    if action == "report_date" and is_admin(uid):
+        from datetime import datetime as _dtrd
+        date_rd = text.strip()
+        try:
+            _dtrd.strptime(date_rd, "%d/%m/%Y")
+        except:
+            await update.message.reply_text("❌ صيغة التاريخ غير صحيحة. مثال: 20/05/2026")
+            return WAIT_FOLDER
+        context.user_data["report_date"] = date_rd
+        context.user_data["action"] = "report_time"
+        kb_rdt = [
+            [InlineKeyboardButton("⏭ تخطى (بدون وقت)", callback_data="report|time_skip")],
+            [InlineKeyboardButton(L(uid, "cancel"),       callback_data="nav|root")],
+        ]
+        await update.message.reply_text(
+            L(uid, "report_time_prompt"),
+            reply_markup=InlineKeyboardMarkup(kb_rdt))
+        return WAIT_FOLDER
+
+    if action == "report_time" and is_admin(uid):
+        import re as _re_rt
+        time_rd = text.strip()
+        time_str_rd = ""
+        if time_rd.lower() not in ("تخطى", "skip", "0", "-", "لا"):
+            m_rt = _re_rt.match(r'^(\d{1,2})[:.،](\d{2})$', time_rd)
+            if m_rt:
+                time_str_rd = f"{int(m_rt.group(1)):02d}:{m_rt.group(2)}"
+            else:
+                await update.message.reply_text("⏰ صيغة غير صحيحة. مثال: 10:30 — أو اكتب تخطى:")
+                return WAIT_FOLDER
+        context.user_data["report_time"] = time_str_rd
+        context.user_data.pop("action", None)
+        adm_cls_r = get_admin_cls(uid)
+        if adm_cls_r:
+            # Sub-admin: save directly with their class
+            r_name = context.user_data.pop("report_name", "?")
+            r_date = context.user_data.pop("report_date", "")
+            ok_r = add_report_deadline(r_name, r_date, cls=adm_cls_r, time_str=time_str_rd)
+            if ok_r:
+                await update.message.reply_text(f"✅ تم حفظ التقرير: {r_name}\n📅 {r_date}" + (f"\n⏰ {time_str_rd}" if time_str_rd else ""))
+                if not is_main_admin(uid):
+                    u_r = load_users().get(uid, {})
+                    adm_name_r = u_r.get("full_name") or u_r.get("first_name") or uid
+                    try:
+                        await context.bot.send_message(ADMIN_ID,
+                            f"تقرير أُضيف\nAdmin: {adm_name_r}\nالتقرير: {r_name}\nالتاريخ: {r_date}")
+                    except: pass
+            else:
+                await update.message.reply_text("❌ خطأ في حفظ التقرير.")
+            return ConversationHandler.END
+        # Main admin: show class selector
+        kb_rcls = []
+        for cls_id, cls_def in CLASS_DEFS.items():
+            kb_rcls.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"report|set_cls|{cls_id}")])
+        kb_rcls.append([InlineKeyboardButton("الكل", callback_data="report|set_cls|all")])
+        kb_rcls.append([InlineKeyboardButton(L(uid, "cancel"), callback_data="nav|root")])
+        await update.message.reply_text("📅 لأي سنة دراسية هذا التقرير؟",
+                                        reply_markup=InlineKeyboardMarkup(kb_rcls))
+        return WAIT_FOLDER
 
     # ── Quiz Sorusu (Admin) ──────────────────────────
     if action == "quiz_question" and is_main_admin(uid):
@@ -9470,6 +9939,7 @@ def main():
                     lang = AR if not is_main_admin(uid_) else TR
                     msg  = lang["reminder_fired"].format(r.get("text",""))
                     await ctx.bot.send_message(int(uid_), msg)
+                    log_chat_activity("out", uid_, msg, "reminder_fired")
                 except Exception as e:
                     logger.warning(f"Hatırlatıcı gönderilemedi: {e}")
 
@@ -9503,7 +9973,9 @@ def main():
                 day_lbl = "غداً" if remind_days == 1 else f"بعد {remind_days} أيام"
                 msg = f"⏰ تذكير بالامتحان\n\n📚 {name_cd}\n📅 {day_lbl} — {target_date}"
                 for uid_ in targets:
-                    try: await ctx.bot.send_message(int(uid_), msg)
+                    try:
+                        await ctx.bot.send_message(int(uid_), msg)
+                        log_chat_activity("out", uid_, msg, "exam_reminder")
                     except: pass
                 try:
                     await ctx.bot.send_message(ADMIN_ID,
@@ -9544,7 +10016,9 @@ def main():
                 for uid_, u in users_d.items():
                     if is_blocked(uid_): continue
                     if grps_d.get(uid_,"") == grp:
-                        try: await ctx.bot.send_message(int(uid_), msg)
+                        try:
+                            await ctx.bot.send_message(int(uid_), msg)
+                            log_chat_activity("out", uid_, msg, "lab_reminder")
                         except: pass
                 try: await ctx.bot.send_message(ADMIN_ID, f"🔬 Lab {day_lbl}: {grp}")
                 except: pass
@@ -9558,12 +10032,92 @@ def main():
                 changed = True
         if changed: save_lab_schedule(schedule)
 
+    async def _morning_reminder(ctx):
+        """Every day at 08:00 Iraq time — send today's labs, exams, and report deadlines."""
+        from datetime import datetime as _dt_mr, date as _date_mr
+        today    = _date_mr.today()
+        today_str_mr = today.strftime("%d/%m/%Y")
+        today_week   = today.strftime("%Y-%m-%d")
+        ARABIC_DAYS_MR = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
+        day_ar_mr = ARABIC_DAYS_MR.get(today.weekday(), "")
+
+        users_mr  = load_users()
+        grps_mr   = load_groups()
+        shifts_mr = load_shifts()
+
+        # Collect today's labs for each group
+        schedule_mr = load_lab_schedule()
+        today_labs  = [e for e in schedule_mr if e.get("week","") == today_week]
+
+        # Collect today's exams
+        cds_mr      = load_countdowns()
+        today_exams = [cd for cd in cds_mr if cd.get("date","") == today_str_mr]
+
+        # Collect today's reports
+        reps_mr      = load_reports_schedule()
+        today_reports = [r for r in reps_mr if r.get("date","") == today_str_mr]
+
+        if not today_labs and not today_exams and not today_reports:
+            return  # Nothing to announce today
+
+        sent_count = 0
+        for uid_mr, u_mr in users_mr.items():
+            if is_blocked(uid_mr): continue
+            u_cls   = get_user_class(uid_mr)
+            u_shift = get_user_shift(uid_mr)
+            u_grp   = grps_mr.get(uid_mr, "")
+            parts_mr = []
+
+            # Labs for this user's group
+            for lab_mr in today_labs:
+                if u_grp and lab_mr.get("group","") != u_grp:
+                    continue
+                lab_note = f" — {lab_mr['note']}" if lab_mr.get("note") else ""
+                lab_time = f" ⏰ {lab_mr['time']}" if lab_mr.get("time") else ""
+                parts_mr.append(f"🔬 مختبر اليوم: {lab_mr.get('group','?')}{lab_note}{lab_time}")
+
+            # Exams for this user's class/shift
+            for cd_mr in today_exams:
+                cd_cls_mr   = cd_mr.get("cls","")
+                cd_shift_mr = cd_mr.get("shift","")
+                if cd_cls_mr and u_cls and cd_cls_mr != u_cls: continue
+                if cd_shift_mr and u_shift and cd_shift_mr not in (u_shift, "sabah" if u_shift=="sabahi" else "gece"): continue
+                cd_time_mr = f" ⏰ {cd_mr['time']}" if cd_mr.get("time") else ""
+                parts_mr.append(f"⏳ امتحان اليوم: {cd_mr.get('name','?')}{cd_time_mr}")
+
+            # Reports for this user's class/shift
+            for rep_mr in today_reports:
+                rep_cls_mr   = rep_mr.get("cls","")
+                rep_shift_mr = rep_mr.get("shift","")
+                if rep_cls_mr and u_cls and rep_cls_mr != u_cls: continue
+                if rep_shift_mr and u_shift and rep_shift_mr not in (u_shift, "sabah" if u_shift=="sabahi" else "gece"): continue
+                rep_time_mr = f" ⏰ {rep_mr['time']}" if rep_mr.get("time") else ""
+                parts_mr.append(f"📋 تسليم تقرير اليوم: {rep_mr.get('name','?')}{rep_time_mr}")
+
+            if not parts_mr: continue
+            msg_mr = f"🌅 تذكير صباح اليوم — {day_ar_mr} {today_str_mr}\n\n" + "\n".join(parts_mr)
+            try:
+                await ctx.bot.send_message(int(uid_mr), msg_mr)
+                log_chat_activity("out", uid_mr, msg_mr, "morning_reminder")
+                sent_count += 1
+            except: pass
+
+        # Notify super admin
+        if sent_count:
+            try:
+                await ctx.bot.send_message(
+                    ADMIN_ID,
+                    f"📣 الصباح التذكير أُرسل لـ {sent_count} طالب\n{today_str_mr}")
+            except: pass
+
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(_check_reminders, interval=30, first=5)
         job_queue.run_repeating(_check_exam_reminders, interval=3600, first=30)
         job_queue.run_repeating(_check_lab_reminders, interval=3600, first=60)
-        print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
+        from datetime import time as _time_mr
+        job_queue.run_daily(_morning_reminder, time=_time_mr(hour=8, minute=0, second=0, tzinfo=IRAQ_TZ))
+        print("✅ Hatırlatıcı job başlatıldı (60sn aralık + 08:00 sabah hatırlatma)")
 
     # ── Startup: otomatik yedek geri yükleme ────────────────
     async def _startup_restore(application):
