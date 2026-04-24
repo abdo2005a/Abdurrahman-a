@@ -4629,7 +4629,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if sadmin_act == "broadcast":
             if not get_admin_perm(uid, "can_broadcast"):
                 await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
-            await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("bcls")))
+            adm_cls_bc = get_admin_cls(uid)
+            if adm_cls_bc:
+                # Secondary admin with fixed class — skip class selection
+                await safe_edit(query, "📢 الفترة الدراسية:",
+                    reply_markup=InlineKeyboardMarkup(_sft_kb("bsft", adm_cls_bc, "sadmin|broadcast")))
+            else:
+                await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("bcls")))
             return WAIT_BROADCAST_MSG
 
         if sadmin_act == "bcls":
@@ -7699,12 +7705,26 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text(
             "لمن هذا التقرير؟",
             reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
+        return WAIT_FOLDER
 
     if cb.startswith("rep_shift|") and is_admin(uid):
         shift_val = cb.split("|")[1]
         context.user_data["report_shift"] = "" if shift_val == "all" else shift_val
-        context.user_data["report_group"] = ""
+        cls_for_grp = get_admin_cls(uid) or context.user_data.get("report_cls", "")
+        if cls_for_grp:
+            cls_grps = get_class_groups(cls_for_grp)
+            grp_keys = list(cls_grps.keys())
+        else:
+            grp_keys = ["A","B","C"]
+        kb = [[InlineKeyboardButton("الكل", callback_data="rep_grp|all")]]
+        row = [InlineKeyboardButton(g, callback_data=f"rep_grp|{g}") for g in grp_keys]
+        if row: kb.append(row)
+        await query.edit_message_text("📋 المجموعة:", reply_markup=InlineKeyboardMarkup(kb))
+        return WAIT_FOLDER
+
+    if cb.startswith("rep_grp|") and is_admin(uid):
+        grp_val = cb.split("|")[1]
+        context.user_data["report_group"] = "" if grp_val == "all" else grp_val
         context.user_data["action"] = "report_date"
         await query.edit_message_text(
             "اكتب التاريخ (مثال: 20/05/2026) أو مع الوقت (20/05/2026 09:30):",
@@ -8715,7 +8735,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             kb.append([InlineKeyboardButton("الكل", callback_data="rep_cls|all")])
             kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
             await update.message.reply_text("📅 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
+        return WAIT_FOLDER
 
     if action == "report_date" and is_admin(uid):
         name    = context.user_data.pop("report_name", "?")
@@ -8756,7 +8776,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text(
             "لمن هذا الامتحان؟" if not is_main_admin(uid) else "Bu sinav kime?",
             reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
+        return WAIT_FOLDER
 
     # ── Sınav Tarihi (Admin) ─────────────────────────
     if action == "countdown_date" and is_admin(uid):
@@ -9950,17 +9970,17 @@ def main():
             for fl in lab_fixed:
                 if fl.get("weekday") != today_wd: continue
                 fl_grps = fl.get("groups", [fl.get("group", "")])
-                if u_grp and fl_grps and not any(
-                        u_grp == g or u_grp.startswith(g + "_") for g in fl_grps if g):
+                if u_grp and fl_grps and not any(u_grp == g or u_grp.startswith(g) for g in fl_grps if g):
                     continue
                 t_str = f" ⏰ {fl['time']}" if fl.get("time") else ""
                 events.append(f"🔬 مختبر: {fl.get('name','?')}{t_str}")
 
-            # Scheduled lab for today
+            # Scheduled lab for today (week field is YYYY-MM-DD)
+            today_iso = today.strftime("%Y-%m-%d")
             for le in lab_sched:
-                if le.get("date") != today_str: continue
+                if le.get("week") != today_iso: continue
                 le_grp = le.get("group", "")
-                if u_grp and le_grp and not (u_grp == le_grp or u_grp.startswith(le_grp + "_")): continue
+                if u_grp and le_grp and not (u_grp == le_grp or u_grp.startswith(le_grp)): continue
                 t_str = f" ⏰ {le['time']}" if le.get("time") else ""
                 events.append(f"🔬 مختبر: {le.get('note', le.get('group','?'))}{t_str}")
 
@@ -9974,6 +9994,8 @@ def main():
                     u_n = "sabahi" if u_shift in ("sabahi","sabah") else "masaiy"
                     c_n = "sabahi" if cd_shift in ("sabahi","sabah") else "masaiy"
                     if u_n != c_n: continue
+                cd_grp = cd.get("group", "")
+                if cd_grp and u_grp and not u_grp.startswith(cd_grp): continue
                 t_str = f" ⏰ {cd['time']}" if cd.get("time") else ""
                 events.append(f"📅 امتحان: {cd.get('name','?')}{t_str}")
 
@@ -9982,6 +10004,13 @@ def main():
                 if rep.get("date") != today_str: continue
                 rep_cls = rep.get("cls", "")
                 if rep_cls and u_cls and rep_cls != u_cls: continue
+                rep_shift = rep.get("shift", "")
+                if rep_shift and u_shift:
+                    u_n = "sabahi" if u_shift in ("sabahi","sabah") else "masaiy"
+                    r_n = "sabahi" if rep_shift in ("sabahi","sabah") else "masaiy"
+                    if u_n != r_n: continue
+                rep_grp = rep.get("group", "")
+                if rep_grp and u_grp and not u_grp.startswith(rep_grp): continue
                 t_str = f" ⏰ {rep['time']}" if rep.get("time") else ""
                 subj  = f" [{rep['subject']}]" if rep.get("subject") else ""
                 events.append(f"📋 تقرير: {rep.get('name','?')}{subj}{t_str}")
