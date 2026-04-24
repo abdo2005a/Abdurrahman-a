@@ -3214,7 +3214,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         for e in schedule:
             try:
                 e_dt = _dt.strptime(e["week"], "%Y-%m-%d").date()
-                if e_dt >= today_ts and e.get("group","") == user_grp:
+                lab_grp = e.get("group","")
+                if e_dt >= today_ts and (not lab_grp or user_grp.startswith(lab_grp)):
                     day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
                     date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
                     note = e.get("note","")
@@ -3224,7 +3225,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         # Fixed/recurring lab entries for user's group
         fixed_labs = load_lab_fixed()
         for fl in fixed_labs:
-            if fl.get("group","") == user_grp:
+            fl_grps = fl.get("groups", [fl.get("group","")])
+            fl_grps = [g for g in fl_grps if g]
+            if not fl_grps or any(user_grp.startswith(g) for g in fl_grps):
                 day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
                 my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
 
@@ -3244,7 +3247,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     if text in (TR["btn_reports"], AR["btn_reports"]):
         cls   = get_user_class(uid) if not is_admin(uid) else ""
         shift = get_user_shift(uid) if not is_admin(uid) else ""
-        reps  = get_reports(cls, shift, uid=uid)
+        reps  = get_reports(cls, shift, uid=uid if not is_admin(uid) else "")
         if not reps:
             await update.message.reply_text(L(uid,"reports_none"))
         else:
@@ -3264,7 +3267,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     if text in (TR["countdown_btn"], AR["countdown_btn"]):
         cls   = get_user_class(uid) if not is_admin(uid) else ""
         shift = get_user_shift(uid)  if not is_admin(uid) else ""
-        cds   = get_countdowns(cls, shift, uid=uid)
+        cds   = get_countdowns(cls, shift, uid=uid if not is_admin(uid) else "")
         if not cds:
             await update.message.reply_text(L(uid,"countdown_none"))
         else:
@@ -3389,8 +3392,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                  InlineKeyboardButton(L(uid,"sort_az"),       callback_data="extra|sort_az")],
                 [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
                  InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
-                [InlineKeyboardButton("📅 Sinav Ekle",       callback_data="cnt|add_countdown")],
-                [InlineKeyboardButton("📋 Rapor Ekle",       callback_data="cnt|add_report")],
+                [InlineKeyboardButton("📅 Sinav Ekle",       callback_data="cnt|add_countdown"),
+                 InlineKeyboardButton("📋 Rapor Ekle",       callback_data="cnt|add_report")],
+                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
                 [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
             ]
             sent = await update.message.reply_text(L(uid,"content_mgmt"), reply_markup=InlineKeyboardMarkup(kb))
@@ -3414,9 +3418,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             if row_file: kb.append(row_file)
 
             if get_admin_perm(uid, "can_countdown"):
-                kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown")])
-                kb.append([InlineKeyboardButton("📋 إضافة تقرير",  callback_data="cnt|add_report")])
-                kb.append([InlineKeyboardButton("🔬 إضافة موعد مختبر", callback_data="lab|add_new")])
+                kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown"),
+                            InlineKeyboardButton("📋 إضافة تقرير",  callback_data="cnt|add_report")])
+                kb.append([InlineKeyboardButton("🔬 برنامج المختبر", callback_data="mgmt|lab")])
             if get_admin_perm(uid, "can_poll"):
                 kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
             if get_admin_perm(uid, "can_broadcast"):
@@ -3498,7 +3502,6 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton(_um_lbl,                callback_data="mgmt|toggle_update")],
             [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
              InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
-            [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
             [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
              InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
             [InlineKeyboardButton("⏰ Bildirim Ayarları",    callback_data="set|remind_cfg")],
@@ -3514,8 +3517,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
             [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
-            [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
-             InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+            [InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
             [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
             [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
@@ -4790,6 +4792,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # Rebuild lab panel inline
             from datetime import date as _date2
             future2 = get_upcoming_lab_weeks(10)
+            _ag2 = get_admin_grp(uid)
+            if _ag2 and not is_main_admin(uid):
+                future2 = [e for e in future2 if e.get("group","").startswith(_ag2)]
             kb_del = []
             for e2 in future2:
                 g2 = e2.get("group","?"); w2 = e2.get("week","")
@@ -4832,6 +4837,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             # Rebuild lab panel inline
             from datetime import date as _date3
             future3 = get_upcoming_lab_weeks(10)
+            _ag3 = get_admin_grp(uid)
+            if _ag3 and not is_main_admin(uid):
+                future3 = [e for e in future3 if e.get("group","").startswith(_ag3)]
             kb_set = []
             for e3 in future3:
                 g3 = e3.get("group","?"); w3 = e3.get("week","")
@@ -5589,8 +5597,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             schedule = load_lab_schedule()
             from datetime import date as _date
             today_str = _date.today().strftime("%d/%m/%Y")
-            # Gelecekteki kayıtlar
+            # Gelecekteki kayıtlar — ikincil admin kendi grubunu görür
             future = get_upcoming_lab_weeks(10)
+            _adm_grp_lab = get_admin_grp(uid)
+            if _adm_grp_lab and not is_main_admin(uid):
+                future = [e for e in future if e.get("group","").startswith(_adm_grp_lab)]
             kb = []
             for e in future:
                 grp  = e.get("group","?")
