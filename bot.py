@@ -5586,7 +5586,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.message.reply_text(f"👥 طلاب صفي ({len(kb)}):", reply_markup=InlineKeyboardMarkup(kb[:30]))
         return ConversationHandler.END
 
-    if cb.startswith("mgmt|") and is_admin(uid) and (is_main_admin(uid) or cb == "mgmt|poll"):
+    if cb.startswith("mgmt|") and is_admin(uid) and (is_main_admin(uid) or cb == "mgmt|poll" or (cb == "mgmt|lab" and get_admin_perm(uid, "can_countdown"))):
         parts  = cb.split("|")
         action = parts[1]
 
@@ -7729,7 +7729,35 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if cb.startswith("rep_shift|") and is_admin(uid):
         shift_val = cb.split("|")[1]
         context.user_data["report_shift"] = "" if shift_val == "all" else shift_val
-        context.user_data["report_group"] = ""
+        adm_cls_r = get_admin_cls(uid)
+        if adm_cls_r:
+            context.user_data["report_cls"] = adm_cls_r
+        cls_chosen_r = context.user_data.get("report_cls", "")
+        # Both class AND shift "all" → skip group, go to date
+        if not cls_chosen_r and shift_val == "all":
+            context.user_data["report_group"] = ""
+            context.user_data["action"] = "report_date"
+            await query.edit_message_text(
+                "اكتب التاريخ (مثال: 20/05/2026) أو مع الوقت (20/05/2026 09:30):",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+                ]]))
+            return WAIT_FOLDER
+        cls_for_grp_r = adm_cls_r or cls_chosen_r
+        if cls_for_grp_r:
+            cls_grps_r = get_class_groups(cls_for_grp_r)
+            grp_keys_r = list(cls_grps_r.keys())
+        else:
+            grp_keys_r = ["A","B","C"]
+        kb_rg = [[InlineKeyboardButton("الكل", callback_data="rep_grp|all")]]
+        row_rg = [InlineKeyboardButton(g, callback_data=f"rep_grp|{g}") for g in grp_keys_r]
+        if row_rg: kb_rg.append(row_rg)
+        await query.edit_message_text("📋 المجموعة:", reply_markup=InlineKeyboardMarkup(kb_rg))
+        return WAIT_FOLDER
+
+    if cb.startswith("rep_grp|") and is_admin(uid):
+        grp_val = cb.split("|")[1]
+        context.user_data["report_group"] = "" if grp_val == "all" else grp_val
         context.user_data["action"] = "report_date"
         await query.edit_message_text(
             "اكتب التاريخ (مثال: 20/05/2026) أو مع الوقت (20/05/2026 09:30):",
