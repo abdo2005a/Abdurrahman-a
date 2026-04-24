@@ -1337,17 +1337,17 @@ def get_current_lab_week():
             return entry
     return None
 
-def add_lab_week(week_start_str: str, group: str, note: str = ""):
+def add_lab_week(week_start_str: str, group: str, note: str = "", cls: str = ""):
     """Tarihe grup+lab ata. Aynı tarih-grup varsa güncelle, yoksa ekle."""
     schedule = load_lab_schedule()
-    # Aynı tarih + aynı grup varsa güncelle
     for entry in schedule:
         if entry.get("week") == week_start_str and entry.get("group") == group:
             entry["note"] = note
+            if cls: entry["cls"] = cls
             save_lab_schedule(schedule)
             return
-    # Yeni ekle — Aynı tarihte farklı gruplar olabilir
     schedule.append({"week": week_start_str, "group": group, "note": note,
+                     "cls": cls,
                      "added": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")})
     schedule = sorted(schedule, key=lambda x: (x["week"], x.get("group","")))
     save_lab_schedule(schedule)
@@ -3199,6 +3199,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         from datetime import datetime as _dt
         ARABIC_DAYS = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
         user_grp = load_groups().get(uid, "") or get_admin_grp(uid)
+        user_cls = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
         schedule = load_lab_schedule()
         today_ts = _dt.now().date()
 
@@ -3206,19 +3207,24 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         for e in schedule:
             try:
                 e_dt = _dt.strptime(e["week"], "%Y-%m-%d").date()
-                if e_dt >= today_ts and e.get("group","") == user_grp:
-                    day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
-                    date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
-                    note = e.get("note","")
-                    my_labs.append((date_disp, note, False))
+                if e_dt < today_ts: continue
+                lab_cls = e.get("cls", "")
+                if lab_cls and user_cls and lab_cls != user_cls: continue
+                lab_grp = e.get("group", "")
+                if lab_grp and user_grp and not user_grp.startswith(lab_grp): continue
+                day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
+                date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
+                my_labs.append((date_disp, e.get("note",""), False))
             except: pass
 
         # Fixed/recurring lab entries for user's group
         fixed_labs = load_lab_fixed()
         for fl in fixed_labs:
-            if fl.get("group","") == user_grp:
-                day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
-                my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
+            fl_grps = fl.get("groups", [fl.get("group","")])
+            fl_grps = [g for g in fl_grps if g]
+            if fl_grps and user_grp and not any(user_grp.startswith(g) for g in fl_grps): continue
+            day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
+            my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
 
         if not my_labs:
             await update.message.reply_text(
@@ -4647,8 +4653,21 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if sadmin_act == "bsft":
             cls_val = parts[2] if len(parts) > 2 else "all"
             sft_val = parts[3] if len(parts) > 3 else "all"
-            await safe_edit(query, "📢 المجموعة:",
-                reply_markup=InlineKeyboardMarkup(_grp_kb("bgrp", cls_val, sft_val, f"sadmin|bcls|{cls_val}")))
+            if sft_val == "all":
+                # Hepsi seçildi — grup sorusunu atla, direkt mesaj
+                tgt_parts_sf = []
+                if cls_val != "all": tgt_parts_sf.append(f"cls_{cls_val}")
+                sb_tgt_sf = "|".join(tgt_parts_sf) or "all"
+                context.user_data["sb_target"] = sb_tgt_sf
+                context.user_data["action"] = "sadmin_bcast"
+                lbl_sf = target_label(sb_tgt_sf)
+                prev_sf = get_target_users(sb_tgt_sf) if sb_tgt_sf != "all" else [u for u in load_users() if int(u) != ADMIN_ID]
+                prev_sf = [u for u in prev_sf if not is_blocked(u) and int(u) != ADMIN_ID]
+                await safe_edit(query, f"📢 {lbl_sf}\n👥 {len(prev_sf)} مستخدم\n\nاكتب نص الإعلان:",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="close")]]))
+            else:
+                await safe_edit(query, "📢 المجموعة:",
+                    reply_markup=InlineKeyboardMarkup(_grp_kb("bgrp", cls_val, sft_val, f"sadmin|bcls|{cls_val}")))
             return WAIT_BROADCAST_MSG
 
         if sadmin_act == "bgrp":
@@ -4725,6 +4744,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             sft_val = lab_parts[2] if len(lab_parts) > 2 else "all"
             context.user_data["pending_lab_sft"] = "" if sft_val == "all" else sft_val
             context.user_data["action"] = "lab_add_date"
+            if sft_val == "all":
+                # Hepsi seçildi — grup adımını atla, tarihe geç
+                context.user_data.pop("pending_lab_sft", None)
             await query.edit_message_text("📅 Tarih yaz (DD/MM/YYYY):\nÖrn: 22/04/2026")
             return WAIT_FOLDER
 
@@ -4810,7 +4832,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             week  = lab_parts[2]
             group = lab_parts[3]
             lab_name = context.user_data.pop("pending_lab_name", "")
-            add_lab_week(week, group, note=lab_name)
+            lab_cls  = context.user_data.pop("pending_lab_cls", "")
+            add_lab_week(week, group, note=lab_name, cls=lab_cls)
             from datetime import datetime as _dt2
             try:
                 d2 = _dt2.strptime(week, "%Y-%m-%d")
@@ -7674,6 +7697,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         admin_cls = get_admin_cls(uid)
         if admin_cls:
             context.user_data["countdown_cls"] = admin_cls
+        if shift_val == "all":
+            # Hepsi seçildi — grup adımını atla, tarihe geç
+            context.user_data["countdown_group"] = ""
+            context.user_data["action"] = "countdown_date"
+            await query.edit_message_text(
+                L(uid,"countdown_date"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
+            return WAIT_FOLDER
         cls_for_grp = admin_cls or context.user_data.get("countdown_cls","")
         if cls_for_grp:
             cls_grps = get_class_groups(cls_for_grp)
@@ -7716,6 +7747,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if cb.startswith("rep_shift|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         shift_val = cb.split("|")[1]
         context.user_data["report_shift"] = "" if shift_val == "all" else shift_val
+        if shift_val == "all":
+            # Hepsi seçildi — grup adımını atla, tarihe geç
+            context.user_data["report_group"] = ""
+            context.user_data["action"] = "report_date"
+            await query.edit_message_text(
+                "اكتب التاريخ (مثال: 20/05/2026) أو مع الوقت (20/05/2026 09:30):",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
+            return WAIT_FOLDER
         cls_for_grp = get_admin_cls(uid) or context.user_data.get("report_cls", "")
         if cls_for_grp:
             cls_grps = get_class_groups(cls_for_grp)
@@ -9945,7 +9984,8 @@ def main():
                 target_week = (_dt.now() + timedelta(days=lab_days)).strftime("%Y-%m-%d")
                 if entry.get("week") != target_week:
                     continue
-                grp  = entry.get("group","?")
+                grp      = entry.get("group","?")
+                lab_cls  = entry.get("cls","")
                 note = entry.get("note","")
                 day_lbl = "غداً" if lab_days == 1 else f"بعد {lab_days} أيام"
                 msg = (f"🔬 تذكير المختبر\n\n"
@@ -9955,6 +9995,7 @@ def main():
                 users_d = load_users()
                 for uid_, u in users_d.items():
                     if is_blocked(uid_): continue
+                    if lab_cls and get_user_class(uid_) != lab_cls: continue
                     u_grp_ = grps_d.get(uid_,"")
                     if u_grp_ and (u_grp_ == grp or u_grp_.startswith(grp)):
                         try: await ctx.bot.send_message(int(uid_), msg)
