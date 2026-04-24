@@ -6743,10 +6743,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             name_r = cd_r.get("name","")
             date_r = cd_r.get("date","")
             cls_r  = cd_r.get("cls","") or adm_cls
+            sft_r  = cd_r.get("shift","")
             grp_r  = cd_r.get("group","")
             msg_r  = f"⏰ تذكير بالامتحان\n\n📚 {name_r}\n📅 {date_r}"
             # Hedef kullanıcılar
             targets_r = get_target_users(f"cls_{cls_r}" if cls_r else "all")
+            if sft_r:
+                shfts_r = load_shifts()
+                targets_r = [u for u in targets_r if shfts_r.get(u,"") in (sft_r, "sabah" if sft_r=="sabahi" else "gece")]
             if grp_r:
                 grps_d = load_groups()
                 targets_r = [u for u in targets_r if grps_d.get(u,"").startswith(grp_r)]
@@ -9913,6 +9917,10 @@ def main():
                 if shft_cd:
                     shfts = load_shifts()
                     targets = [u for u in targets if shfts.get(u,"") in (shft_cd,"sabah" if shft_cd=="sabahi" else "gece")]
+                grp_cd = cd.get("group","")
+                if grp_cd:
+                    grps_d_ex = load_groups()
+                    targets = [u for u in targets if grps_d_ex.get(u,"").startswith(grp_cd)]
                 day_lbl = "غداً" if remind_days == 1 else f"بعد {remind_days} أيام"
                 msg = f"⏰ تذكير بالامتحان\n\n📚 {name_cd}\n📅 {day_lbl} — {target_date}"
                 for uid_ in targets:
