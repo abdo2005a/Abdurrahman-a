@@ -10008,8 +10008,7 @@ def main():
         from datetime import time as _dtime
         job_queue.run_daily(
             _daily_morning_reminder,
-            time=_dtime(8, 0, 0),
-            timezone=IRAQ_TZ,
+            time=_dtime(8, 0, 0, tzinfo=IRAQ_TZ),
         )
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
         print("✅ Sabah hatırlatma job'u başlatıldı (08:00 Irak)")
