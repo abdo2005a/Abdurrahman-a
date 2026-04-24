@@ -3711,7 +3711,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if cb.startswith("shift_pick|") and not is_admin(uid):
         shift = cb.split("|")[1]
         set_user_shift(uid, shift)
-        shift_lbl = "صباحي" if shift in ("sabahi","sabahi") else "مسائي"
+        shift_lbl = "صباحي" if shift in ("sabahi","sabah") else "مسائي"
         kb_grp = [
             [InlineKeyboardButton("A", callback_data="group_pick|A"),
              InlineKeyboardButton("B", callback_data="group_pick|B"),
@@ -5897,7 +5897,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     if sft_f == "masaiy" and us not in ("masaiy","gece"): continue
                 if grp_f not in ("_","all"):
                     ug = grps_d.get(uid_,"")
-                    if ug != grp_f and not ug.startswith(grp_f + "_"): continue
+                    if not ug.startswith(grp_f): continue
                 result.append((uid_, u))
 
             if not result:
@@ -6731,7 +6731,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             idx_r  = int(cb.split("|")[2])
             adm_cls = get_admin_cls(uid) or ""
             adm_sft = get_admin_shift(uid) or ""
-            cds_r  = get_countdowns(adm_cls, uid=uid)
+            cds_r  = get_countdowns(adm_cls, adm_sft)
             if idx_r >= len(cds_r):
                 await query.answer("Sınav bulunamadı", show_alert=True); return ConversationHandler.END
             cd_r = cds_r[idx_r]
@@ -9954,7 +9954,7 @@ def main():
                 if fl.get("weekday") != today_wd: continue
                 fl_grps = fl.get("groups", [fl.get("group", "")])
                 if u_grp and fl_grps and not any(
-                        u_grp == g or u_grp.startswith(g + "_") for g in fl_grps if g):
+                        u_grp == g or u_grp.startswith(g) for g in fl_grps if g):
                     continue
                 t_str = f" ⏰ {fl['time']}" if fl.get("time") else ""
                 events.append(f"🔬 مختبر: {fl.get('name','?')}{t_str}")
@@ -9963,7 +9963,7 @@ def main():
             for le in lab_sched:
                 if le.get("date") != today_str: continue
                 le_grp = le.get("group", "")
-                if u_grp and le_grp and not (u_grp == le_grp or u_grp.startswith(le_grp + "_")): continue
+                if u_grp and le_grp and not u_grp.startswith(le_grp): continue
                 t_str = f" ⏰ {le['time']}" if le.get("time") else ""
                 events.append(f"🔬 مختبر: {le.get('note', le.get('group','?'))}{t_str}")
 
@@ -9977,6 +9977,8 @@ def main():
                     u_n = "sabahi" if u_shift in ("sabahi","sabah") else "masaiy"
                     c_n = "sabahi" if cd_shift in ("sabahi","sabah") else "masaiy"
                     if u_n != c_n: continue
+                cd_grp = cd.get("group", "")
+                if cd_grp and u_grp and not u_grp.startswith(cd_grp): continue
                 t_str = f" ⏰ {cd['time']}" if cd.get("time") else ""
                 events.append(f"📅 امتحان: {cd.get('name','?')}{t_str}")
 
@@ -9985,6 +9987,13 @@ def main():
                 if rep.get("date") != today_str: continue
                 rep_cls = rep.get("cls", "")
                 if rep_cls and u_cls and rep_cls != u_cls: continue
+                rep_shift = rep.get("shift", "")
+                if rep_shift and u_shift:
+                    u_n = "sabahi" if u_shift in ("sabahi","sabah") else "masaiy"
+                    r_n = "sabahi" if rep_shift in ("sabahi","sabah") else "masaiy"
+                    if u_n != r_n: continue
+                rep_grp = rep.get("group", "")
+                if rep_grp and u_grp and not u_grp.startswith(rep_grp): continue
                 t_str = f" ⏰ {rep['time']}" if rep.get("time") else ""
                 subj  = f" [{rep['subject']}]" if rep.get("subject") else ""
                 events.append(f"📋 تقرير: {rep.get('name','?')}{subj}{t_str}")
