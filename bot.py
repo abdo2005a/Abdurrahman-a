@@ -52,6 +52,7 @@ WHITELIST_FILE   = os.path.join(BASE_DIR, "whitelist.json")
 SCHEDULED_FILE   = os.path.join(BASE_DIR, "scheduled.json")
 TAGS_FILE        = os.path.join(BASE_DIR, "file_tags.json")
 REMINDERS_FILE   = os.path.join(BASE_DIR, "reminders.json")
+REPORTS_FILE     = os.path.join(BASE_DIR, "reports.json")
 SEARCH_CACHE_FILE= os.path.join(BASE_DIR, "search_cache.json")
 LEADERBOARD_FILE = os.path.join(BASE_DIR, "leaderboard.json")
 ACHIEVEMENTS_FILE= os.path.join(BASE_DIR, "achievements.json")
@@ -102,6 +103,7 @@ BACKUP_SCHEMA = {
     "user_notes":    USER_NOTES_FILE,
     "quizzes":       QUIZ_FILE,
     "reports":       REPORT_FILE,
+    "user_reports":  REPORTS_FILE,
     "admin_perms":   ADMIN_PERMS_FILE,
 }
 
@@ -540,6 +542,11 @@ TR = {
     "btn_reminder":       "⏰ Hatırlatıcım",
     "anon_q_btn":         "❓ Anonim Soru",
     "countdown_btn":      "⏳ Yaklaşan Sınavlar",
+    "btn_reports":        "📋 Raporlarım",
+    "reports_none":       "Yaklaşan rapor yok.",
+    "report_name_prompt": "Rapor adını yazın:",
+    "report_subj_prompt": "Dersin adını yazın:",
+    "report_saved":       "✅ {} kaydedildi.",
     "rules_btn":          "📜 Kurallar",
     "quiz_btn":           "📝 Mini Test",
     "notes_empty":        "Henüz not yok.",
@@ -556,7 +563,7 @@ TR = {
     "anon_q_sent":        "✅ Sorunuz iletildi.",
     "countdown_none":     "Yaklaşan sınav eklenmemiş.",
     "countdown_prompt":   "Sınav adını yazın:",
-    "countdown_date":     "Tarih yazın (örn: 20/05/2026):",
+    "countdown_date":     "Tarih yazın (örn: 20/05/2026 veya 20/05/2026 09:30):",
     "countdown_saved":    "✅ {} kaydedildi.",
     "quiz_none":          "Aktif test yok.",
     "group_select":       "👥 Grubunu seç (A/B/C → alt grup):",
@@ -921,6 +928,11 @@ AR = {
     "btn_reminder":       "⏰ تذكيراتي",
     "anon_q_btn":         "❓ سؤال مجهول",
     "countdown_btn":      "⏳ الامتحانات القادمة",
+    "btn_reports":        "📋 تقاريري",
+    "reports_none":       "لا توجد تقارير قريبة.",
+    "report_name_prompt": "اكتب اسم التقرير:",
+    "report_subj_prompt": "اكتب اسم المادة:",
+    "report_saved":       "✅ تم حفظ {}.",
     "rules_btn":          "📜 القواعد",
     "quiz_btn":           "📝 اختبار قصير",
     "notes_empty":        "لا توجد ملاحظات بعد.",
@@ -937,7 +949,7 @@ AR = {
     "anon_q_sent":        "✅ تم إرسال سؤالك.",
     "countdown_none":     "لا توجد امتحانات مضافة.",
     "countdown_prompt":   "اكتب اسم الامتحان:",
-    "countdown_date":     "اكتب التاريخ (مثال: 20/05/2026):",
+    "countdown_date":     "اكتب التاريخ (مثال: 20/05/2026) أو التاريخ والوقت (20/05/2026 09:30):",
     "countdown_saved":    "✅ تم حفظ {}.",
     "quiz_none":          "لا يوجد اختبار نشط.",
     "group_select":       "👥 اختر مجموعتك (A/B/C → مجموعة فرعية):",
@@ -1129,6 +1141,57 @@ def load_tags():          return load_json(TAGS_FILE, {})
 def save_tags(d):         save_json(TAGS_FILE, d)
 def load_reminders():     return load_json(REMINDERS_FILE, [])
 def save_reminders(d):    save_json(REMINDERS_FILE, d)
+
+def load_reports():    return load_json(REPORTS_FILE, [])
+def save_reports(d):   save_json(REPORTS_FILE, d)
+
+def add_report(name: str, subject: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
+    try:
+        from datetime import datetime as dt
+        parts_dt = date_str.strip().split()
+        date_only = parts_dt[0]
+        time_only = parts_dt[1] if len(parts_dt) >= 2 and ":" in parts_dt[1] else ""
+        if time_only:
+            target = dt.strptime(f"{date_only} {time_only}", "%d/%m/%Y %H:%M")
+        else:
+            target = dt.strptime(date_only, "%d/%m/%Y")
+        reps = load_reports()
+        reps.append({"name": name, "subject": subject, "date": date_only, "time": time_only,
+                     "ts": target.timestamp(), "cls": cls, "shift": shift, "group": group,
+                     "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
+        save_reports(reps)
+        return True
+    except: return False
+
+def get_reports(cls: str = "", shift: str = "", uid: str = "") -> list:
+    import time
+    now = time.time()
+    reps = load_reports()
+    extra_cls = []
+    if uid:
+        extra_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+        extra_cls  = extra_data.get(str(uid), [])
+    all_cls = []
+    if cls: all_cls.append(cls)
+    for ec in extra_cls:
+        if ec not in all_cls: all_cls.append(ec)
+    result = []
+    for r in reps:
+        if r.get("ts", 0) > now:
+            r_cls   = r.get("cls", "")
+            r_shift = r.get("shift", "")
+            if all_cls and r_cls and r_cls not in all_cls: continue
+            r_grp = r.get("group", "")
+            if r_grp and uid:
+                u_grp = load_groups().get(str(uid), "")
+                if not u_grp.startswith(r_grp): continue
+            if r_shift and shift:
+                u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
+                c_norm = "sabahi" if r_shift in ("sabahi","sabah") else "masaiy"
+                if u_norm != c_norm: continue
+            days_left = int((r["ts"] - now) / 86400)
+            result.append({**r, "days_left": days_left})
+    return sorted(result, key=lambda x: x["ts"])
 def load_search_cache():  return load_json(SEARCH_CACHE_FILE, {})
 def save_search_cache(d): save_json(SEARCH_CACHE_FILE, d)
 def load_leaderboard():   return load_json(LEADERBOARD_FILE, {})
@@ -1172,10 +1235,8 @@ def load_personal_notes():return load_json(USER_NOTES_FILE, {})
 def save_personal_notes(d):save_json(USER_NOTES_FILE, d)
 def load_quizzes():       return load_json(QUIZ_FILE, [])
 def save_quizzes(d):      save_json(QUIZ_FILE, d)
-def load_reports():       return load_json(REPORT_FILE, [])
 def load_admin_perms():   return load_json(ADMIN_PERMS_FILE, {})
 def save_admin_perms(d):  save_json(ADMIN_PERMS_FILE, d)
-def save_reports(d):      save_json(REPORT_FILE, d)
 
 def get_user_notes(uid: str) -> list:
     """Kullanıcının tüm notlarını döndür (liste formatı)."""
@@ -1383,12 +1444,19 @@ def parse_time_input(text: str) -> int:
     return total if total > 0 else 0
 
 def add_countdown(name: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
-    """date_str: 'DD/MM/YYYY'. shift: sabahi/masaiy. group: A/B/C veya boş=hepsi"""
+    """date_str: 'DD/MM/YYYY' or 'DD/MM/YYYY HH:MM'. shift: sabahi/masaiy. group: A/B/C or empty."""
     try:
         from datetime import datetime as dt
-        target = dt.strptime(date_str.strip(), "%d/%m/%Y")
+        parts_dt = date_str.strip().split()
+        date_only = parts_dt[0]
+        time_only = parts_dt[1] if len(parts_dt) >= 2 and ":" in parts_dt[1] else ""
+        if time_only:
+            target = dt.strptime(f"{date_only} {time_only}", "%d/%m/%Y %H:%M")
+        else:
+            target = dt.strptime(date_only, "%d/%m/%Y")
         cd = load_countdowns()
-        cd.append({"name": name, "date": date_str, "ts": target.timestamp(),
+        cd.append({"name": name, "date": date_only, "time": time_only,
+                   "ts": target.timestamp(),
                    "cls": cls, "shift": shift, "group": group,
                    "created": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d")})
         save_countdowns(cd)
@@ -1533,33 +1601,7 @@ DEFAULT_ADMIN_PERMS = {
     "can_countdown":   True,   # Sınav ekle
     "can_view_users":  False,  # Kullanıcı görme — kapalı
     "cls":             None,   # None = tüm sınıflar
-    "shift":           None,
 }
-
-_ADMINPERM_LABELS = [
-    ("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),
-    ("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),
-    ("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),
-    ("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),
-    ("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),
-    ("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme"),
-]
-
-def _build_adminperm_kb(adm_id, perms):
-    kb = []
-    for pk, pl in _ADMINPERM_LABELS:
-        v = perms.get(pk, DEFAULT_ADMIN_PERMS.get(pk, False))
-        kb.append([InlineKeyboardButton(f"{'✅' if v else '❌'} {pl}", callback_data=f"adminperm|toggle|{adm_id}|{pk}")])
-    cv = perms.get("cls", None)
-    sv = perms.get("shift", None)
-    gv = perms.get("grp", None)
-    kb.append([
-        InlineKeyboardButton(f"Sinif: {cv or 'Hepsi'}",   callback_data=f"adminperm|cls|{adm_id}"),
-        InlineKeyboardButton(f"Vardiya: {sv or 'Hepsi'}", callback_data=f"adminperm|shift_pick|{adm_id}"),
-        InlineKeyboardButton(f"Grup: {gv or 'Hepsi'}",    callback_data=f"adminperm|grp|{adm_id}"),
-    ])
-    kb.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
-    return kb
 
 def get_admin_perm(admin_uid: str, perm: str) -> bool:
     """Admin'in belirli bir yetkisi var mı?"""
@@ -2021,7 +2063,7 @@ def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
                    "search": "E8F5E9", "ai_query": "E3F2FD"}
     for r, m in enumerate(msgs_d.get(uid_, []), 2):
         color = TYPE_COLORS.get(m.get("type", ""), ("F9F9F9" if r % 2 == 0 else None))
-        _excel_row(ws2, r, [m.get("time", ""), m.get("type", ""), m.get("text", "")[:200]], color)
+        _excel_row(ws2, r, [m.get("time", ""), m.get("type", ""), m.get("content", m.get("text", ""))[:300]], color)
     _auto_col_width(ws2)
 
     # Sayfa 3: Uyarılar
@@ -2045,6 +2087,52 @@ def build_excel_user(uid_: str, users_d, classes_d, msgs_d,
     _auto_col_width(ws4)
 
     buf = io.BytesIO(); wb.save(buf)
+    return buf.getvalue()
+
+
+def build_excel_activity(uid_: str, msgs_d, reminders_d) -> bytes:
+    """Second Excel: user messages + active reminders for one user."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = Workbook()
+
+    # Sheet 1: Messages
+    ws1 = wb.active
+    ws1.title = "الرسائل"
+    headers1 = ["الوقت", "النوع", "المحتوى"]
+    for c, h in enumerate(headers1, 1):
+        cell = ws1.cell(row=1, column=c, value=h)
+        cell.font      = Font(bold=True, color="FFFFFF")
+        cell.fill      = PatternFill("solid", fgColor="2196F3")
+        cell.alignment = Alignment(horizontal="center")
+    msgs = msgs_d.get(str(uid_), [])
+    for r, m in enumerate(msgs, 2):
+        ws1.cell(row=r, column=1, value=m.get("time", ""))
+        ws1.cell(row=r, column=2, value=m.get("type", ""))
+        ws1.cell(row=r, column=3, value=m.get("content", m.get("text", ""))[:500])
+    for col in ws1.columns:
+        ws1.column_dimensions[col[0].column_letter].width = 30
+
+    # Sheet 2: Active reminders
+    ws2 = wb.create_sheet("التذكيرات النشطة")
+    headers2 = ["نص التذكير", "وقت الإطلاق"]
+    for c, h in enumerate(headers2, 1):
+        cell = ws2.cell(row=1, column=c, value=h)
+        cell.font      = Font(bold=True, color="FFFFFF")
+        cell.fill      = PatternFill("solid", fgColor="FF9800")
+        cell.alignment = Alignment(horizontal="center")
+    import time as _t2
+    from datetime import datetime as _dt2
+    rems_user = [r for r in reminders_d if str(r.get("uid","")) == str(uid_)]
+    for r, rem in enumerate(rems_user, 2):
+        ws2.cell(row=r, column=1, value=rem.get("text", ""))
+        ts = rem.get("fire_ts", 0)
+        ws2.cell(row=r, column=2, value=_dt2.fromtimestamp(ts, tz=IRAQ_TZ).strftime("%Y-%m-%d %H:%M") if ts else "")
+    for col in ws2.columns:
+        ws2.column_dimensions[col[0].column_letter].width = 40
+
+    buf = io.BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
@@ -2091,12 +2179,35 @@ def log_admin_activity(admin_uid: str, action_type: str, detail: dict):
 def get_sender_label(sender_uid: str) -> str:
     """Returns display label for poll/broadcast sender."""
     if str(sender_uid) == str(ADMIN_ID):
-        return "مشرف البوت"  # Bot supervisor
+        return "منشئ البوت"
     users_d = load_users()
     u = users_d.get(str(sender_uid), {})
     name = u.get("full_name") or u.get("first_name") or f"ID:{sender_uid}"
-    un = f" @{u['username']}" if u.get("username") else ""
-    return f"مسؤول الفصل: {name}{un}"
+    un = f" (@{u['username']})" if u.get("username") else ""
+    return f"{name}{un}"
+
+def fmt_bcast(header_emoji: str, header_ar: str, body: str, sender_uid: str, ts: str = None) -> str:
+    """Clean broadcast format — no box borders."""
+    from datetime import datetime as _dt
+    t = ts or datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+    sender = get_sender_label(sender_uid)
+    return (
+        f"{header_emoji} {header_ar}\n\n"
+        f"{body}\n\n"
+        f"▸ 👤 {sender}\n"
+        f"▸ 🕐 {t}"
+    )
+
+def fmt_dm(body: str, sender_uid: str) -> str:
+    """Clean DM format with sender attribution."""
+    t = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+    sender = get_sender_label(sender_uid)
+    return (
+        f"💌 رسالة شخصية\n"
+        f"▸ من: {sender}\n\n"
+        f"{body}\n\n"
+        f"▸ 🕐 {t}"
+    )
 
 # ── Uyarı Sistemi ─────────────────────────────────────────────
 def get_warns(uid: str) -> list:
@@ -2314,8 +2425,9 @@ def build_poll_results_text(poll, uid, show_voters=False):
 def load_settings():
     default = {
         "maintenance":       False,
-        "maintenance_full":  True,
-        "maintenance_text":  "🔧 البوت قيد الصيانة، يرجى المحاولة لاحقاً...",
+        "maintenance_text":  "🔧 البوت قيد التحديث، يرجى المحاولة لاحقاً...",
+        "update_mode":       False,
+        "update_mode_text":  "🔄 البوت في وضع التحديث، يرجى الانتظار...",
         "bot_name":          "بوت مهندسي المستقبل",
         "welcome_msg":       DEFAULT_WELCOME_AR,
         "bot_photo_id":      None,
@@ -2445,11 +2557,13 @@ ALL_BTNS = {
     TR["btn_notes"],     AR["btn_notes"],
     TR["btn_reminder"],  AR["btn_reminder"],
     TR["countdown_btn"], AR["countdown_btn"],
+    TR["btn_reports"],   AR["btn_reports"],
     TR["quiz_btn"],      AR["quiz_btn"],
     TR["rules_btn"],     AR["rules_btn"],
     "\U0001f52c \u0627\u0644\u0645\u062e\u062a\u0628\u0631",
     "🔬 المختبر",
-    "🔧 إيقاف الصيانة ✅",
+    "🔄 وضع التحديث",
+    "🔄 إيقاف التحديث ✅",
 }
 
 # ================================================================
@@ -2553,9 +2667,10 @@ def reply_kb(uid):
         if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
         if row4: rows.append(row4)
-        # Satır 5: Sınavlar + Lab
+        # Satır 5: Sınavlar + Raporlar + Lab
         row5 = []
         if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
+        if ub.get("btn_reports",  True): row5.append(KeyboardButton(AR["btn_reports"]))
         row5.append(KeyboardButton("🔬 المختبر"))
         if row5: rows.append(row5)
         # Satır 6: Liderboard + Quiz
@@ -2565,10 +2680,10 @@ def reply_kb(uid):
         if row6: rows.append(row6)
         # Satır 7: Kurallar
         rows.append([KeyboardButton(AR["rules_btn"])])
-        # Admin özel: İçerik + Bakım Modu
+        # Admin özel: İçerik + Güncelleme Modu
         _s_kb = load_settings()
-        _maint_kb_lbl = "🔧 إيقاف الصيانة ✅" if _s_kb.get("maintenance") else AR["btn_maint"]
-        rows.append([KeyboardButton(AR["btn_content"]), KeyboardButton(_maint_kb_lbl)])
+        _um_lbl = "🔄 إيقاف التحديث ✅" if _s_kb.get("update_mode") else "🔄 وضع التحديث"
+        rows.append([KeyboardButton(AR["btn_content"]), KeyboardButton(_um_lbl)])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     else:
         s  = load_settings()
@@ -2591,9 +2706,10 @@ def reply_kb(uid):
         if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
         if row4: rows.append(row4)
-        # Satır 5: Sınavlar + Lab
+        # Satır 5: Sınavlar + Raporlar + Lab
         row5 = []
         if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
+        if ub.get("btn_reports",  True): row5.append(KeyboardButton(AR["btn_reports"]))
         row5.append(KeyboardButton("🔬 المختبر"))
         if row5: rows.append(row5)
         # Satır 6: Liderboard + Test
@@ -2784,8 +2900,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
     # Bakım / Güncelleme modu kontrolü (kullanıcılar için)
-    if not is_admin(uid) and s.get("maintenance"):
-        await update.message.chat.send_message(s.get("maintenance_text", "🔧 البوت قيد الصيانة..."), reply_markup=reply_kb(uid))
+    if not is_admin(uid) and (s.get("maintenance") or s.get("update_mode")):
+        msg_text = s.get("maintenance_text" if s.get("maintenance") else "update_mode_text",
+                         "🔧 البوت قيد الصيانة...")
+        await update.message.chat.send_message(msg_text, reply_markup=reply_kb(uid))
         return
 
     # Klavyeyi gönder
@@ -2875,32 +2993,30 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("🚫 تم حظرك من استخدام البوت.")
         return
 
-    # Bakım modu kontrolleri
+    # Bakım/Güncelleme modu kontrolleri
     if not is_main_admin(uid):
         s_maint = load_settings()
         if s_maint.get("maintenance"):
-            if s_maint.get("maintenance_full", True):
-                # Tam bakım (ana admin aktifleştirdi) — kullanıcılar + ikincil adminler bloklanır
-                if is_admin(uid):
-                    by   = s_maint.get("maintenance_by_name", "")
-                    when = s_maint.get("maintenance_time", "")
-                    msg  = "🔧 البوت في وضع الصيانة الكاملة"
-                    if by:   msg += f"\nبواسطة: {by}"
-                    if when: msg += f"\nمنذ: {when}"
-                    await update.message.reply_text(msg)
-                    return
-                else:
-                    allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
-                    if text not in allowed_maint:
-                        await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
-                        return
+            if is_admin(uid):
+                # İkincil admin — bakım bilgisi göster, engel
+                by   = s_maint.get("maintenance_by_name", "")
+                when = s_maint.get("maintenance_time", "")
+                msg  = "🔧 البوت في وضع الصيانة الكاملة"
+                if by:   msg += f"\nبواسطة: {by}"
+                if when: msg += f"\nمنذ: {when}"
+                await update.message.reply_text(msg)
+                return
             else:
-                # Kısmi bakım (ikincil admin aktifleştirdi) — sadece kullanıcılar bloklanır
-                if not is_admin(uid):
-                    allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
-                    if text not in allowed_maint:
-                        await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
-                        return
+                allowed_maint = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
+                if text not in allowed_maint:
+                    await update.message.reply_text(s_maint.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+                    return
+        elif s_maint.get("update_mode") and not is_admin(uid):
+            # Güncelleme modu — sadece kullanıcılar bloklanır
+            allowed_um = {AR["countdown_btn"], TR["countdown_btn"], "🔬 المختبر"}
+            if text not in allowed_um:
+                await update.message.reply_text(s_maint.get("update_mode_text", "🔄 البوت في وضع التحديث..."))
+                return
 
     # Kullanıcı/alt-admin buton seçimini kaydet
     if not is_main_admin(uid) and not is_blocked(uid):
@@ -3042,30 +3158,29 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Hatırlatıcım ─────────────────────────────────
     if text in (TR["btn_reminder"], AR["btn_reminder"]):
-        if not is_admin(uid):
-            rems = get_user_reminders(uid)
-            if not rems:
-                kb = [
-                    [InlineKeyboardButton("➕ " + ("Ekle" if is_main_admin(uid) else "إضافة"),
-                                          callback_data="reminder|add")],
-                    [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
-                ]
-                await update.message.reply_text(L(uid,"reminder_none"), reply_markup=InlineKeyboardMarkup(kb))
-            else:
-                import time
-                now = time.time()
-                lines = [L(uid,"reminder_list").format(len(rems))]
-                kb = []
-                for i, r in enumerate(rems[:10]):
-                    left = int((r["fire_ts"] - now) / 60)
-                    left_str = f"{left}dk" if left < 60 else f"{left//60}sa"
-                    lines.append(f"\n🔔 {r['text'][:40]}\n   ⏰ {left_str} kaldı")
-                    kb.append([InlineKeyboardButton(f"🗑 {r['text'][:25]}", callback_data=f"reminder|del|{i}")])
-                kb.append([InlineKeyboardButton("➕ Yeni", callback_data="reminder|add")])
-                kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
-                sent = await update.message.reply_text(
-                    "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
-                context.user_data["last_inline_msg"] = sent.message_id
+        rems = get_user_reminders(uid)
+        if not rems:
+            kb = [
+                [InlineKeyboardButton("➕ " + ("Ekle" if is_main_admin(uid) else "إضافة"),
+                                      callback_data="reminder|add")],
+                [InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")],
+            ]
+            await update.message.reply_text(L(uid,"reminder_none"), reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            import time
+            now = time.time()
+            lines = [L(uid,"reminder_list").format(len(rems))]
+            kb = []
+            for i, r in enumerate(rems[:10]):
+                left = int((r["fire_ts"] - now) / 60)
+                left_str = f"{left}dk" if left < 60 else f"{left//60}sa"
+                lines.append(f"\n🔔 {r['text'][:40]}\n   ⏰ {left_str} kaldı")
+                kb.append([InlineKeyboardButton(f"🗑 {r['text'][:25]}", callback_data=f"reminder|del|{i}")])
+            kb.append([InlineKeyboardButton("➕ Yeni", callback_data="reminder|add")])
+            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+            sent = await update.message.reply_text(
+                "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb))
+            context.user_data["last_inline_msg"] = sent.message_id
         return
 
     # ── Anonim Soru ──────────────────────────────────
@@ -3122,6 +3237,26 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("\n".join(lines))
         return
 
+    if text in (TR["btn_reports"], AR["btn_reports"]):
+        cls   = get_user_class(uid) if not is_admin(uid) else ""
+        shift = get_user_shift(uid) if not is_admin(uid) else ""
+        reps  = get_reports(cls, shift, uid=uid)
+        if not reps:
+            await update.message.reply_text(L(uid,"reports_none"))
+        else:
+            lines = [f"📋 {'Yaklaşan Raporlar' if is_main_admin(uid) else 'التقارير القادمة'}\n"]
+            for rep in reps[:8]:
+                days = rep["days_left"]
+                if days == 0:   when = "🔴 اليوم!" if not is_main_admin(uid) else "🔴 Bugün!"
+                elif days == 1: when = "🟠 غداً"   if not is_main_admin(uid) else "🟠 Yarın"
+                elif days <= 7: when = f"🟡 {days} {'أيام' if not is_main_admin(uid) else 'gün'}"
+                else:           when = f"🟢 {days} {'يوم'  if not is_main_admin(uid) else 'gün'}"
+                time_str = f" ⏰ {rep['time']}" if rep.get("time") else ""
+                subj     = f" [{rep['subject']}]" if rep.get("subject") else ""
+                lines.append(f"\n📋 {rep['name']}{subj}\n   {when} — {rep['date']}{time_str}")
+            await update.message.reply_text("\n".join(lines))
+        return
+
     if text in (TR["countdown_btn"], AR["countdown_btn"]):
         cls   = get_user_class(uid) if not is_admin(uid) else ""
         shift = get_user_shift(uid)  if not is_admin(uid) else ""
@@ -3142,7 +3277,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                     when = f"🟡 {days} {'أيام' if not is_main_admin(uid) else 'gün'}"
                 else:
                     when = f"🟢 {days} {'يوم' if not is_main_admin(uid) else 'gün'}"
-                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}")
+                _cd_time = f" ⏰ {cd['time']}" if cd.get("time") else ""
+                lines.append(f"\n📅 {cd['name']}\n   {when} — {cd['date']}{_cd_time}")
                 if is_admin(uid):
                     remind_kb.append([InlineKeyboardButton(
                         f"📢 تذكير: {cd['name'][:20]}",
@@ -3250,6 +3386,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
                  InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
                 [InlineKeyboardButton("📅 Sinav Ekle",       callback_data="cnt|add_countdown")],
+                [InlineKeyboardButton("📋 Rapor Ekle",       callback_data="cnt|add_report")],
                 [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
             ]
             sent = await update.message.reply_text(L(uid,"content_mgmt"), reply_markup=InlineKeyboardMarkup(kb))
@@ -3274,6 +3411,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
             if get_admin_perm(uid, "can_countdown"):
                 kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown")])
+                kb.append([InlineKeyboardButton("📋 إضافة تقرير",  callback_data="cnt|add_report")])
                 kb.append([InlineKeyboardButton("🔬 إضافة موعد مختبر", callback_data="lab|add_new")])
             if get_admin_perm(uid, "can_poll"):
                 kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
@@ -3296,38 +3434,44 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     # ── Sadece adminler buradan devam ────────────────
     if not is_admin(uid): return
 
-    # ── Birleşik Bakım Modu (ana admin + ikincil adminler) ──────────────
-    if text in (TR["btn_maint"], AR["btn_maint"], "🔧 إيقاف الصيانة ✅"):
-        s_m = load_settings()
-        # İkincil admin — tam bakım aktifse iptal edemez
-        if not is_main_admin(uid) and s_m.get("maintenance") and s_m.get("maintenance_full", True):
-            by   = s_m.get("maintenance_by_name", "")
-            when = s_m.get("maintenance_time", "")
-            msg  = "🔧 البوت في وضع الصيانة الكاملة، لا يمكنك إيقافه"
-            if by:   msg += f"\nبواسطة: {by}"
-            if when: msg += f"\nمنذ: {when}"
-            await update.message.reply_text(msg)
-            return
-        s_m["maintenance"] = not s_m.get("maintenance", False)
-        if s_m["maintenance"]:
-            u_m = load_users().get(uid, {})
-            s_m["maintenance_full"]    = is_main_admin(uid)   # True=tam blok, False=sadece kullanıcılar
-            s_m["maintenance_by"]      = uid
-            s_m["maintenance_by_name"] = u_m.get("full_name") or u_m.get("first_name") or f"ID:{uid}"
-            s_m["maintenance_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+    # ── Güncelleme Modu (ikincil adminler) ──────────────
+    if not is_main_admin(uid) and text in ("🔄 وضع التحديث", "🔄 إيقاف التحديث ✅"):
+        s_um = load_settings()
+        s_um["update_mode"] = not s_um.get("update_mode", False)
+        if s_um["update_mode"]:
+            u_um = load_users().get(uid, {})
+            s_um["update_mode_by"]      = uid
+            s_um["update_mode_by_name"] = u_um.get("full_name") or u_um.get("first_name") or f"ID:{uid}"
+            s_um["update_mode_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
         else:
-            s_m.pop("maintenance_full", None)
-            s_m.pop("maintenance_by", None)
-            s_m.pop("maintenance_by_name", None)
-            s_m.pop("maintenance_time", None)
-        save_settings(s_m)
-        if s_m["maintenance"]:
-            block_type = "🔒 كامل (المستخدمون + المشرفون)" if is_main_admin(uid) else "🔒 جزئي (المستخدمون فقط)"
+            s_um.pop("update_mode_by", None)
+            s_um.pop("update_mode_by_name", None)
+            s_um.pop("update_mode_time", None)
+        save_settings(s_um)
+        if s_um["update_mode"]:
             await update.message.reply_text(
-                f"🔧 تم تفعيل وضع الصيانة\n{block_type}",
+                "🔄 تم تفعيل وضع التحديث\nالمستخدمون لن يتمكنوا من استخدام البوت الآن.",
                 reply_markup=reply_kb(uid))
         else:
-            await update.message.reply_text("✅ تم إلغاء وضع الصيانة", reply_markup=reply_kb(uid))
+            await update.message.reply_text("✅ تم إلغاء وضع التحديث", reply_markup=reply_kb(uid))
+        return
+
+    # ── Bakım (sadece ana admin) ─────────────────────
+    if text in (TR["btn_maint"], AR["btn_maint"]) and is_main_admin(uid):
+        s = load_settings()
+        s["maintenance"] = not s["maintenance"]
+        if s["maintenance"]:
+            u_maint = load_users().get(uid, {})
+            s["maintenance_by"]      = uid
+            s["maintenance_by_name"] = u_maint.get("full_name") or u_maint.get("first_name") or f"ID:{uid}"
+            s["maintenance_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+        else:
+            s.pop("maintenance_by", None)
+            s.pop("maintenance_by_name", None)
+            s.pop("maintenance_time", None)
+        save_settings(s)
+        durum = L(uid,"maint_on_str") if s["maintenance"] else L(uid,"maint_off_str")
+        await update.message.reply_text(L(uid,"maint_toggle").format(durum))
         return
 
     # ── Sadece süper admin ───────────────────────────
@@ -3335,15 +3479,19 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if text == TR["btn_mgmt"]:
         _s_mgmt  = load_settings()
-        _maint_on   = _s_mgmt.get("maintenance", False)
-        _maint_by   = _s_mgmt.get("maintenance_by_name", "")
-        _maint_t    = _s_mgmt.get("maintenance_time", "")
-        _maint_full = _s_mgmt.get("maintenance_full", True)
-        _maint_type = "(Tam)" if _maint_full else "(Kısmi)"
-        _maint_lbl = (f"🔧 Bakım AÇIK {_maint_type} — {_maint_by} ({_maint_t})" if _maint_on and _maint_by
+        _maint_on = _s_mgmt.get("maintenance", False)
+        _maint_by = _s_mgmt.get("maintenance_by_name", "")
+        _maint_t  = _s_mgmt.get("maintenance_time", "")
+        _maint_lbl = (f"🔧 Bakım AÇIK — {_maint_by} ({_maint_t})" if _maint_on and _maint_by
                       else ("🔧 Bakım AÇIK" if _maint_on else "✅ Bakım KAPALI"))
+        _um_on  = _s_mgmt.get("update_mode", False)
+        _um_by  = _s_mgmt.get("update_mode_by_name", "")
+        _um_t   = _s_mgmt.get("update_mode_time", "")
+        _um_lbl = (f"🔄 Güncelleme AÇIK — {_um_by} ({_um_t})" if _um_on and _um_by
+                   else ("🔄 Güncelleme AÇIK" if _um_on else "✅ Güncelleme KAPALI"))
         kb = [
             [InlineKeyboardButton(_maint_lbl,             callback_data="mgmt|toggle_maint")],
+            [InlineKeyboardButton(_um_lbl,                callback_data="mgmt|toggle_update")],
             [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
              InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
             [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
@@ -3416,6 +3564,52 @@ async def safe_edit(query, text, reply_markup=None):
             await query.message.reply_text(text, reply_markup=reply_markup)
         except: pass
 
+LAB_FIXED_TIMES = [
+    "07:00","08:00","09:00","10:00","11:00","12:00",
+    "13:00","14:00","15:00","16:00","17:00","18:00",
+]
+
+def _lab_fixed_kb(context) -> "InlineKeyboardMarkup":
+    """Build the group/rotation/time/save keyboard for fixed lab template creation."""
+    sel      = context.user_data.get("lab_fixed_groups", [])
+    rotation = context.user_data.get("lab_fixed_rotation", False)
+    time_val = context.user_data.get("lab_fixed_time", "")
+
+    grps_cfg = load_class_groups()
+    all_grps: set = set()
+    for cls_dv in grps_cfg.values():
+        for sft_dv in cls_dv.values():
+            if isinstance(sft_dv, dict):
+                for g_key in sft_dv:
+                    all_grps.add(g_key)
+    sorted_grps = sorted(all_grps) or ["A", "B", "C"]
+
+    kb: list = []
+    row: list = []
+    for g_opt in sorted_grps:
+        icon = "✅" if g_opt in sel else "⬜"
+        row.append(InlineKeyboardButton(f"{icon} {g_opt}", callback_data=f"lab|fixed_tgrp|{g_opt}"))
+        if len(row) == 3:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+
+    rot_icon = "✅" if rotation else "⬜"
+    kb.append([
+        InlineKeyboardButton(f"{rot_icon} تناوب أسبوعي", callback_data="lab|fixed_rotation|1"),
+        InlineKeyboardButton("📅 كل أسبوع",              callback_data="lab|fixed_rotation|0"),
+    ])
+
+    time_lbl = f"⏰ {time_val}" if time_val else "⏰ الوقت (اختياري)"
+    kb.append([InlineKeyboardButton(time_lbl, callback_data="lab|fixed_show_time")])
+
+    sel_txt = ", ".join(sel) if sel else "—"
+    kb.append([
+        InlineKeyboardButton(f"✅ حفظ [{sel_txt}]", callback_data="lab|fixed_save"),
+        InlineKeyboardButton("◀️ İptal",             callback_data="lab|fixed_panel"),
+    ])
+    return InlineKeyboardMarkup(kb)
+
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
@@ -3429,26 +3623,26 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return (cb.startswith("countdown|") or cb.startswith("lab|") or
                     cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
                     cb.startswith("group_pick|") or cb == "class_change" or
-                    cb == "group_pick_start")
+                    cb == "group_pick_start" or cb.startswith("reminder|") or
+                    cb.startswith("notes|") or cb == "nav|root" or cb == "close")
         if s.get("maintenance"):
-            if s.get("maintenance_full", True):
-                # Tam bakım: kullanıcılar + ikincil adminler bloklanır
-                if adm:
-                    by   = s.get("maintenance_by_name", "")
-                    when = s.get("maintenance_time", "")
-                    msg  = "🔧 البوت في وضع الصيانة الكاملة"
-                    if by:   msg += f" (بواسطة: {by})"
-                    if when: msg += f" | {when}"
-                    await query.answer(msg, show_alert=True)
-                    return ConversationHandler.END
-                elif not _mode_cb_ok(cb):
-                    await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
-                    return ConversationHandler.END
-            else:
-                # Kısmi bakım: sadece kullanıcılar bloklanır
-                if not adm and not _mode_cb_ok(cb):
-                    await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
-                    return ConversationHandler.END
+            if adm:
+                # İkincil admin — tam bakımda bloklanır
+                by   = s.get("maintenance_by_name", "")
+                when = s.get("maintenance_time", "")
+                msg  = "🔧 البوت في وضع الصيانة الكاملة"
+                if by:   msg += f" (بواسطة: {by})"
+                if when: msg += f" | {when}"
+                await query.answer(msg, show_alert=True)
+                return ConversationHandler.END
+            elif not _mode_cb_ok(cb):
+                await query.answer(s.get("maintenance_text","🔧"), show_alert=True)
+                return ConversationHandler.END
+        elif s.get("update_mode") and not adm:
+            # Güncelleme modu — sadece kullanıcılar bloklanır, aynı kural
+            if not _mode_cb_ok(cb):
+                await query.answer(s.get("update_mode_text","🔄"), show_alert=True)
+                return ConversationHandler.END
 
     content = load_content()
     path    = context.user_data.get("path", [])
@@ -3843,6 +4037,11 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             fname = f"kullanici_{name}_{target}.xlsx"
             await context.bot.send_document(int(uid), io.BytesIO(data), filename=fname,
                                             caption=TR["excel_user_done"])
+            reminders_d = load_reminders()
+            data2 = build_excel_activity(target, msgs_d, reminders_d)
+            fname2 = f"aktivite_{name}_{target}.xlsx"
+            await context.bot.send_document(int(uid), io.BytesIO(data2), filename=fname2,
+                                            caption="📋 ملف النشاط — الرسائل والتذكيرات")
             log_admin_action(uid, "EXCEL_USER", target)
         except Exception as e:
             await context.bot.send_message(int(uid), f"❌ Excel oluşturulamadı: {e}")
@@ -4102,9 +4301,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb2.append([InlineKeyboardButton(
                     f"{'✅' if v else '❌'} {pl}",
                     callback_data=f"adminperm|toggle|{adm_id}|{pk}")])
+            cls_v = adm_perms.get("cls", None)
+            grp_v = adm_perms.get("grp", None)
+            kb2.append([
+                InlineKeyboardButton(f"Sinif: {cls_v or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"),
+                InlineKeyboardButton(f"Grup: {grp_v or 'Hepsi'}",  callback_data=f"adminperm|grp|{adm_id}"),
+            ])
+            kb2.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
             await query.edit_message_text(
                 f"👮 {name2}\n\nYetkilerini düzenle:",
-                reply_markup=InlineKeyboardMarkup(_build_adminperm_kb(adm_id, adm_perms)))
+                reply_markup=InlineKeyboardMarkup(kb2))
             return ConversationHandler.END
 
         if act_p == "cls":
@@ -4121,99 +4327,67 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if act_p == "setcls":
             cls_val = None if parts_p[3] == "all" else parts_p[3]
             set_admin_perm(adm_id, "cls", cls_val)
-            set_admin_perm(adm_id, "shift", None)   # Reset shift when class changes
-            set_admin_perm(adm_id, "grp", None)     # Reset group when class changes
             await query.answer("✅ Kaydedildi", show_alert=False)
-            if cls_val:
-                # Show shift selection for the chosen class
-                cls_grps = load_class_groups()
-                cls_data = cls_grps.get(cls_val, {})
-                shift_keys = [k for k in cls_data.keys() if isinstance(cls_data[k], dict)]
-                kb_s = [[InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setshift|{adm_id}|all")]]
-                if shift_keys:
-                    kb_s.append([InlineKeyboardButton(s, callback_data=f"adminperm|setshift|{adm_id}|{s}") for s in shift_keys])
-                kb_s.append([InlineKeyboardButton("◀️ Geri", callback_data=f"adminperm|show|{adm_id}")])
-                await query.edit_message_text(f"Vardiya seçin ({cls_val}. Sınıf):", reply_markup=InlineKeyboardMarkup(kb_s))
-            else:
-                # "all" selected — go back to panel
-                _u = load_users().get(str(adm_id), {})
-                _name = _u.get("full_name") or _u.get("first_name") or f"ID:{adm_id}"
-                _perms = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
-                await query.edit_message_text(f"👮 {_name}\n\nYetkilerini düzenle:",
-                    reply_markup=InlineKeyboardMarkup(_build_adminperm_kb(adm_id, _perms)))
-            return ConversationHandler.END
-
-        if act_p == "setshift":
-            shift_val = None if parts_p[3] == "all" else parts_p[3]
-            set_admin_perm(adm_id, "shift", shift_val)
-            set_admin_perm(adm_id, "grp", None)   # Reset group when shift changes
-            await query.answer("✅ Kaydedildi", show_alert=False)
-            _perms2 = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
-            _u2 = load_users().get(str(adm_id), {})
-            _name2 = _u2.get("full_name") or _u2.get("first_name") or f"ID:{adm_id}"
-            await query.edit_message_text(f"👮 {_name2}\n\nYetkilerini düzenle:",
-                reply_markup=InlineKeyboardMarkup(_build_adminperm_kb(adm_id, _perms2)))
+            # Inline rebuild of show panel (no recursive callback)
+            _u = load_users().get(str(adm_id), {})
+            _name = _u.get("full_name") or _u.get("first_name") or f"ID:{adm_id}"
+            _perms = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
+            _perm_labels = [
+                ("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),
+                ("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),
+                ("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),
+                ("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),
+                ("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),
+                ("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme"),
+            ]
+            _kb = []
+            for _pk, _pl in _perm_labels:
+                _v = _perms.get(_pk, DEFAULT_ADMIN_PERMS.get(_pk, False))
+                _kb.append([InlineKeyboardButton(f"{'✅' if _v else '❌'} {_pl}", callback_data=f"adminperm|toggle|{adm_id}|{_pk}")])
+            _cv = _perms.get("cls", None); _gv = _perms.get("grp", None)
+            _kb.append([InlineKeyboardButton(f"Sinif: {_cv or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"),
+                        InlineKeyboardButton(f"Grup: {_gv or 'Hepsi'}", callback_data=f"adminperm|grp|{adm_id}")])
+            _kb.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(f"👮 {_name}\n\nYetkilerini düzenle:", reply_markup=InlineKeyboardMarkup(_kb))
             return ConversationHandler.END
 
         if act_p == "grp":
-            cls_grps  = load_class_groups()
-            _ap       = load_admin_perms().get(str(adm_id), {})
-            adm_cls_r = _ap.get("cls", "")
-            adm_sft_r = _ap.get("shift", "")
-            if adm_cls_r:
-                cls_data  = cls_grps.get(adm_cls_r, {})
-                if adm_sft_r and adm_sft_r in cls_data:
-                    grp_keys = sorted(k for k in cls_data[adm_sft_r] if isinstance(cls_data[adm_sft_r], dict))
-                else:
-                    # Collect groups across all shifts for this class
-                    grp_keys = sorted({g for sd in cls_data.values() if isinstance(sd, dict) for g in sd})
-            else:
-                # Collect all groups across all classes
-                grp_keys = sorted({g for cd in cls_grps.values() for sd in cd.values() if isinstance(sd, dict) for g in sd})
+            cls_grps = load_class_groups()
+            adm_cls_r = load_admin_perms().get(str(adm_id),{}).get("cls","")
+            grp_keys = list(cls_grps.get(adm_cls_r,{}).keys()) if adm_cls_r else ["A","B","C"]
             kb = [[InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setgrp|{adm_id}|all")]]
-            if grp_keys:
-                kb.append([InlineKeyboardButton(g, callback_data=f"adminperm|setgrp|{adm_id}|{g}") for g in grp_keys])
+            row = [InlineKeyboardButton(g, callback_data=f"adminperm|setgrp|{adm_id}|{g}") for g in grp_keys]
+            if row: kb.append(row)
             kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"adminperm|show|{adm_id}")])
             await query.edit_message_text("Grup kisiti:", reply_markup=InlineKeyboardMarkup(kb))
-            return ConversationHandler.END
-
-        if act_p == "shift_pick":
-            # Direct shift change without going through class selection
-            _ap_sp = load_admin_perms().get(str(adm_id), {})
-            _cls_sp = _ap_sp.get("cls", "")
-            if _cls_sp:
-                cls_grps_sp = load_class_groups()
-                cls_data_sp = cls_grps_sp.get(_cls_sp, {})
-                shift_keys_sp = [k for k in cls_data_sp if isinstance(cls_data_sp[k], dict)]
-            else:
-                shift_keys_sp = []
-            kb_sp = [[InlineKeyboardButton("Hepsi", callback_data=f"adminperm|setshift|{adm_id}|all")]]
-            if shift_keys_sp:
-                kb_sp.append([InlineKeyboardButton(s, callback_data=f"adminperm|setshift|{adm_id}|{s}") for s in shift_keys_sp])
-            kb_sp.append([InlineKeyboardButton("◀️ Geri", callback_data=f"adminperm|show|{adm_id}")])
-            await query.edit_message_text("Vardiya seçin:", reply_markup=InlineKeyboardMarkup(kb_sp))
             return ConversationHandler.END
 
         if act_p == "setgrp":
             grp_val = None if parts_p[3] == "all" else parts_p[3]
             set_admin_perm(adm_id, "grp", grp_val)
             await query.answer("✅ Kaydedildi", show_alert=False)
-            _u2 = load_users().get(str(adm_id), {})
-            _n2 = _u2.get("full_name") or _u2.get("first_name") or f"ID:{adm_id}"
+            _u2 = load_users().get(str(adm_id), {}); _n2 = _u2.get("full_name") or _u2.get("first_name") or f"ID:{adm_id}"
             _p2 = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
-            await query.edit_message_text(f"👮 {_n2}\n\nYetkilerini düzenle:",
-                reply_markup=InlineKeyboardMarkup(_build_adminperm_kb(adm_id, _p2)))
+            _pll = [("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme")]
+            _kb2 = [[InlineKeyboardButton(f"{'✅' if _p2.get(_pk2, DEFAULT_ADMIN_PERMS.get(_pk2,False)) else '❌'} {_pl2}", callback_data=f"adminperm|toggle|{adm_id}|{_pk2}")] for _pk2, _pl2 in _pll]
+            _cv2 = _p2.get("cls", None); _gv2 = _p2.get("grp", None)
+            _kb2.append([InlineKeyboardButton(f"Sinif: {_cv2 or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"), InlineKeyboardButton(f"Grup: {_gv2 or 'Hepsi'}", callback_data=f"adminperm|grp|{adm_id}")])
+            _kb2.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(f"👮 {_n2}\n\nYetkilerini düzenle:", reply_markup=InlineKeyboardMarkup(_kb2))
             return ConversationHandler.END
 
         if act_p == "setsubgrp":
             subgrp_val = None if parts_p[3] == "all" else parts_p[3]
             set_admin_perm(adm_id, "subgrp", subgrp_val)
             await query.answer("✅ Kaydedildi", show_alert=False)
-            _u3 = load_users().get(str(adm_id), {})
-            _n3 = _u3.get("full_name") or _u3.get("first_name") or f"ID:{adm_id}"
+            _u3 = load_users().get(str(adm_id), {}); _n3 = _u3.get("full_name") or _u3.get("first_name") or f"ID:{adm_id}"
             _p3 = load_admin_perms().get(str(adm_id), DEFAULT_ADMIN_PERMS)
-            await query.edit_message_text(f"👮 {_n3}\n\nYetkilerini düzenle:",
-                reply_markup=InlineKeyboardMarkup(_build_adminperm_kb(adm_id, _p3)))
+            _pll3 = [("can_add_folder","📁 Klasör Ekle"),("can_del_folder","🗑 Klasör Sil"),("can_add_file","📎 Dosya Ekle"),("can_del_file","🗑 Dosya Sil"),("can_rename_file","✏️ Yeniden Adlandır"),("can_countdown","📅 Sınav Ekle"),("can_poll","📊 Anket Kur"),("can_quiz","📝 Quiz"),("can_broadcast","📢 Duyuru Gönder"),("can_reply","💬 Kullanıcıya Cevap"),("can_warn","⚠️ Uyarı Ver"),("can_block","🚫 Engelle"),("can_view_users","👥 Kullanıcı Görme")]
+            _kb3 = [[InlineKeyboardButton(f"{'✅' if _p3.get(_pk3, DEFAULT_ADMIN_PERMS.get(_pk3,False)) else '❌'} {_pl3}", callback_data=f"adminperm|toggle|{adm_id}|{_pk3}")] for _pk3, _pl3 in _pll3]
+            _cv3 = _p3.get("cls", None); _gv3 = _p3.get("grp", None)
+            _kb3.append([InlineKeyboardButton(f"Sinif: {_cv3 or 'Hepsi'}", callback_data=f"adminperm|cls|{adm_id}"), InlineKeyboardButton(f"Grup: {_gv3 or 'Hepsi'}", callback_data=f"adminperm|grp|{adm_id}")])
+            _kb3.append([InlineKeyboardButton("Geri", callback_data="set|admin_perms")])
+            await query.edit_message_text(f"👮 {_n3}\n\nYetkilerini düzenle:", reply_markup=InlineKeyboardMarkup(_kb3))
             return ConversationHandler.END
 
         return ConversationHandler.END
@@ -4556,11 +4730,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             WEEKDAYS_FV = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
             if 0 <= idx_fv < len(fixed_fv):
                 f_fv = fixed_fv[idx_fv]
+                _fv_grps = f_fv.get("groups", [f_fv.get("group","—")])
+                _fv_rot  = "🔄 تناوب أسبوعي" if f_fv.get("rotation") else "📅 كل أسبوع"
+                _fv_time = f_fv.get("time", "")
                 txt_fv = (
                     f"📌 Sabit Lab Şablonu\n\n"
                     f"🔬 Ad: {f_fv.get('name','—')}\n"
                     f"📅 Gün: {WEEKDAYS_FV.get(f_fv.get('weekday',0),'—')}\n"
-                    f"👥 Grup: {f_fv.get('group','—')}"
+                    + (f"⏰ Saat: {_fv_time}\n" if _fv_time else "") +
+                    f"👥 Gruplar: {', '.join(_fv_grps)}\n"
+                    f"🔁 Mod: {_fv_rot}"
                 )
                 kb_fv = [[InlineKeyboardButton("🗑 Sil", callback_data=f"lab|fixed_del|{idx_fv}"),
                            InlineKeyboardButton("◀️ Geri", callback_data="lab|fixed_panel")]]
@@ -4671,7 +4850,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb_fp = []
             for i, f in enumerate(fixed):
                 day_name = WEEKDAYS_TR.get(f.get("weekday",0),"?")
-                lbl = f"{f.get('name','?')[:20]} — {day_name} [{f.get('group','?')}]"
+                _fp_grps = f.get("groups", [f.get("group","?")])
+                _fp_rot  = "🔄" if f.get("rotation") else "📅"
+                _fp_time = f" ⏰{f['time']}" if f.get("time") else ""
+                lbl = f"{f.get('name','?')[:15]} {_fp_rot}{_fp_time} {day_name} [{','.join(_fp_grps)}]"
                 kb_fp.append([
                     InlineKeyboardButton(f"📌 {lbl}", callback_data=f"lab|fixed_view|{i}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i}"),
@@ -4700,7 +4882,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             kb_fd2 = []
             for i2, f2 in enumerate(fixed_d):
                 day_name2 = WEEKDAYS_TR2.get(f2.get("weekday",0),"?")
-                lbl2 = f"{f2.get('name','?')[:20]} — {day_name2} [{f2.get('group','?')}]"
+                _fd2_grps = f2.get("groups", [f2.get("group","?")])
+                _fd2_rot  = "🔄" if f2.get("rotation") else "📅"
+                _fd2_time = f" ⏰{f2['time']}" if f2.get("time") else ""
+                lbl2 = f"{f2.get('name','?')[:15]} {_fd2_rot}{_fd2_time} {day_name2} [{','.join(_fd2_grps)}]"
                 kb_fd2.append([
                     InlineKeyboardButton(f"📌 {lbl2}", callback_data=f"lab|fixed_view|{i2}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i2}"),
@@ -4714,43 +4899,92 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
         if lab_act == "fixed_day":
             day_idx = int(lab_parts[2]) if len(lab_parts) > 2 else 0
-            context.user_data["lab_fixed_weekday"] = day_idx
-            # Şimdi grup seç
-            grps_cfg2 = load_class_groups()
-            all_grps2 = set()
-            for cls_dv in grps_cfg2.values():
-                for sft_dv in cls_dv.values():
-                    if isinstance(sft_dv, dict):
-                        for g_key in sft_dv:
-                            all_grps2.add(g_key)
-                        for subs2 in sft_dv.values():
-                            if isinstance(subs2, list):
-                                all_grps2.update(subs2)
-            kb_fg = []
-            row_fg = []
-            for g_opt in sorted(all_grps2):
-                row_fg.append(InlineKeyboardButton(g_opt, callback_data=f"lab|fixed_grp|{g_opt}"))
-                if len(row_fg) == 4:
-                    kb_fg.append(row_fg); row_fg = []
-            if row_fg: kb_fg.append(row_fg)
-            kb_fg.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
-            await query.edit_message_text("👥 Lab grubu seç:", reply_markup=InlineKeyboardMarkup(kb_fg))
+            context.user_data["lab_fixed_weekday"]  = day_idx
+            context.user_data["lab_fixed_groups"]   = []
+            context.user_data["lab_fixed_rotation"] = False
+            context.user_data["lab_fixed_time"]     = ""
+            await query.edit_message_text(
+                "👥 اختر المجموعات (يمكن اختيار أكثر من واحدة):",
+                reply_markup=_lab_fixed_kb(context))
             return ConversationHandler.END
 
-        if lab_act == "fixed_grp":
-            grp_val = lab_parts[2] if len(lab_parts) > 2 else ""
-            fname   = context.user_data.pop("lab_fixed_name", "")
-            weekday = context.user_data.pop("lab_fixed_weekday", 0)
-            fixed_new = load_lab_fixed()
-            fixed_new.append({"name": fname, "weekday": weekday, "group": grp_val})
-            save_lab_fixed(fixed_new)
+        if lab_act == "fixed_tgrp":
+            grp_t = lab_parts[2] if len(lab_parts) > 2 else ""
+            if grp_t != "__back__":
+                sel = context.user_data.get("lab_fixed_groups", [])
+                if grp_t in sel: sel.remove(grp_t)
+                else:            sel.append(grp_t)
+                context.user_data["lab_fixed_groups"] = sel
+            sel     = context.user_data.get("lab_fixed_groups", [])
+            sel_txt = ", ".join(sel) if sel else "—"
+            await query.edit_message_text(
+                f"👥 المجموعات المختارة: {sel_txt}",
+                reply_markup=_lab_fixed_kb(context))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_rotation":
+            rotation = (lab_parts[2] == "1") if len(lab_parts) > 2 else False
+            context.user_data["lab_fixed_rotation"] = rotation
+            sel      = context.user_data.get("lab_fixed_groups", [])
+            sel_txt  = ", ".join(sel) if sel else "—"
+            mode_txt = "تناوب أسبوعي ✅" if rotation else "كل أسبوع (جميع المجموعات)"
+            await query.edit_message_text(
+                f"👥 المجموعات: {sel_txt}\n🔄 الوضع: {mode_txt}",
+                reply_markup=_lab_fixed_kb(context))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_show_time":
+            kb_tp = []
+            row_tp = []
+            for t_opt in LAB_FIXED_TIMES:
+                row_tp.append(InlineKeyboardButton(t_opt, callback_data=f"lab|fixed_time|{t_opt}"))
+                if len(row_tp) == 4:
+                    kb_tp.append(row_tp); row_tp = []
+            if row_tp: kb_tp.append(row_tp)
+            kb_tp.append([InlineKeyboardButton("◀️ رجوع", callback_data="lab|fixed_tgrp|__back__")])
+            await query.edit_message_text("⏰ اختر الوقت:", reply_markup=InlineKeyboardMarkup(kb_tp))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_time":
+            time_val = lab_parts[2] if len(lab_parts) > 2 else ""
+            context.user_data["lab_fixed_time"] = time_val
+            sel     = context.user_data.get("lab_fixed_groups", [])
+            sel_txt = ", ".join(sel) if sel else "—"
+            await query.edit_message_text(
+                f"👥 المجموعات: {sel_txt}",
+                reply_markup=_lab_fixed_kb(context))
+            return ConversationHandler.END
+
+        if lab_act == "fixed_save":
+            fname    = context.user_data.pop("lab_fixed_name", "")
+            weekday  = context.user_data.pop("lab_fixed_weekday", 0)
+            groups   = context.user_data.pop("lab_fixed_groups", [])
+            rotation = context.user_data.pop("lab_fixed_rotation", False)
+            time_val = context.user_data.pop("lab_fixed_time", "")
+            if not groups:
+                await query.answer("⚠️ اختر مجموعة واحدة على الأقل", show_alert=True)
+                return ConversationHandler.END
             WEEKDAYS_TR3 = {0:"Pazartesi",1:"Salı",2:"Çarşamba",3:"Perşembe",4:"Cuma",5:"Cumartesi",6:"Pazar"}
-            await query.answer(f"✅ {fname} — {WEEKDAYS_TR3.get(weekday,'?')} [{grp_val}]", show_alert=True)
+            fixed_new = load_lab_fixed()
+            fixed_new.append({
+                "name":           fname,
+                "weekday":        weekday,
+                "time":           time_val,
+                "groups":         groups,
+                "rotation":       rotation,
+                "rotation_index": 0,
+            })
+            save_lab_fixed(fixed_new)
+            grps_txt = ", ".join(groups)
+            await query.answer(f"✅ {fname} — {WEEKDAYS_TR3.get(weekday,'?')} [{grps_txt}]", show_alert=True)
             # Rebuild fixed panel
             kb_fg2 = []
             for i3, f3 in enumerate(fixed_new):
-                day3 = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
-                lbl3 = f"{f3.get('name','?')[:20]} — {day3} [{f3.get('group','?')}]"
+                day3  = WEEKDAYS_TR3.get(f3.get("weekday",0),"?")
+                grps3 = f3.get("groups", [f3.get("group","?")])
+                rot3  = "🔄" if f3.get("rotation") else "📅"
+                time3 = f" ⏰{f3['time']}" if f3.get("time") else ""
+                lbl3  = f"{f3.get('name','?')[:15]} {rot3}{time3} {day3} [{','.join(grps3)}]"
                 kb_fg2.append([
                     InlineKeyboardButton(f"📌 {lbl3}", callback_data=f"lab|fixed_view|{i3}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|fixed_del|{i3}"),
@@ -5179,16 +5413,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         elif action == "mgmt_panel":
             # Yönetim panelini inline göster (süper admin)
             if is_main_admin(uid):
-                _s_mp    = load_settings()
-                _mp_on   = _s_mp.get("maintenance", False)
-                _mp_by   = _s_mp.get("maintenance_by_name", "")
-                _mp_t    = _s_mp.get("maintenance_time", "")
-                _mp_full = _s_mp.get("maintenance_full", True)
-                _mp_type = "(Tam)" if _mp_full else "(Kısmi)"
-                _mp_lbl  = (f"🔧 Bakım AÇIK {_mp_type} — {_mp_by} ({_mp_t})" if _mp_on and _mp_by
-                            else ("🔧 Bakım AÇIK" if _mp_on else "✅ Bakım KAPALI"))
+                _s_mp  = load_settings()
+                _mp_on  = _s_mp.get("maintenance", False)
+                _mp_by  = _s_mp.get("maintenance_by_name", "")
+                _mp_t   = _s_mp.get("maintenance_time", "")
+                _mp_lbl = (f"🔧 Bakım AÇIK — {_mp_by} ({_mp_t})" if _mp_on and _mp_by
+                           else ("🔧 Bakım AÇIK" if _mp_on else "✅ Bakım KAPALI"))
+                _um_mp_on = _s_mp.get("update_mode", False)
+                _um_mp_by = _s_mp.get("update_mode_by_name", "")
+                _um_mp_t  = _s_mp.get("update_mode_time", "")
+                _um_mp_lbl = (f"🔄 Güncelleme AÇIK — {_um_mp_by} ({_um_mp_t})" if _um_mp_on and _um_mp_by
+                              else ("🔄 Güncelleme AÇIK" if _um_mp_on else "✅ Güncelleme KAPALI"))
                 kb = [
                     [InlineKeyboardButton(_mp_lbl,                callback_data="mgmt|toggle_maint")],
+                    [InlineKeyboardButton(_um_mp_lbl,             callback_data="mgmt|toggle_update")],
                     [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                      InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
                     [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
@@ -5370,26 +5608,29 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             _s_tm = load_settings()
             _s_tm["maintenance"] = not _s_tm.get("maintenance", False)
             if _s_tm["maintenance"]:
-                _s_tm["maintenance_full"]    = True  # Panel üzerinden her zaman tam bakım
                 _s_tm["maintenance_by"]      = uid
                 _s_tm["maintenance_by_name"] = load_users().get(uid,{}).get("full_name") or load_users().get(uid,{}).get("first_name") or f"ID:{uid}"
                 _s_tm["maintenance_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
             else:
-                _s_tm.pop("maintenance_full", None)
                 _s_tm.pop("maintenance_by", None)
                 _s_tm.pop("maintenance_by_name", None)
                 _s_tm.pop("maintenance_time", None)
             save_settings(_s_tm)
-            _tm_on   = _s_tm["maintenance"]
-            _tm_by   = _s_tm.get("maintenance_by_name", "")
-            _tm_t    = _s_tm.get("maintenance_time", "")
-            _tm_full = _s_tm.get("maintenance_full", True)
-            _tm_type = "(Tam)" if _tm_full else "(Kısmi)"
-            _tm_lbl  = (f"🔧 Bakım AÇIK {_tm_type} — {_tm_by} ({_tm_t})" if _tm_on and _tm_by
-                        else ("🔧 Bakım AÇIK" if _tm_on else "✅ Bakım KAPALI"))
+            _tm_on  = _s_tm["maintenance"]
+            _tm_by  = _s_tm.get("maintenance_by_name", "")
+            _tm_t   = _s_tm.get("maintenance_time", "")
+            _tm_lbl = (f"🔧 Bakım AÇIK — {_tm_by} ({_tm_t})" if _tm_on and _tm_by
+                       else ("🔧 Bakım AÇIK" if _tm_on else "✅ Bakım KAPALI"))
             await query.answer(f"{'🔧 Bakım AÇILDI' if _tm_on else '✅ Bakım KAPATILDI'}", show_alert=True)
+            _um_tm_on = _s_tm.get("update_mode", False)
+            _um_tm_by = _s_tm.get("update_mode_by_name", "")
+            _um_tm_t  = _s_tm.get("update_mode_time", "")
+            _um_tm_lbl = (f"🔄 Güncelleme AÇIK — {_um_tm_by} ({_um_tm_t})" if _um_tm_on and _um_tm_by
+                          else ("🔄 Güncelleme AÇIK" if _um_tm_on else "✅ Güncelleme KAPALI"))
+            # Yönetim panelini güncelle
             kb_tm = [
                 [InlineKeyboardButton(_tm_lbl,                callback_data="mgmt|toggle_maint")],
+                [InlineKeyboardButton(_um_tm_lbl,             callback_data="mgmt|toggle_update")],
                 [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                  InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
                 [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
@@ -5413,6 +5654,58 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
             ]
             await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tm))
+            return ConversationHandler.END
+
+        if action == "toggle_update":
+            _s_tu = load_settings()
+            _s_tu["update_mode"] = not _s_tu.get("update_mode", False)
+            if _s_tu["update_mode"]:
+                _u_tu = load_users().get(uid, {})
+                _s_tu["update_mode_by"]      = uid
+                _s_tu["update_mode_by_name"] = _u_tu.get("full_name") or _u_tu.get("first_name") or f"ID:{uid}"
+                _s_tu["update_mode_time"]    = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+            else:
+                _s_tu.pop("update_mode_by", None)
+                _s_tu.pop("update_mode_by_name", None)
+                _s_tu.pop("update_mode_time", None)
+            save_settings(_s_tu)
+            _tu_on  = _s_tu["update_mode"]
+            _tu_by  = _s_tu.get("update_mode_by_name", "")
+            _tu_t   = _s_tu.get("update_mode_time", "")
+            _tu_lbl = (f"🔄 Güncelleme AÇIK — {_tu_by} ({_tu_t})" if _tu_on and _tu_by
+                       else ("🔄 Güncelleme AÇIK" if _tu_on else "✅ Güncelleme KAPALI"))
+            await query.answer(f"{'🔄 Güncelleme Modu AÇILDI' if _tu_on else '✅ Güncelleme Modu KAPATILDI'}", show_alert=True)
+            _mt_tu_on = _s_tu.get("maintenance", False)
+            _mt_tu_by = _s_tu.get("maintenance_by_name", "")
+            _mt_tu_t  = _s_tu.get("maintenance_time", "")
+            _mt_tu_lbl = (f"🔧 Bakım AÇIK — {_mt_tu_by} ({_mt_tu_t})" if _mt_tu_on and _mt_tu_by
+                          else ("🔧 Bakım AÇIK" if _mt_tu_on else "✅ Bakım KAPALI"))
+            kb_tu = [
+                [InlineKeyboardButton(_mt_tu_lbl,             callback_data="mgmt|toggle_maint")],
+                [InlineKeyboardButton(_tu_lbl,                callback_data="mgmt|toggle_update")],
+                [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
+                 InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
+                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
+                [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
+                 InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
+                [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
+                [InlineKeyboardButton(TR["add_admin"],        callback_data="mgmt|add_admin"),
+                 InlineKeyboardButton(TR["del_admin"],        callback_data="mgmt|del_admin")],
+                [InlineKeyboardButton(TR["dm_user"],          callback_data="mgmt|dm_user"),
+                 InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
+                [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
+                 InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
+                 InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
+                [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
+                 InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
+                [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
+                 InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
+                [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
+                 InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
+            ]
+            await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tu))
             return ConversationHandler.END
 
         if action == "admin_log_export":
@@ -5586,7 +5879,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.edit_message_text(f"👥 {cls_name} / {sft_lbl} — Grup Seç:", reply_markup=InlineKeyboardMarkup(kb))
                 return ConversationHandler.END
 
-            # Adım 3: Liste göster
+            # Adım 3: Liste göster (sayfalama: parts[5] = page offset)
+            page_off = int(parts[5]) if len(parts) > 5 and parts[5].lstrip("-").isdigit() else 0
+            PAGE_SZ  = 25
             result = []
             for uid_, u in u_d.items():
                 if int(uid_) == ADMIN_ID: continue
@@ -5597,15 +5892,20 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     if sft_f == "sabahi" and us not in ("sabahi","sabah"): continue
                     if sft_f == "masaiy" and us not in ("masaiy","gece"): continue
                 if grp_f not in ("_","all"):
-                    if not grps_d.get(uid_,"").startswith(grp_f): continue
+                    ug = grps_d.get(uid_,"")
+                    if ug != grp_f and not ug.startswith(grp_f + "_"): continue
                 result.append((uid_, u))
 
             if not result:
-                await query.answer("Bu filtrede kullanıcı yok", show_alert=True)
+                back_cb0 = f"mgmt|ulist|{cls_f}|{sft_f}|_" if grp_f not in ("_","all") else f"mgmt|ulist|{cls_f}|_|_" if sft_f != "_" else "mgmt|users"
+                await query.edit_message_text(
+                    "لا يوجد مستخدمون بهذه الفلاتر.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data=back_cb0)]]))
                 return ConversationHandler.END
 
+            page_result = result[page_off: page_off + PAGE_SZ]
             kb = []
-            for uid_, u in result[:40]:
+            for uid_, u in page_result:
                 name   = u.get("full_name") or u.get("first_name") or f"ID:{uid_}"
                 un     = f" @{u['username']}" if u.get("username") else ""
                 grp_s  = grps_d.get(uid_,"?")
@@ -5615,10 +5915,18 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 kb.append([InlineKeyboardButton(
                     f"{adm_mk}👤 {name}{un} {sft_s}[{cls_s}/{grp_s}]",
                     callback_data=f"user|info|{uid_}")])
+            # Pagination row
+            nav_row = []
+            if page_off > 0:
+                nav_row.append(InlineKeyboardButton("◀◀", callback_data=f"mgmt|ulist|{cls_f}|{sft_f}|{grp_f}|{page_off - PAGE_SZ}"))
+            if page_off + PAGE_SZ < len(result):
+                nav_row.append(InlineKeyboardButton("▶▶", callback_data=f"mgmt|ulist|{cls_f}|{sft_f}|{grp_f}|{page_off + PAGE_SZ}"))
+            if nav_row: kb.append(nav_row)
             back_cb = f"mgmt|ulist|{cls_f}|{sft_f}|_" if grp_f not in ("_","all") else f"mgmt|ulist|{cls_f}|_|_" if sft_f != "_" else "mgmt|users"
             kb.append([InlineKeyboardButton("◀️ Geri", callback_data=back_cb)])
+            shown_start = page_off + 1; shown_end = page_off + len(page_result)
             await query.edit_message_text(
-                f"👥 {len(result)} kullanıcı:",
+                f"👥 {len(result)} kullanıcı ({shown_start}–{shown_end}):",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -5802,35 +6110,33 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 recent.append(f"  {icon} {t}  {c}")
 
             info = (
-                f"╔══════════════════════════╗\n"
-                f"  👤  {name}\n"
-                f"  🔗  {un}\n"
-                f"  🆔  {target}\n"
-                f"  🎓  {TR['class_label'].format(cls)}\n"
-                f"  📅  {last}\n"
-                f"  🚫  Engel: {'✅' if blkd else '❌'}\n"
-                f"  ⚠️   Uyarı: {len(warns_list)}/{MAX_WARNS}\n"
+                f"👤  {name}\n"
+                f"🔗  {un}\n"
+                f"🆔  {target}\n"
+                f"🎓  {TR['class_label'].format(cls)}\n"
+                f"📅  {last}\n"
+                f"🚫  Engel: {'✅' if blkd else '❌'}\n"
+                f"⚠️  Uyarı: {len(warns_list)}/{MAX_WARNS}\n"
             )
             if note:
-                info += f"  📝  Not: {note[:60]}\n"
+                info += f"📝  Not: {note[:60]}\n"
             info += (
-                f"╠══════════════════════════╣\n"
-                f"  📊  Toplam: {total}\n"
-                f"  ✍️   Mesaj: {type_counts.get('msg',0)}\n"
-                f"  🔍  Arama: {type_counts.get('search',0)}\n"
-                f"  👁   Görüntüleme: {type_counts.get('file_view',0)}\n"
-                f"  🖼   Medya: {media_cnt}\n"
+                f"\n"
+                f"📊  Toplam: {total}\n"
+                f"✍️  Mesaj: {type_counts.get('msg',0)}\n"
+                f"🔍  Arama: {type_counts.get('search',0)}\n"
+                f"👁  Görüntüleme: {type_counts.get('file_view',0)}\n"
+                f"🖼  Medya: {media_cnt}\n"
             )
             if searches:
-                info += f"╠══════════════════════════╣\n  🔍  Son Aramalar:\n"
-                for s_ in searches: info += f"     • {s_[:35]}\n"
+                info += f"\n🔍 Son Aramalar:\n"
+                for s_ in searches: info += f"  • {s_[:35]}\n"
             if top_viewed:
-                info += f"  👁   Çok Açılan:\n"
-                for fname, cnt in top_viewed: info += f"     • {fname[:30]} ({cnt}×)\n"
+                info += f"👁 Çok Açılan:\n"
+                for fname, cnt in top_viewed: info += f"  • {fname[:30]} ({cnt}×)\n"
             if recent:
-                info += f"╠══════════════════════════╣\n  🕐  Son Aktivite:\n"
+                info += f"\n🕐 Son Aktivite:\n"
                 for line in recent[-5:]: info += f"{line}\n"
-            info += "╚══════════════════════════╝"
 
             media_files = [m for m in msgs if m.get("file_id") and
                            m["type"] in ("photo","video","document","audio","voice","animation")]
@@ -6454,6 +6760,28 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             else:
                 await query.answer("Yetkin yok", show_alert=True)
                 return ConversationHandler.END
+
+        if action == "add_report":
+            if is_main_admin(uid) or get_admin_perm(uid, "can_countdown"):
+                context.user_data["action"] = "report_name"
+                await query.edit_message_text(
+                    L(uid, "report_name_prompt"),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")
+                    ]]))
+                return WAIT_FOLDER
+            else:
+                await query.answer("Yetkin yok", show_alert=True)
+                return ConversationHandler.END
+
+        if action == "del_report" and len(cb.split("|")) > 2:
+            idx = int(cb.split("|")[2])
+            reps = load_reports()
+            if 0 <= idx < len(reps): reps.pop(idx)
+            save_reports(reps)
+            await query.answer("✅ Silindi", show_alert=True)
+            await query.delete_message()
+            return ConversationHandler.END
 
         if action == "add_folder":
             if not get_admin_perm(uid, "can_add_folder"):
@@ -7365,6 +7693,31 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text("📅 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
+    if cb.startswith("rep_cls|") and is_admin(uid):
+        cls_val = cb.split("|")[1]
+        context.user_data["report_cls"] = "" if cls_val == "all" else cls_val
+        kb = [
+            [InlineKeyboardButton("الكل",   callback_data="rep_shift|all"),
+             InlineKeyboardButton("صباحي", callback_data="rep_shift|sabahi"),
+             InlineKeyboardButton("مسائي", callback_data="rep_shift|masaiy")],
+        ]
+        await query.edit_message_text(
+            "لمن هذا التقرير؟",
+            reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    if cb.startswith("rep_shift|") and is_admin(uid):
+        shift_val = cb.split("|")[1]
+        context.user_data["report_shift"] = "" if shift_val == "all" else shift_val
+        context.user_data["report_group"] = ""
+        context.user_data["action"] = "report_date"
+        await query.edit_message_text(
+            "اكتب التاريخ (مثال: 20/05/2026) أو مع الوقت (20/05/2026 09:30):",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+            ]]))
+        return WAIT_FOLDER
+
     if cb.startswith("cd_grp|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         grp_val = cb.split("|")[1]
         context.user_data["countdown_group"] = "" if grp_val == "all" else grp_val
@@ -7376,7 +7729,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             ]]))
         return WAIT_FOLDER
 
-    if cb.startswith("reminder|") and not is_admin(uid):
+    if cb.startswith("reminder|"):
         parts  = cb.split("|")
         action = parts[1]
         if action == "add":
@@ -7399,7 +7752,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if minutes < 60: label = f"{minutes} دقيقة"
             elif minutes < 1440: label = f"{minutes//60} ساعة"
             else: label = f"{minutes//1440} يوم"
-            await query.edit_message_text(L(uid,"reminder_saved").format(label))
+            await query.edit_message_text(
+                L(uid,"reminder_saved").format(label),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️", callback_data="nav|root")]]))
             return ConversationHandler.END
 
         if action == "manual_date":
@@ -7423,7 +7778,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 label = f"{minutes//60} ساعة" if not is_main_admin(uid) else f"{minutes//60} saat"
             else:
                 label = f"{minutes//1440} يوم" if not is_main_admin(uid) else f"{minutes//1440} gün"
-            await query.edit_message_text(L(uid,"reminder_saved").format(label))
+            await query.edit_message_text(
+                L(uid,"reminder_saved").format(label),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️", callback_data="nav|root")]]))
             context.user_data.pop("action", None)
             return ConversationHandler.END
 
@@ -7887,11 +8244,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if is_blocked(uid) and not is_admin(uid):
         return ConversationHandler.END
 
-    # Bakım modu — kullanıcılar tamamen bloklanır
+    # Bakım / Güncelleme modu — kullanıcılar tamamen bloklanır
     if not is_admin(uid):
         _s_ht = load_settings()
         if _s_ht.get("maintenance"):
             await update.message.reply_text(_s_ht.get("maintenance_text", "🔧 البوت قيد الصيانة..."))
+            return ConversationHandler.END
+        elif _s_ht.get("update_mode"):
+            await update.message.reply_text(_s_ht.get("update_mode_text", "🔄 البوت في وضع التحديث..."))
             return ConversationHandler.END
 
     action = context.user_data.get("action","")
@@ -7970,7 +8330,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Hatırlatıcı — Metin ─────────────────────────
-    if action == "reminder_text" and not is_admin(uid):
+    if action == "reminder_text":
         context.user_data["reminder_text_pending"] = text
         context.user_data.pop("action", None)
         kb = [
@@ -7992,7 +8352,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Hatırlatıcı — Zaman (metin fallback, artık kullanılmıyor) ──
-    if action == "reminder_day" and not is_admin(uid):
+    if action == "reminder_day":
         try:
             day = int(text.strip())
             assert 0 <= day <= 365
@@ -8004,7 +8364,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("🕐 كم ساعة؟ (0-23):")
         return WAIT_FOLDER
 
-    if action == "reminder_hour" and not is_admin(uid):
+    if action == "reminder_hour":
         try:
             hour = int(text.strip())
             assert 0 <= hour <= 23
@@ -8016,7 +8376,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("⏱ كم دقيقة؟ (0-59):")
         return WAIT_FOLDER
 
-    if action == "reminder_minute" and not is_admin(uid):
+    if action == "reminder_minute":
         try:
             minute = int(text.strip())
             assert 0 <= minute <= 59
@@ -8028,7 +8388,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text("⏱ كم ثانية؟ (0-59):")
         return WAIT_FOLDER
 
-    if action == "reminder_second" and not is_admin(uid):
+    if action == "reminder_second":
         try:
             second = int(text.strip())
             assert 0 <= second <= 59
@@ -8054,11 +8414,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if minute: parts_lbl.append(f"{minute} دقيقة")
         if second: parts_lbl.append(f"{second} ثانية")
         label = " و ".join(parts_lbl) if parts_lbl else "قريباً"
-        await update.message.reply_text(L(uid, "reminder_saved").format(label))
+        await update.message.reply_text(L(uid, "reminder_saved").format(label), reply_markup=reply_kb(uid))
         context.user_data.pop("action", None)
         return ConversationHandler.END
 
-    if action == "reminder_when" and not is_admin(uid):
+    if action == "reminder_when":
         minutes = parse_time_input(text)
         if not minutes:
             await update.message.reply_text(
@@ -8075,7 +8435,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             label = f"{minutes//60} ساعة" if not is_main_admin(uid) else f"{minutes//60} saat"
         else:
             label = f"{minutes//1440} يوم" if not is_main_admin(uid) else f"{minutes//1440} gün"
-        await update.message.reply_text(L(uid,"reminder_saved").format(label))
+        await update.message.reply_text(L(uid,"reminder_saved").format(label), reply_markup=reply_kb(uid))
         context.user_data.pop("action",None)
         return ConversationHandler.END
 
@@ -8100,8 +8460,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         else:
             targets = [u for u in load_users() if int(u) != ADMIN_ID]
         targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
-        _sadmin_sender_lbl = get_sender_label(uid)
-        btext = f"📢 إعلان\n\n{text}\n\n👤 {_sadmin_sender_lbl}\n🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
+        btext = fmt_bcast("📢", "إعلان رسمي", text, uid)
         success = 0
         for uid_ in targets:
             try: await context.bot.send_message(int(uid_), btext); success += 1
@@ -8329,6 +8688,53 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         kb_wd.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
         await update.message.reply_text("📅 Hangi gün tekrar eder?", reply_markup=InlineKeyboardMarkup(kb_wd))
         return WAIT_FOLDER
+
+    if action == "report_name" and is_admin(uid):
+        context.user_data["report_name"] = text
+        context.user_data["action"] = "report_subject"
+        await update.message.reply_text(
+            L(uid, "report_subj_prompt"),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")
+            ]]))
+        return WAIT_FOLDER
+
+    if action == "report_subject" and is_admin(uid):
+        context.user_data["report_subject"] = text
+        context.user_data.pop("action", None)
+        adm_cls = get_admin_cls(uid)
+        if adm_cls:
+            context.user_data["report_cls"] = adm_cls
+            kb = [
+                [InlineKeyboardButton("الكل",   callback_data="rep_shift|all"),
+                 InlineKeyboardButton("صباحي", callback_data="rep_shift|sabahi"),
+                 InlineKeyboardButton("مسائي", callback_data="rep_shift|masaiy")],
+            ]
+            await update.message.reply_text(
+                "لمن هذا التقرير؟" if not is_main_admin(uid) else "Bu rapor kime?",
+                reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            kb = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                kb.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"rep_cls|{cls_id}")])
+            kb.append([InlineKeyboardButton("الكل", callback_data="rep_cls|all")])
+            kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
+            await update.message.reply_text("📅 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    if action == "report_date" and is_admin(uid):
+        name    = context.user_data.pop("report_name", "?")
+        subject = context.user_data.pop("report_subject", "")
+        cls_val = context.user_data.pop("report_cls",   context.user_data.pop("countdown_cls", ""))
+        shift   = context.user_data.pop("report_shift", "")
+        grp     = context.user_data.pop("report_group", "")
+        ok = add_report(name, subject, text, cls=cls_val, shift=shift, group=grp)
+        if ok:
+            await update.message.reply_text(L(uid,"report_saved").format(name), reply_markup=reply_kb(uid))
+        else:
+            await update.message.reply_text("❌ Geçersiz tarih. Örn: 20/05/2026 veya 20/05/2026 09:30")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
 
     if action == "countdown_name" and is_admin(uid):
         context.user_data["countdown_name"] = text
@@ -8879,13 +9285,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if action == "dm_msg" and is_main_admin(uid):
         target = context.user_data.get("dm_target")
         if not target: await update.message.reply_text(TR["dm_no_target"]); return ConversationHandler.END
-        dm_formatted = (
-            f"💌  رسالة شخصية\n"
-            f"\n"
-            f"{text}\n"
-            f"\n"
-            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        )
+        dm_formatted = fmt_dm(text, uid)
         try:
             await context.bot.send_message(int(target), dm_formatted)
             await update.message.reply_text(TR["dm_sent"].format(target))
@@ -8902,19 +9302,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         users = load_users(); success = fail = 0
         all_targets = include_admins_in_targets(
             [u for u in users if int(u) != ADMIN_ID and not is_blocked(u)])
-        sender_lbl = get_sender_label(uid)
         for uid_ in all_targets:
             if int(uid_) == ADMIN_ID: continue
             try:
-                bcast_msg = (
-                    f"╔══════════════════════╗\n"
-                    f"  📢  إعلان رسمي\n"
-                    f"╠══════════════════════╣\n\n"
-                    f"{text}\n\n"
-                    f"╚══════════════════════╝\n"
-                    f"  👤  {sender_lbl}\n"
-                    f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-                )
+                bcast_msg = fmt_bcast("📢", "إعلان رسمي", text, uid)
                 await context.bot.send_message(int(uid_), bcast_msg); success += 1
             except: fail += 1
         await update.message.reply_text(TR["broadcast_done"].format(success,fail))
@@ -8938,16 +9329,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if action == "msgsel_send" and is_main_admin(uid):
         sel = context.user_data.pop("msgsel_targets", [])
         success = fail = 0
-        _msgsel_sender_lbl = get_sender_label(uid)
-        bcast_msg = (
-            f"╔══════════════════════╗\n"
-            f"  📨  رسالة مخصصة\n"
-            f"╠══════════════════════╣\n\n"
-            f"{text}\n\n"
-            f"╚══════════════════════╝\n"
-            f"  👤  {_msgsel_sender_lbl}\n"
-            f"  🕐  {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        )
+        bcast_msg = fmt_bcast("📨", "رسالة مخصصة", text, uid)
         for uid_ in sel:
             try:
                 await context.bot.send_message(int(uid_), bcast_msg)
@@ -9146,13 +9528,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if action == "broadcast" and is_main_admin(uid):
         users = load_users(); success = fail = 0
         cap_raw  = msg.caption or ""
-        cap_text = (
-            f"📢  إعلان رسمي\n"
-            f"\n"
-            f"{cap_raw}\n"
-            f"\n"
-            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        ) if cap_raw else None
+        cap_text = fmt_bcast("📢", "إعلان رسمي", cap_raw, uid) if cap_raw else \
+                   fmt_bcast("📢", "إعلان رسمي", "", uid)
         for uid_,u in users.items():
             if int(uid_) == ADMIN_ID or is_blocked(uid_): continue
             try:
@@ -9170,13 +9547,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if action == "dm_msg" and is_main_admin(uid):
         target = context.user_data.get("dm_target"); cap_raw = msg.caption or ""
         if not target: await msg.reply_text(TR["dm_no_target"]); return ConversationHandler.END
-        cap_text = (
-            f"💌  رسالة شخصية\n"
-            f"\n"
-            f"{cap_raw}\n"
-            f"\n"
-            f"🕐 {datetime.now(IRAQ_TZ).strftime('%Y-%m-%d %H:%M')}"
-        ) if cap_raw else None
+        cap_text = fmt_dm(cap_raw, uid) if cap_raw else fmt_dm("", uid)
         try:
             if   msg.photo:     await context.bot.send_photo(int(target),    msg.photo[-1].file_id, caption=cap_text)
             elif msg.video:     await context.bot.send_video(int(target),    msg.video.file_id,     caption=cap_text)
@@ -9558,12 +9929,90 @@ def main():
                 changed = True
         if changed: save_lab_schedule(schedule)
 
+    async def _daily_morning_reminder(ctx):
+        """Every day at 08:00 Iraq time: send today's events to all relevant users."""
+        from datetime import date as _date
+        import time as _t
+        today     = _date.today()
+        today_str = today.strftime("%d/%m/%Y")
+        today_wd  = today.weekday()
+
+        all_users  = load_users()
+        lab_fixed  = load_lab_fixed()
+        lab_sched  = load_lab_schedule()
+        countdowns = load_countdowns()
+        reports    = load_reports()
+        all_grps   = load_groups()
+
+        for uid_, u_ in all_users.items():
+            if is_admin(uid_): continue  # admins get separate management; skip morning blast
+            u_grp   = all_grps.get(uid_, "")
+            u_cls   = get_user_class(uid_)
+            u_shift = get_user_shift(uid_)
+            events  = []
+
+            # Fixed lab for today's weekday
+            for fl in lab_fixed:
+                if fl.get("weekday") != today_wd: continue
+                fl_grps = fl.get("groups", [fl.get("group", "")])
+                if u_grp and fl_grps and not any(
+                        u_grp == g or u_grp.startswith(g + "_") for g in fl_grps if g):
+                    continue
+                t_str = f" ⏰ {fl['time']}" if fl.get("time") else ""
+                events.append(f"🔬 مختبر: {fl.get('name','?')}{t_str}")
+
+            # Scheduled lab for today
+            for le in lab_sched:
+                if le.get("date") != today_str: continue
+                le_grp = le.get("group", "")
+                if u_grp and le_grp and not (u_grp == le_grp or u_grp.startswith(le_grp + "_")): continue
+                t_str = f" ⏰ {le['time']}" if le.get("time") else ""
+                events.append(f"🔬 مختبر: {le.get('note', le.get('group','?'))}{t_str}")
+
+            # Exams today
+            for cd in countdowns:
+                if cd.get("date") != today_str: continue
+                cd_cls = cd.get("cls", "")
+                if cd_cls and u_cls and cd_cls != u_cls: continue
+                cd_shift = cd.get("shift", "")
+                if cd_shift and u_shift:
+                    u_n = "sabahi" if u_shift in ("sabahi","sabah") else "masaiy"
+                    c_n = "sabahi" if cd_shift in ("sabahi","sabah") else "masaiy"
+                    if u_n != c_n: continue
+                t_str = f" ⏰ {cd['time']}" if cd.get("time") else ""
+                events.append(f"📅 امتحان: {cd.get('name','?')}{t_str}")
+
+            # Reports due today
+            for rep in reports:
+                if rep.get("date") != today_str: continue
+                rep_cls = rep.get("cls", "")
+                if rep_cls and u_cls and rep_cls != u_cls: continue
+                t_str = f" ⏰ {rep['time']}" if rep.get("time") else ""
+                subj  = f" [{rep['subject']}]" if rep.get("subject") else ""
+                events.append(f"📋 تقرير: {rep.get('name','?')}{subj}{t_str}")
+
+            if not events:
+                continue
+
+            msg = "☀️ صباح الخير!\n\n📌 تذكير بأحداث اليوم:\n\n" + "\n".join(events)
+            try:
+                await ctx.bot.send_message(int(uid_), msg)
+            except Exception as e_:
+                logger.warning(f"Morning reminder failed for {uid_}: {e_}")
+
     job_queue = app.job_queue
     if job_queue:
         job_queue.run_repeating(_check_reminders, interval=30, first=5)
         job_queue.run_repeating(_check_exam_reminders, interval=3600, first=30)
         job_queue.run_repeating(_check_lab_reminders, interval=3600, first=60)
+        from datetime import time as _dtime
+        job_queue.run_daily(
+            _daily_morning_reminder,
+            time=_dtime(8, 0, 0),
+            timezone=IRAQ_TZ,
+        )
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
+        print("✅ Sabah hatırlatma job'u başlatıldı (08:00 Irak)")
 
     # ── Startup: otomatik yedek geri yükleme ────────────────
     async def _startup_restore(application):
