@@ -1235,10 +1235,8 @@ def load_personal_notes():return load_json(USER_NOTES_FILE, {})
 def save_personal_notes(d):save_json(USER_NOTES_FILE, d)
 def load_quizzes():       return load_json(QUIZ_FILE, [])
 def save_quizzes(d):      save_json(QUIZ_FILE, d)
-def load_reports():       return load_json(REPORT_FILE, [])
 def load_admin_perms():   return load_json(ADMIN_PERMS_FILE, {})
 def save_admin_perms(d):  save_json(ADMIN_PERMS_FILE, d)
-def save_reports(d):      save_json(REPORT_FILE, d)
 
 def get_user_notes(uid: str) -> list:
     """Kullanıcının tüm notlarını döndür (liste formatı)."""
@@ -9947,6 +9945,7 @@ def main():
         all_grps   = load_groups()
 
         for uid_, u_ in all_users.items():
+            if is_admin(uid_): continue  # admins get separate management; skip morning blast
             u_grp   = all_grps.get(uid_, "")
             u_cls   = get_user_class(uid_)
             u_shift = get_user_shift(uid_)
@@ -10007,10 +10006,10 @@ def main():
         job_queue.run_repeating(_check_exam_reminders, interval=3600, first=30)
         job_queue.run_repeating(_check_lab_reminders, interval=3600, first=60)
         from datetime import time as _dtime
-        _morning_tz = IRAQ_TZ
         job_queue.run_daily(
             _daily_morning_reminder,
-            time=_dtime(8, 0, 0, tzinfo=_morning_tz),
+            time=_dtime(8, 0, 0),
+            timezone=IRAQ_TZ,
         )
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
         print("✅ Sabah hatırlatma job'u başlatıldı (08:00 Irak)")
