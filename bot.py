@@ -3089,33 +3089,31 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Favoriler ────────────────────────────────────
     if text in (TR["btn_favorites"], AR["btn_favorites"]):
-        if not is_admin(uid):
-            favs = get_favorites(uid)
-            if not favs:
-                await update.message.reply_text(L(uid,"fav_empty")); return
-            kb = []
-            for idx, f in enumerate(favs[:15]):
-                cap = f.get("caption", f.get("name","?"))[:35]
-                kb.append([InlineKeyboardButton(f"⭐ {cap}", callback_data=f"fav|open|{idx}")])
-            kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
-            await update.message.reply_text(L(uid,"fav_list"), reply_markup=InlineKeyboardMarkup(kb))
+        favs = get_favorites(uid)
+        if not favs:
+            await update.message.reply_text(L(uid,"fav_empty")); return
+        kb = []
+        for idx, f in enumerate(favs[:15]):
+            cap = f.get("caption", f.get("name","?"))[:35]
+            kb.append([InlineKeyboardButton(f"⭐ {cap}", callback_data=f"fav|open|{idx}")])
+        kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
+        await update.message.reply_text(L(uid,"fav_list"), reply_markup=InlineKeyboardMarkup(kb))
         return
 
     # ── Son Görüntülenenler ──────────────────────────
     if text in (TR["btn_recent"], AR["btn_recent"]):
-        if not is_admin(uid):
-            recent = get_recently_viewed(uid)
-            if not recent:
-                await update.message.reply_text(L(uid,"recent_empty")); return
-            kb = []
-            for entry in reversed(recent[-10:]):
-                f   = entry["file"]
-                cap = f.get("caption", f.get("name","?"))[:35]
-                t   = entry.get("time","")[-5:]
-                key = f.get("file_id") or f.get("caption","?")
-                kb.append([InlineKeyboardButton(f"🕐 {t} — {cap}", callback_data=f"recent|open|{key}")])
-            kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
-            await update.message.reply_text(L(uid,"recent_list"), reply_markup=InlineKeyboardMarkup(kb))
+        recent = get_recently_viewed(uid)
+        if not recent:
+            await update.message.reply_text(L(uid,"recent_empty")); return
+        kb = []
+        for entry in reversed(recent[-10:]):
+            f   = entry["file"]
+            cap = f.get("caption", f.get("name","?"))[:35]
+            t   = entry.get("time","")[-5:]
+            key = f.get("file_id") or f.get("caption","?")
+            kb.append([InlineKeyboardButton(f"🕐 {t} — {cap}", callback_data=f"recent|open|{key}")])
+        kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
+        await update.message.reply_text(L(uid,"recent_list"), reply_markup=InlineKeyboardMarkup(kb))
         return
 
     # ── Liderboard (herkes) ──────────────────────────
@@ -3134,26 +3132,24 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Notlarım ─────────────────────────────────────
     if text in (TR["btn_notes"], AR["btn_notes"]):
-        if not is_admin(uid):
-            notes = get_user_notes(uid)
-            kb = []
-            # Son 15 not — her not buton olarak
-            for n in notes[-15:]:
-                icon = {"text":"✍️","photo":"🖼","video":"🎥","voice":"🎙","audio":"🎵","document":"📄"}.get(n.get("type","text"),"📌")
-                subj = n.get("subject","") or ""
-                cap  = n.get("content","")[:25] or f"[{n.get('type','medya')}]"
-                lbl  = f"{icon} {subj+': ' if subj else ''}{cap}"
-                kb.append([
-                    InlineKeyboardButton(lbl[:45], callback_data=f"notes|view|{n['id']}"),
-                    InlineKeyboardButton("🗑", callback_data=f"notes|del|{n['id']}"),
-                ])
-            kb.append([InlineKeyboardButton("➕ إضافة ملاحظة", callback_data="notes|new")])
-            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
-            cnt_txt = f"({len(notes)} ملاحظة)" if notes else "لا توجد ملاحظات بعد"
-            sent = await update.message.reply_text(
-                f"📝 ملاحظاتي\n\n{cnt_txt}",
-                reply_markup=InlineKeyboardMarkup(kb))
-            context.user_data["last_inline_msg"] = sent.message_id
+        notes = get_user_notes(uid)
+        kb = []
+        for n in notes[-15:]:
+            icon = {"text":"✍️","photo":"🖼","video":"🎥","voice":"🎙","audio":"🎵","document":"📄"}.get(n.get("type","text"),"📌")
+            subj = n.get("subject","") or ""
+            cap  = n.get("content","")[:25] or f"[{n.get('type','medya')}]"
+            lbl  = f"{icon} {subj+': ' if subj else ''}{cap}"
+            kb.append([
+                InlineKeyboardButton(lbl[:45], callback_data=f"notes|view|{n['id']}"),
+                InlineKeyboardButton("🗑", callback_data=f"notes|del|{n['id']}"),
+            ])
+        kb.append([InlineKeyboardButton("➕ إضافة ملاحظة", callback_data="notes|new")])
+        kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+        cnt_txt = f"({len(notes)} ملاحظة)" if notes else "لا توجد ملاحظات بعد"
+        sent = await update.message.reply_text(
+            f"📝 ملاحظاتي\n\n{cnt_txt}",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data["last_inline_msg"] = sent.message_id
         return
 
     # ── Hatırlatıcım ─────────────────────────────────
@@ -3199,10 +3195,10 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["last_inline_msg"] = sent.message_id
         return WAIT_FOLDER
 
-    if text == "🔬 المختبر" and not is_admin(uid):
+    if text == "🔬 المختبر" and not is_main_admin(uid):
         from datetime import datetime as _dt
         ARABIC_DAYS = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
-        user_grp = load_groups().get(uid, "")
+        user_grp = load_groups().get(uid, "") or get_admin_grp(uid)
         schedule = load_lab_schedule()
         today_ts = _dt.now().date()
 
@@ -3291,21 +3287,20 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Mini Test (Quiz) ─────────────────────────────
     if text in (TR["quiz_btn"], AR["quiz_btn"]):
-        if not is_admin(uid):
-            quizzes = [q for q in load_quizzes() if q.get("active")]
-            cls = get_user_class(uid)
-            quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == cls]
-            if not quizzes:
-                await update.message.reply_text(L(uid,"quiz_none"))
-            else:
-                q = quizzes[0]
-                opts = q.get("options", [])
-                kb = [[InlineKeyboardButton(f"{'ABCD'[i]}. {o}", callback_data=f"quiz|ans|{q['id']}|{i}")]
-                      for i, o in enumerate(opts)]
-                kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
-                await update.message.reply_text(
-                    f"📝 {q.get('question','?')}\n",
-                    reply_markup=InlineKeyboardMarkup(kb))
+        quizzes = [q for q in load_quizzes() if q.get("active")]
+        cls = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
+        quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == cls]
+        if not quizzes:
+            await update.message.reply_text(L(uid,"quiz_none"))
+        else:
+            q = quizzes[0]
+            opts = q.get("options", [])
+            kb = [[InlineKeyboardButton(f"{'ABCD'[i]}. {o}", callback_data=f"quiz|ans|{q['id']}|{i}")]
+                  for i, o in enumerate(opts)]
+            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+            await update.message.reply_text(
+                f"📝 {q.get('question','?')}\n",
+                reply_markup=InlineKeyboardMarkup(kb))
         return
 
     if text in (TR["rules_btn"], AR["rules_btn"]):
@@ -3435,7 +3430,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_admin(uid): return
 
     # ── Güncelleme Modu (ikincil adminler) ──────────────
-    if not is_main_admin(uid) and text in ("🔄 وضع التحديث", "🔄 إيقاف التحديث ✅"):
+    if is_admin(uid) and not is_main_admin(uid) and text in ("🔄 وضع التحديث", "🔄 إيقاف التحديث ✅"):
         s_um = load_settings()
         s_um["update_mode"] = not s_um.get("update_mode", False)
         if s_um["update_mode"]:
@@ -7550,7 +7545,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Notlar ───────────────────────────────────────
-    if cb.startswith("notes|") and not is_admin(uid):
+    if cb.startswith("notes|") and not is_main_admin(uid):
         parts_n = cb.split("|")
         action_n = parts_n[1]
 
@@ -7818,7 +7813,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Quiz cevabı ──────────────────────────────────
-    if cb.startswith("quiz|ans|") and not is_admin(uid):
+    if cb.startswith("quiz|ans|") and not is_main_admin(uid):
         parts   = cb.split("|")
         qid     = parts[2]
         ans_idx = int(parts[3])
@@ -8265,7 +8260,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Kişisel Not — Ders adı girişi ─────────────────
-    if action == "note_subject_input" and not is_admin(uid):
+    if action == "note_subject_input" and not is_main_admin(uid):
         subject = "" if text.strip() == "." else text.strip()[:50]
         context.user_data["note_subject"] = subject
         context.user_data["action"] = "note_taking"
@@ -8314,14 +8309,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action",None)
         return ConversationHandler.END
 
-    if action == "note_taking" and not is_admin(uid):
+    if action == "note_taking" and not is_main_admin(uid):
         subject = context.user_data.get("note_subject","")
         add_user_note(uid, "text", text, subject=subject)
         await update.message.reply_text("✅ " + L(uid,"notes_saved"))
         return WAIT_FOLDER  # Sadece metin, devam et
 
     # ── Kişisel Not — Metin notu kaydet (eski uyumluluk)
-    if action == "add_note" and not is_admin(uid):
+    if action == "add_note" and not is_main_admin(uid):
         note_type = context.user_data.pop("note_type","text")
         subject   = context.user_data.pop("note_subject","")
         add_user_note(uid, note_type, text, subject=subject)
@@ -9561,7 +9556,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         context.user_data.pop("action",None); context.user_data.pop("dm_target",None)
         return ConversationHandler.END
 
-    if action in ("add_note","note_taking") and not is_admin(uid):
+    if action in ("add_note","note_taking") and not is_main_admin(uid):
         subject = context.user_data.get("note_subject","")
         fid = None; cap = msg.caption or ""; note_type = "media"
         if msg.photo:
