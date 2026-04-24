@@ -2653,73 +2653,73 @@ def reply_kb(uid):
     elif is_admin(uid):
         s  = load_settings()
         ub = s.get("user_buttons", {})
-        rows = []
-        # Satır 1: Ara + Mesaj Gönder (kullanıcı gibi)
-        row1 = []
-        if ub.get("btn_search",   True): row1.append(KeyboardButton(AR["btn_search"]))
-        if ub.get("btn_help",     True): row1.append(KeyboardButton(AR["btn_help"]))
-        if row1: rows.append(row1)
-        # Satır 2: Profil
-        rows.append([KeyboardButton(AR["profile_btn"])])
-        # Satır 3: Favoriler + Son
-        row3 = []
-        if ub.get("btn_favorites",True): row3.append(KeyboardButton(AR["btn_favorites"]))
-        if ub.get("btn_recent",   True): row3.append(KeyboardButton(AR["btn_recent"]))
-        if row3: rows.append(row3)
-        # Satır 4: Notlar + Hatırlatıcı
-        row4 = []
-        if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
-        if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
-        if row4: rows.append(row4)
-        # Satır 5: Sınavlar + Raporlar + Lab
-        row5 = []
-        if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
-        if ub.get("btn_reports",  True): row5.append(KeyboardButton(AR["btn_reports"]))
-        row5.append(KeyboardButton("🔬 المختبر"))
-        if row5: rows.append(row5)
-        # Satır 6: Liderboard + Quiz
-        row6 = []
-        if ub.get("btn_leaderboard",True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
-        if ub.get("quiz_btn",     True): row6.append(KeyboardButton(AR["quiz_btn"]))
-        if row6: rows.append(row6)
-        # Satır 7: Kurallar
-        rows.append([KeyboardButton(AR["rules_btn"])])
-        # Admin özel: İçerik + Güncelleme Modu
-        _s_kb = load_settings()
+        _s_kb  = load_settings()
         _um_lbl = "🔄 إيقاف التحديث ✅" if _s_kb.get("update_mode") else "🔄 وضع التحديث"
+        rows = []
+        # Satır 1: İçerik + Güncelleme Modu (admin araçları en üstte)
         rows.append([KeyboardButton(AR["btn_content"]), KeyboardButton(_um_lbl)])
+        # Satır 2: Sınavlar + Raporlar
+        row2 = []
+        if ub.get("countdown_btn", True): row2.append(KeyboardButton(AR["countdown_btn"]))
+        if ub.get("btn_reports",   True): row2.append(KeyboardButton(AR["btn_reports"]))
+        if row2: rows.append(row2)
+        # Satır 3: Lab + Hatırlatıcı
+        row3 = [KeyboardButton("🔬 المختبر")]
+        if ub.get("btn_reminder",  True): row3.append(KeyboardButton(AR["btn_reminder"]))
+        rows.append(row3)
+        # Satır 4: Notlar + Ara
+        row4 = []
+        if ub.get("btn_notes",     True): row4.append(KeyboardButton(AR["btn_notes"]))
+        if ub.get("btn_search",    True): row4.append(KeyboardButton(AR["btn_search"]))
+        if row4: rows.append(row4)
+        # Satır 5: Favoriler + Son Görüntülenen
+        row5 = []
+        if ub.get("btn_favorites", True): row5.append(KeyboardButton(AR["btn_favorites"]))
+        if ub.get("btn_recent",    True): row5.append(KeyboardButton(AR["btn_recent"]))
+        if row5: rows.append(row5)
+        # Satır 6: Profil + Mesaj Gönder
+        row6 = [KeyboardButton(AR["profile_btn"])]
+        if ub.get("btn_help",      True): row6.append(KeyboardButton(AR["btn_help"]))
+        rows.append(row6)
+        # Satır 7: Liderboard + Quiz
+        row7 = []
+        if ub.get("btn_leaderboard", True): row7.append(KeyboardButton(AR["btn_leaderboard"]))
+        if ub.get("quiz_btn",      True): row7.append(KeyboardButton(AR["quiz_btn"]))
+        if row7: rows.append(row7)
+        # Satır 8: Kurallar
+        rows.append([KeyboardButton(AR["rules_btn"])])
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
     else:
         s  = load_settings()
         ub = s.get("user_buttons", {})
         rows = []
-        # Satır 1: Ara + Mesaj Gönder
+        # Satır 1: Sınavlar + Raporlar (akademik — en önemli)
         row1 = []
-        if ub.get("btn_search",   True): row1.append(KeyboardButton(AR["btn_search"]))
-        if ub.get("btn_help",     True): row1.append(KeyboardButton(AR["btn_help"]))
+        if ub.get("countdown_btn", True): row1.append(KeyboardButton(AR["countdown_btn"]))
+        if ub.get("btn_reports",   True): row1.append(KeyboardButton(AR["btn_reports"]))
         if row1: rows.append(row1)
-        # Satır 2: Profilim
-        rows.append([KeyboardButton(AR["profile_btn"])])
-        # Satır 3: Favoriler + Son Görüntülenen
+        # Satır 2: Lab + Hatırlatıcı
+        row2 = [KeyboardButton("🔬 المختبر")]
+        if ub.get("btn_reminder",  True): row2.append(KeyboardButton(AR["btn_reminder"]))
+        rows.append(row2)
+        # Satır 3: Notlar + Ara
         row3 = []
-        if ub.get("btn_favorites",True): row3.append(KeyboardButton(AR["btn_favorites"]))
-        if ub.get("btn_recent",   True): row3.append(KeyboardButton(AR["btn_recent"]))
+        if ub.get("btn_notes",     True): row3.append(KeyboardButton(AR["btn_notes"]))
+        if ub.get("btn_search",    True): row3.append(KeyboardButton(AR["btn_search"]))
         if row3: rows.append(row3)
-        # Satır 4: Notlarım + Hatırlatıcım
+        # Satır 4: Favoriler + Son Görüntülenen
         row4 = []
-        if ub.get("btn_notes",    True): row4.append(KeyboardButton(AR["btn_notes"]))
-        if ub.get("btn_reminder", True): row4.append(KeyboardButton(AR["btn_reminder"]))
+        if ub.get("btn_favorites", True): row4.append(KeyboardButton(AR["btn_favorites"]))
+        if ub.get("btn_recent",    True): row4.append(KeyboardButton(AR["btn_recent"]))
         if row4: rows.append(row4)
-        # Satır 5: Sınavlar + Raporlar + Lab
-        row5 = []
-        if ub.get("countdown_btn",True): row5.append(KeyboardButton(AR["countdown_btn"]))
-        if ub.get("btn_reports",  True): row5.append(KeyboardButton(AR["btn_reports"]))
-        row5.append(KeyboardButton("🔬 المختبر"))
-        if row5: rows.append(row5)
+        # Satır 5: Profil + Mesaj Gönder
+        row5 = [KeyboardButton(AR["profile_btn"])]
+        if ub.get("btn_help",      True): row5.append(KeyboardButton(AR["btn_help"]))
+        rows.append(row5)
         # Satır 6: Liderboard + Test
         row6 = []
         if ub.get("btn_leaderboard", True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
-        if ub.get("quiz_btn",     True): row6.append(KeyboardButton(AR["quiz_btn"]))
+        if ub.get("quiz_btn",      True): row6.append(KeyboardButton(AR["quiz_btn"]))
         if row6: rows.append(row6)
         # Satır 7: Kurallar
         rows.append([KeyboardButton(AR["rules_btn"])])
@@ -3380,22 +3380,25 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     if text in (TR["btn_content"], AR["btn_content"]):
         if is_main_admin(uid):
             kb = [
-                [InlineKeyboardButton(L(uid,"add_folder"),    callback_data="cnt|add_folder"),
-                 InlineKeyboardButton(L(uid,"del_folder"),    callback_data="cnt|del_folder")],
-                [InlineKeyboardButton(L(uid,"rename_folder"), callback_data="cnt|rename_folder"),
-                 InlineKeyboardButton(L(uid,"add_file"),      callback_data="cnt|add_file")],
-                [InlineKeyboardButton(L(uid,"del_file"),      callback_data="cnt|del_file"),
-                 InlineKeyboardButton(L(uid,"rename_file"),   callback_data="cnt|rename_file")],
-                [InlineKeyboardButton(L(uid,"pin_file"),      callback_data="extra|pin"),
-                 InlineKeyboardButton(L(uid,"move_file"),     callback_data="extra|move")],
-                [InlineKeyboardButton(L(uid,"copy_file"),     callback_data="extra|copy"),
-                 InlineKeyboardButton(L(uid,"sort_az"),       callback_data="extra|sort_az")],
-                [InlineKeyboardButton(L(uid,"sort_views"),    callback_data="extra|sort_views"),
+                # ── Klasör işlemleri ──
+                [InlineKeyboardButton(L(uid,"add_folder"),     callback_data="cnt|add_folder"),
+                 InlineKeyboardButton(L(uid,"del_folder"),     callback_data="cnt|del_folder")],
+                [InlineKeyboardButton(L(uid,"rename_folder"),  callback_data="cnt|rename_folder"),
                  InlineKeyboardButton(L(uid,"folder_desc_btn"),callback_data="extra|folder_desc")],
-                [InlineKeyboardButton("📅 Sinav Ekle",       callback_data="cnt|add_countdown"),
-                 InlineKeyboardButton("📋 Rapor Ekle",       callback_data="cnt|add_report")],
-                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
-                [InlineKeyboardButton(L(uid,"back"),          callback_data="nav|root")],
+                # ── Dosya işlemleri ──
+                [InlineKeyboardButton(L(uid,"add_file"),       callback_data="cnt|add_file"),
+                 InlineKeyboardButton(L(uid,"del_file"),       callback_data="cnt|del_file")],
+                [InlineKeyboardButton(L(uid,"rename_file"),    callback_data="cnt|rename_file"),
+                 InlineKeyboardButton(L(uid,"pin_file"),       callback_data="extra|pin")],
+                [InlineKeyboardButton(L(uid,"move_file"),      callback_data="extra|move"),
+                 InlineKeyboardButton(L(uid,"copy_file"),      callback_data="extra|copy")],
+                [InlineKeyboardButton(L(uid,"sort_az"),        callback_data="extra|sort_az"),
+                 InlineKeyboardButton(L(uid,"sort_views"),     callback_data="extra|sort_views")],
+                # ── Akademik ──
+                [InlineKeyboardButton("📅 Sinav Ekle",        callback_data="cnt|add_countdown"),
+                 InlineKeyboardButton("📋 Rapor Ekle",        callback_data="cnt|add_report")],
+                [InlineKeyboardButton("🔬 Lab Programi",      callback_data="mgmt|lab")],
+                [InlineKeyboardButton(L(uid,"back"),           callback_data="nav|root")],
             ]
             sent = await update.message.reply_text(L(uid,"content_mgmt"), reply_markup=InlineKeyboardMarkup(kb))
             context.user_data["last_inline_msg"] = sent.message_id
