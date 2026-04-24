@@ -5441,7 +5441,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     [InlineKeyboardButton(_um_mp_lbl,             callback_data="mgmt|toggle_update")],
                     [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                      InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
-                    [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
                     [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
                      InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
                     [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
@@ -5457,8 +5456,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
                     [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
                      InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
-                    [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
-                     InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                    [InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
                     [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
                 ]
                 await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
@@ -5648,7 +5646,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton(_um_tm_lbl,             callback_data="mgmt|toggle_update")],
                 [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                  InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
-                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
                 [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
                  InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
                 [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
@@ -5664,8 +5661,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
                 [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
                  InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
-                [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
-                 InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                [InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
                 [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
             ]
             await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tm))
@@ -5700,7 +5696,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 [InlineKeyboardButton(_tu_lbl,                callback_data="mgmt|toggle_update")],
                 [InlineKeyboardButton(TR["stats"],            callback_data="mgmt|stats"),
                  InlineKeyboardButton(TR["users"],            callback_data="mgmt|users")],
-                [InlineKeyboardButton("🔬 Lab Programi",     callback_data="mgmt|lab")],
                 [InlineKeyboardButton("📋 Admin Log İndir",   callback_data="mgmt|admin_log_export"),
                  InlineKeyboardButton("📊 Admin Aktivite",    callback_data="admin_activity|panel")],
                 [InlineKeyboardButton("⏰ Bildirim Ayarları", callback_data="set|remind_cfg")],
@@ -5716,8 +5711,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton(TR["bcast_history_btn"],callback_data="bcast|history")],
                 [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
                  InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
-                [InlineKeyboardButton("⏳ Sınav Ekle",       callback_data="countdown|add"),
-                 InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                [InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
                 [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
             ]
             await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb_tu))
@@ -9955,6 +9949,7 @@ def main():
         import time as _t
         today     = _date.today()
         today_str = today.strftime("%d/%m/%Y")
+        today_iso = today.strftime("%Y-%m-%d")
         today_wd  = today.weekday()
 
         all_users  = load_users()
@@ -9983,7 +9978,7 @@ def main():
 
             # Scheduled lab for today
             for le in lab_sched:
-                if le.get("date") != today_str: continue
+                if le.get("week") != today_iso: continue
                 le_grp = le.get("group", "")
                 if u_grp and le_grp and not u_grp.startswith(le_grp): continue
                 t_str = f" ⏰ {le['time']}" if le.get("time") else ""
