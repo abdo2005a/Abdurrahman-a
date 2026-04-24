@@ -4659,10 +4659,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if cls_val != "all": tgt_parts.append(f"cls_{cls_val}")
             if sft_val != "all": tgt_parts.append(f"sft_{sft_val}")
             if grp_val != "all": tgt_parts.append(f"grp_{grp_val}")
-            context.user_data["sb_target"] = "|".join(tgt_parts) or "all"
+            sb_tgt = "|".join(tgt_parts) or "all"
+            context.user_data["sb_target"] = sb_tgt
             context.user_data["action"] = "sadmin_bcast"
-            lbl = target_label(context.user_data["sb_target"])
-            await safe_edit(query, f"📢 {lbl}\n\nاكتب نص الإعلان:",
+            lbl = target_label(sb_tgt)
+            preview_targets = get_target_users(sb_tgt) if sb_tgt != "all" else [u for u in load_users() if int(u) != ADMIN_ID]
+            preview_targets = [u for u in preview_targets if not is_blocked(u) and int(u) != ADMIN_ID]
+            await safe_edit(query, f"📢 {lbl}\n👥 {len(preview_targets)} مستخدم\n\nاكتب نص الإعلان:",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="close")]]))
             return WAIT_BROADCAST_MSG
 
@@ -7677,6 +7680,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             grp_keys = list(cls_grps.keys())
         else:
             grp_keys = ["A","B","C"]
+        adm_grp_cd = get_admin_grp(uid)
+        if adm_grp_cd:
+            grp_keys = [g for g in grp_keys if g == adm_grp_cd or g.startswith(adm_grp_cd)]
         kb = [[InlineKeyboardButton("الكل", callback_data="cd_grp|all")]]
         row = [InlineKeyboardButton(g, callback_data=f"cd_grp|{g}") for g in grp_keys]
         if row: kb.append(row)
@@ -7694,7 +7700,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text("📅 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
-    if cb.startswith("rep_cls|") and is_admin(uid):
+    if cb.startswith("rep_cls|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         cls_val = cb.split("|")[1]
         context.user_data["report_cls"] = "" if cls_val == "all" else cls_val
         kb = [
@@ -7707,7 +7713,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
-    if cb.startswith("rep_shift|") and is_admin(uid):
+    if cb.startswith("rep_shift|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         shift_val = cb.split("|")[1]
         context.user_data["report_shift"] = "" if shift_val == "all" else shift_val
         cls_for_grp = get_admin_cls(uid) or context.user_data.get("report_cls", "")
@@ -7716,13 +7722,16 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             grp_keys = list(cls_grps.keys())
         else:
             grp_keys = ["A","B","C"]
+        adm_grp_rp = get_admin_grp(uid)
+        if adm_grp_rp:
+            grp_keys = [g for g in grp_keys if g == adm_grp_rp or g.startswith(adm_grp_rp)]
         kb = [[InlineKeyboardButton("الكل", callback_data="rep_grp|all")]]
         row = [InlineKeyboardButton(g, callback_data=f"rep_grp|{g}") for g in grp_keys]
         if row: kb.append(row)
         await query.edit_message_text("📋 المجموعة:", reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
-    if cb.startswith("rep_grp|") and is_admin(uid):
+    if cb.startswith("rep_grp|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         grp_val = cb.split("|")[1]
         context.user_data["report_group"] = "" if grp_val == "all" else grp_val
         context.user_data["action"] = "report_date"
@@ -8475,6 +8484,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         else:
             targets = [u for u in load_users() if int(u) != ADMIN_ID]
         targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
+        # Secondary admin scope enforcement — even when target="all"
+        adm_cls_bc = get_admin_cls(uid)
+        adm_grp_bc = get_admin_grp(uid)
+        adm_sft_bc = get_admin_shift(uid)
+        if adm_cls_bc:
+            targets = [u for u in targets if get_user_class(u) == adm_cls_bc]
+        if adm_grp_bc:
+            _grps_bc = load_groups()
+            targets = [u for u in targets if _grps_bc.get(u,"").startswith(adm_grp_bc)]
+        if adm_sft_bc:
+            _shfts_bc = load_shifts()
+            targets = [u for u in targets if _shfts_bc.get(u,"") in
+                       (adm_sft_bc, "sabah" if adm_sft_bc == "sabahi" else "gece")]
         btext = fmt_bcast("📢", "إعلان رسمي", text, uid)
         success = 0
         for uid_ in targets:
@@ -9881,11 +9903,15 @@ def main():
                 name_cd = cd.get("name","Sinav")
                 cls_cd  = cd.get("cls","")
                 shft_cd = cd.get("shift","")
+                grp_cd  = cd.get("group","")
                 tgt_val = f"cls_{cls_cd}" if cls_cd else "all"
                 targets = get_target_users(tgt_val)
                 if shft_cd:
                     shfts = load_shifts()
                     targets = [u for u in targets if shfts.get(u,"") in (shft_cd,"sabah" if shft_cd=="sabahi" else "gece")]
+                if grp_cd:
+                    grps_ex = load_groups()
+                    targets = [u for u in targets if grps_ex.get(u,"").startswith(grp_cd)]
                 day_lbl = "غداً" if remind_days == 1 else f"بعد {remind_days} أيام"
                 msg = f"⏰ تذكير بالامتحان\n\n📚 {name_cd}\n📅 {day_lbl} — {target_date}"
                 for uid_ in targets:
@@ -9929,7 +9955,8 @@ def main():
                 users_d = load_users()
                 for uid_, u in users_d.items():
                     if is_blocked(uid_): continue
-                    if grps_d.get(uid_,"") == grp:
+                    u_grp_ = grps_d.get(uid_,"")
+                    if u_grp_ and (u_grp_ == grp or u_grp_.startswith(grp)):
                         try: await ctx.bot.send_message(int(uid_), msg)
                         except: pass
                 try: await ctx.bot.send_message(ADMIN_ID, f"🔬 Lab {day_lbl}: {grp}")
