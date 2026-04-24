@@ -1181,11 +1181,12 @@ def get_reports(cls: str = "", shift: str = "", uid: str = "") -> list:
             r_cls   = r.get("cls", "")
             r_shift = r.get("shift", "")
             if all_cls and r_cls and r_cls not in all_cls: continue
+            is_extra = bool(r_cls and r_cls in extra_cls and r_cls != cls)
             r_grp = r.get("group", "")
-            if r_grp and uid:
+            if r_grp and uid and not is_extra:
                 u_grp = load_groups().get(str(uid), "")
                 if not u_grp.startswith(r_grp): continue
-            if r_shift and shift:
+            if r_shift and shift and not is_extra:
                 u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
                 c_norm = "sabahi" if r_shift in ("sabahi","sabah") else "masaiy"
                 if u_norm != c_norm: continue
@@ -1486,14 +1487,16 @@ def get_countdowns(cls: str = "", shift: str = "", uid: str = "") -> list:
             # Sınıf — ana veya ek sınıftan biri eşleşmeli
             if all_cls and cd_cls and cd_cls not in all_cls:
                 continue
+            # Ek sınıf öğesi için grup+shift filtresi atlanır (tüm gruplar görünür)
+            is_extra = bool(cd_cls and cd_cls in extra_cls and cd_cls != cls)
             # Grup — A/B/C filtresi
             cd_grp = c.get("group","")
-            if cd_grp and uid:
+            if cd_grp and uid and not is_extra:
                 u_grp = load_groups().get(str(uid),"")
                 if not u_grp.startswith(cd_grp):
                     continue
             # Shift
-            if cd_shift and shift:
+            if cd_shift and shift and not is_extra:
                 u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
                 c_norm = "sabahi" if cd_shift in ("sabahi","sabah") else "masaiy"
                 if u_norm != c_norm:
@@ -1621,6 +1624,16 @@ def get_admin_grp(admin_uid: str):
     if is_main_admin(admin_uid): return None
     perms = load_admin_perms()
     return perms.get(str(admin_uid), {}).get("grp", None)
+
+def get_admin_grps(admin_uid: str) -> list:
+    """Admin'in yönettiği grupların listesi (birden fazla olabilir). Boş=hepsi."""
+    if is_main_admin(admin_uid): return []
+    perms = load_admin_perms()
+    p = perms.get(str(admin_uid), {})
+    grps = p.get("grps", [])
+    if not grps and p.get("grp"):
+        grps = [p["grp"]]
+    return grps
 
 def get_admin_shift(admin_uid: str):
     """Admin hangi vardiyayı yönetiyor? None=hepsi."""
@@ -3200,18 +3213,29 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         ARABIC_DAYS = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
         user_grp = load_groups().get(uid, "") or get_admin_grp(uid)
         user_cls = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
+        # Extra classes for students (not admins)
+        extra_cls_lab = []
+        if not is_admin(uid):
+            extra_data_lab = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+            extra_cls_lab  = extra_data_lab.get(str(uid), [])
         schedule = load_lab_schedule()
         today_ts = _dt.now().date()
 
         my_labs = []
+        seen_lab_keys = set()
         for e in schedule:
             try:
                 e_dt = _dt.strptime(e["week"], "%Y-%m-%d").date()
                 if e_dt < today_ts: continue
                 lab_cls = e.get("cls", "")
-                if lab_cls and user_cls and lab_cls != user_cls: continue
                 lab_grp = e.get("group", "")
-                if lab_grp and user_grp and not user_grp.startswith(lab_grp): continue
+                # Check if this entry belongs to extra class (no group filter for extra)
+                is_extra_lab = bool(lab_cls and lab_cls in extra_cls_lab and lab_cls != user_cls)
+                if lab_cls and user_cls and lab_cls != user_cls and not is_extra_lab: continue
+                if lab_grp and user_grp and not user_grp.startswith(lab_grp) and not is_extra_lab: continue
+                key = (e["week"], lab_grp, lab_cls)
+                if key in seen_lab_keys: continue
+                seen_lab_keys.add(key)
                 day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
                 date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
                 my_labs.append((date_disp, e.get("note",""), False))
@@ -3240,9 +3264,30 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if text in (TR["btn_reports"], AR["btn_reports"]):
-        cls   = get_user_class(uid) if not is_admin(uid) else ""
-        shift = get_user_shift(uid) if not is_admin(uid) else ""
-        reps  = get_reports(cls, shift, uid=uid)
+        if not is_admin(uid):
+            cls   = get_user_class(uid)
+            shift = get_user_shift(uid)
+            reps  = get_reports(cls, shift, uid=uid)
+        elif not is_main_admin(uid):
+            all_reps    = get_reports("", "", uid="")
+            adm_cls_r   = get_admin_cls(uid)
+            adm_grps_r  = get_admin_grps(uid)
+            adm_sft_r   = get_admin_shift(uid)
+            reps = []
+            for r in all_reps:
+                if adm_cls_r and r.get("cls","") and r.get("cls","") != adm_cls_r: continue
+                if adm_grps_r:
+                    r_grp = r.get("group","")
+                    if r_grp and not any(r_grp.startswith(g) for g in adm_grps_r): continue
+                if adm_sft_r:
+                    r_sft = r.get("shift","")
+                    if r_sft:
+                        u_n = "sabahi" if adm_sft_r in ("sabahi","sabah") else "masaiy"
+                        c_n = "sabahi" if r_sft    in ("sabahi","sabah") else "masaiy"
+                        if u_n != c_n: continue
+                reps.append(r)
+        else:
+            reps = get_reports("", "", uid="")
         if not reps:
             await update.message.reply_text(L(uid,"reports_none"))
         else:
@@ -3260,9 +3305,30 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if text in (TR["countdown_btn"], AR["countdown_btn"]):
-        cls   = get_user_class(uid) if not is_admin(uid) else ""
-        shift = get_user_shift(uid)  if not is_admin(uid) else ""
-        cds   = get_countdowns(cls, shift, uid=uid)
+        if not is_admin(uid):
+            cls   = get_user_class(uid)
+            shift = get_user_shift(uid)
+            cds   = get_countdowns(cls, shift, uid=uid)
+        elif not is_main_admin(uid):
+            all_cds    = get_countdowns("", "", uid="")
+            adm_cls_c  = get_admin_cls(uid)
+            adm_grps_c = get_admin_grps(uid)
+            adm_sft_c  = get_admin_shift(uid)
+            cds = []
+            for c in all_cds:
+                if adm_cls_c and c.get("cls","") and c.get("cls","") != adm_cls_c: continue
+                if adm_grps_c:
+                    c_grp = c.get("group","")
+                    if c_grp and not any(c_grp.startswith(g) for g in adm_grps_c): continue
+                if adm_sft_c:
+                    c_sft = c.get("shift","")
+                    if c_sft:
+                        u_n = "sabahi" if adm_sft_c in ("sabahi","sabah") else "masaiy"
+                        c_n = "sabahi" if c_sft     in ("sabahi","sabah") else "masaiy"
+                        if u_n != c_n: continue
+                cds.append(c)
+        else:
+            cds = get_countdowns("", "", uid="")
         if not cds:
             await update.message.reply_text(L(uid,"countdown_none"))
         else:
