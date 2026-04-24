@@ -7685,7 +7685,18 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         admin_cls = get_admin_cls(uid)
         if admin_cls:
             context.user_data["countdown_cls"] = admin_cls
-        cls_for_grp = admin_cls or context.user_data.get("countdown_cls","")
+        cls_chosen = context.user_data.get("countdown_cls", "")
+        # Both class AND shift are "all" → skip group picker, go directly to date
+        if not cls_chosen and shift_val == "all":
+            context.user_data["countdown_group"] = ""
+            context.user_data["action"] = "countdown_date"
+            await query.edit_message_text(
+                L(uid, "countdown_date"),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
+                ]]))
+            return WAIT_FOLDER
+        cls_for_grp = admin_cls or cls_chosen
         if cls_for_grp:
             cls_grps = get_class_groups(cls_for_grp)
             grp_keys = list(cls_grps.keys())
