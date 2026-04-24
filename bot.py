@@ -7788,12 +7788,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             context.user_data.pop("action", None)
             return ConversationHandler.END
 
-        if action == "manual_date":
-            context.user_data["action"] = "reminder_day"
-            await query.edit_message_text(
-                "📅 اليوم (1-31):" if not is_main_admin(uid) else "📅 Gün (1-31):",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️", callback_data="nav|root")]]))
-            return WAIT_FOLDER
         if action == "del" and len(parts) > 2:
             idx = int(parts[2])
             delete_reminder(uid, idx)
