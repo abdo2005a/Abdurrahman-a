@@ -66,6 +66,8 @@ USER_NOTES_FILE  = os.path.join(BASE_DIR, "personal_notes.json")
 QUIZ_FILE        = os.path.join(BASE_DIR, "quizzes.json")
 REPORT_FILE      = os.path.join(BASE_DIR, "file_reports.json")
 ADMIN_PERMS_FILE = os.path.join(BASE_DIR, "admin_perms.json")
+HOMEWORK_FILE    = os.path.join(BASE_DIR, "homework.json")
+TIMETABLE_FILE   = os.path.join(BASE_DIR, "timetable.json")
 
 # ── Tam Yedek Şeması ─────────────────────────────────────────
 BACKUP_SCHEMA = {
@@ -105,6 +107,8 @@ BACKUP_SCHEMA = {
     "reports":       REPORT_FILE,
     "user_reports":  REPORTS_FILE,
     "admin_perms":   ADMIN_PERMS_FILE,
+    "homework":      HOMEWORK_FILE,
+    "timetable":     TIMETABLE_FILE,
 }
 
 # ── Arama / AI ayarları ──────────────────────────────────────
@@ -567,6 +571,24 @@ TR = {
     "countdown_prompt":   "Sınav adını yazın:",
     "countdown_date":     "Tarih yazın (örn: 20/05/2026 veya 20/05/2026 09:30):",
     "countdown_saved":    "✅ {} kaydedildi.",
+    # ═══ ÖDEV TAKİBİ ═══
+    "hw_btn":             "📝 Ödevlerim",
+    "hw_none":            "Ödev bulunamadı.",
+    "hw_list_title":      "📝 ÖDEVLER",
+    "hw_submitted":       "✅ Teslim Edildi",
+    "hw_submit_btn":      "✅ Teslim Ettim",
+    "hw_submit_ok":       "✅ Teslim kaydedildi.",
+    "hw_panel":           "📝 Ödev Yönetimi",
+    "hw_name_prompt":     "Ödev adını yazın:",
+    "hw_subj_prompt":     "Dersin adını yazın:",
+    "hw_date_prompt":     "Son teslim tarihini yazın (örn: 20/05/2026):",
+    "hw_saved":           "✅ Ödev kaydedildi.",
+    # ═══ DERS PROGRAMI ═══
+    "tt_btn":             "📅 Ders Programım",
+    "tt_panel":           "📅 Ders Programı Yönetimi",
+    "tt_none":            "Bu sınıf/vardiya için program yok.",
+    "tt_edit_prompt":     "Programı girin:\nFormat: gün_num:SS:DD Ders\nÖrnek:\n0:08:00 Matematik\n0:09:00 Fizik\n1:08:00 Kimya\n\n(0=Cumartesi, 1=Pazar, ..., 6=Cuma)",
+    "tt_saved":           "✅ Ders programı kaydedildi.",
     "quiz_none":          "Aktif test yok.",
     "group_select":       "👥 Grubunu seç (A/B/C → alt grup):",
     "group_selected":     "✅ Grubun kaydedildi: {}",
@@ -960,6 +982,24 @@ AR = {
     "group_selected":     "✅ تم حفظ مجموعتك: {}",
     "group_change_btn":   "👥 تغيير المجموعة",
     "group_label":        "👥 المجموعة: {}",
+    # ═══ الواجبات ═══
+    "hw_btn":             "📝 واجباتي",
+    "hw_none":            "لا توجد واجبات.",
+    "hw_list_title":      "📝 الواجبات",
+    "hw_submitted":       "✅ تم التسليم",
+    "hw_submit_btn":      "✅ سلّمت الواجب",
+    "hw_submit_ok":       "✅ تم تسجيل تسليمك.",
+    "hw_panel":           "📝 إدارة الواجبات",
+    "hw_name_prompt":     "اكتب اسم الواجب:",
+    "hw_subj_prompt":     "اكتب اسم المادة:",
+    "hw_date_prompt":     "اكتب تاريخ التسليم (مثال: 20/05/2026):",
+    "hw_saved":           "✅ تم حفظ الواجب.",
+    # ═══ الجدول الدراسي ═══
+    "tt_btn":             "📅 جدولي الدراسي",
+    "tt_panel":           "📅 إدارة الجدول الدراسي",
+    "tt_none":            "لا يوجد جدول لهذا الصف/الفترة.",
+    "tt_edit_prompt":     "أدخل الجدول:\nالصيغة: رقم_اليوم:SS:DD المادة\nمثال:\n0:08:00 رياضيات\n0:09:00 فيزياء\n\n(0=السبت، 1=الأحد، ...، 6=الجمعة)",
+    "tt_saved":           "✅ تم حفظ الجدول الدراسي.",
 }
 
 DEFAULT_WELCOME_AR = (
@@ -1148,6 +1188,12 @@ def save_reminders(d):    save_json(REMINDERS_FILE, d)
 
 def load_reports():    return load_json(REPORTS_FILE, [])
 def save_reports(d):   save_json(REPORTS_FILE, d)
+
+def load_homework():   return load_json(HOMEWORK_FILE, [])
+def save_homework(d):  save_json(HOMEWORK_FILE, d)
+
+def load_timetable():  return load_json(TIMETABLE_FILE, {})
+def save_timetable(d): save_json(TIMETABLE_FILE, d)
 
 def add_report(name: str, subject: str, date_str: str, cls: str = "", shift: str = "", group: str = "") -> bool:
     try:
