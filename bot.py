@@ -3476,8 +3476,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 [InlineKeyboardButton(L(uid,"sort_az"),        callback_data="extra|sort_az"),
                  InlineKeyboardButton(L(uid,"sort_views"),     callback_data="extra|sort_views")],
                 # ── Akademik ──
-                [InlineKeyboardButton("📅 Sinav Ekle",        callback_data="cnt|add_countdown"),
-                 InlineKeyboardButton("📋 Rapor Ekle",        callback_data="cnt|add_report")],
+                [InlineKeyboardButton("📅 Sınavlar",          callback_data="cnt|list_cd"),
+                 InlineKeyboardButton("📋 Raporlar",           callback_data="cnt|list_rep")],
                 [InlineKeyboardButton("🔬 Lab Programi",      callback_data="mgmt|lab")],
                 [InlineKeyboardButton(L(uid,"back"),           callback_data="nav|root")],
             ]
@@ -3502,8 +3502,8 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             if row_file: kb.append(row_file)
 
             if get_admin_perm(uid, "can_countdown"):
-                kb.append([InlineKeyboardButton("📅 إضافة امتحان", callback_data="cnt|add_countdown"),
-                            InlineKeyboardButton("📋 إضافة تقرير",  callback_data="cnt|add_report")])
+                kb.append([InlineKeyboardButton("📅 الامتحانات",    callback_data="cnt|list_cd"),
+                            InlineKeyboardButton("📋 التقارير",      callback_data="cnt|list_rep")])
                 kb.append([InlineKeyboardButton("🔬 برنامج المختبر", callback_data="mgmt|lab")])
             if get_admin_perm(uid, "can_poll"):
                 kb.append([InlineKeyboardButton("📊 إنشاء استطلاع", callback_data="poll|create")])
@@ -4868,6 +4868,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             sched = load_lab_schedule()
             entry = next((e for e in sched if e.get("week")==week), None)
             grp   = entry.get("group","?") if entry else "?"
+            note  = entry.get("note","") if entry else ""
             # Grup değiştir — yeni format: {cls: {shift: {grp: [subs]}}}
             grps_cfg = load_class_groups()
             all_subs = []
@@ -4888,8 +4889,32 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 if len(row) == 4:
                     kb.append(row); row = []
             if row: kb.append(row)
-            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="mgmt|lab")])
-            await query.edit_message_text(f"🔬 {week}\nMevcut: {grp}\nGrup seç:", reply_markup=InlineKeyboardMarkup(kb))
+            kb.append([InlineKeyboardButton("📝 تعديل الملاحظة",  callback_data=f"lab|edit_note|{week}"),
+                       InlineKeyboardButton("📅 تعديل التاريخ",   callback_data=f"lab|edit_date|{week}")])
+            kb.append([InlineKeyboardButton("🗑 حذف",             callback_data=f"lab|del|{week}"),
+                       InlineKeyboardButton("◀️ Geri",            callback_data="mgmt|lab")])
+            note_line = f"\n📝 {note}" if note else ""
+            await query.edit_message_text(
+                f"🔬 {week}\nالمجموعة: {grp}{note_line}\n\nاختر مجموعة لتغييرها:",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return WAIT_FOLDER
+
+        if lab_act == "edit_note":
+            week = lab_parts[2]
+            context.user_data["action"]   = "edit_lab_note"
+            context.user_data["edit_lab_week"] = week
+            await query.edit_message_text(
+                f"📝 اكتب ملاحظة جديدة للأسبوع {week}:\n(أرسل - للحذف)",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data=f"lab|view|{week}")]]))
+            return WAIT_FOLDER
+
+        if lab_act == "edit_date":
+            week = lab_parts[2]
+            context.user_data["action"]       = "edit_lab_date"
+            context.user_data["edit_lab_week"] = week
+            await query.edit_message_text(
+                f"📅 اكتب التاريخ الجديد (صيغة: YYYY-MM-DD مثال: 2026-05-20)\nالتاريخ الحالي: {week}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data=f"lab|view|{week}")]]))
             return WAIT_FOLDER
 
         if lab_act == "del":
@@ -4910,6 +4935,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 n2 = f" — {e2['note']}" if e2.get("note") else ""
                 kb_del.append([
                     InlineKeyboardButton(f"🔬 {w2}: {g2}{n2}", callback_data=f"lab|view|{w2}"),
+                    InlineKeyboardButton("✏️", callback_data=f"lab|view|{w2}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|del|{w2}"),
                 ])
             kb_del.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
@@ -4956,6 +4982,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 n3 = f" — {e3['note']}" if e3.get("note") else ""
                 kb_set.append([
                     InlineKeyboardButton(f"🔬 {w3}: {g3}{n3}", callback_data=f"lab|view|{w3}"),
+                    InlineKeyboardButton("✏️", callback_data=f"lab|view|{w3}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|del|{w3}"),
                 ])
             kb_set.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
@@ -5717,6 +5744,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 note = f" — {e['note']}" if e.get("note") else ""
                 kb.append([
                     InlineKeyboardButton(f"🔬 {week}: {grp}{note}", callback_data=f"lab|view|{week}"),
+                    InlineKeyboardButton("✏️", callback_data=f"lab|view|{week}"),
                     InlineKeyboardButton("🗑", callback_data=f"lab|del|{week}"),
                 ])
             kb.append([InlineKeyboardButton("➕ Yeni Tarih Ekle", callback_data="lab|add_new")])
@@ -6897,13 +6925,200 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 await query.answer("Yetkin yok", show_alert=True)
                 return ConversationHandler.END
 
+        # ── Sınav/Rapor yönetim panelleri ────────────────
+        def _cd_list_kb(admin_uid):
+            """Countdown yönetim klavyesi."""
+            all_cds = load_countdowns()
+            adm_cls = get_admin_cls(admin_uid)
+            adm_grp = get_admin_grp(admin_uid)
+            kb_l = [[InlineKeyboardButton("➕ إضافة امتحان جديد", callback_data="cnt|add_countdown")]]
+            shown = 0
+            for i, c in enumerate(all_cds):
+                if shown >= 12: break
+                if not is_main_admin(admin_uid):
+                    if adm_cls and c.get("cls","") and c.get("cls","") != adm_cls: continue
+                    if adm_grp and c.get("group","") and not c.get("group","").startswith(adm_grp): continue
+                nm = (c.get("name","?") or "?")[:22]
+                dt = c.get("date","?")
+                kb_l.append([
+                    InlineKeyboardButton(f"📅 {nm} — {dt}", callback_data=f"cnt|cd_info|{i}"),
+                    InlineKeyboardButton("✏️", callback_data=f"cnt|edit_cd|{i}"),
+                    InlineKeyboardButton("🗑", callback_data=f"cnt|del_cd|{i}"),
+                ])
+                shown += 1
+            kb_l.append([InlineKeyboardButton("◀️ رجوع", callback_data="nav|cur")])
+            return kb_l
+
+        def _rep_list_kb(admin_uid):
+            """Report yönetim klavyesi."""
+            all_reps = load_reports()
+            adm_cls = get_admin_cls(admin_uid)
+            adm_grp = get_admin_grp(admin_uid)
+            kb_l = [[InlineKeyboardButton("➕ إضافة تقرير جديد", callback_data="cnt|add_report")]]
+            shown = 0
+            for i, r in enumerate(all_reps):
+                if shown >= 12: break
+                if not is_main_admin(admin_uid):
+                    if adm_cls and r.get("cls","") and r.get("cls","") != adm_cls: continue
+                    if adm_grp and r.get("group","") and not r.get("group","").startswith(adm_grp): continue
+                nm = (r.get("name","?") or "?")[:22]
+                dt = r.get("date","?")
+                subj = f" [{r['subject']}]" if r.get("subject") else ""
+                kb_l.append([
+                    InlineKeyboardButton(f"📋 {nm}{subj} — {dt}", callback_data=f"cnt|rep_info|{i}"),
+                    InlineKeyboardButton("✏️", callback_data=f"cnt|edit_rep|{i}"),
+                    InlineKeyboardButton("🗑", callback_data=f"cnt|del_report|{i}"),
+                ])
+                shown += 1
+            kb_l.append([InlineKeyboardButton("◀️ رجوع", callback_data="nav|cur")])
+            return kb_l
+
+        if action == "list_cd":
+            await query.edit_message_text("📅 إدارة الامتحانات:", reply_markup=InlineKeyboardMarkup(_cd_list_kb(uid)))
+            return ConversationHandler.END
+
+        if action == "list_rep":
+            await query.edit_message_text("📋 إدارة التقارير:", reply_markup=InlineKeyboardMarkup(_rep_list_kb(uid)))
+            return ConversationHandler.END
+
+        if action == "del_cd":
+            idx = int(cb.split("|")[2])
+            cds = load_countdowns()
+            if 0 <= idx < len(cds): cds.pop(idx)
+            save_countdowns(cds)
+            await query.answer("✅ تم الحذف", show_alert=True)
+            await query.edit_message_text("📅 إدارة الامتحانات:", reply_markup=InlineKeyboardMarkup(_cd_list_kb(uid)))
+            return ConversationHandler.END
+
+        if action == "cd_info":
+            idx = int(cb.split("|")[2])
+            cds = load_countdowns()
+            if idx >= len(cds): return ConversationHandler.END
+            c = cds[idx]
+            nm = c.get("name","?"); dt = c.get("date","?")
+            cls_l = get_class_display_name(c["cls"]) if c.get("cls") else "الكل"
+            grp_l = c.get("group","") or "الكل"
+            sft_l = c.get("shift","") or "الكل"
+            kb_i = [
+                [InlineKeyboardButton("✏️ تعديل الاسم",    callback_data=f"cnt|edit_cd_name|{idx}"),
+                 InlineKeyboardButton("📅 تعديل التاريخ",  callback_data=f"cnt|edit_cd_date|{idx}")],
+                [InlineKeyboardButton("🗑 حذف",            callback_data=f"cnt|del_cd|{idx}")],
+                [InlineKeyboardButton("◀️ رجوع",           callback_data="cnt|list_cd")],
+            ]
+            await query.edit_message_text(
+                f"📅 {nm}\n📆 {dt}\n🎓 {cls_l} | {grp_l} | {sft_l}",
+                reply_markup=InlineKeyboardMarkup(kb_i))
+            return ConversationHandler.END
+
+        if action == "edit_cd":
+            idx = int(cb.split("|")[2])
+            cds = load_countdowns()
+            if idx >= len(cds): return ConversationHandler.END
+            c = cds[idx]
+            nm = c.get("name","?"); dt = c.get("date","?")
+            kb_e = [
+                [InlineKeyboardButton("✏️ تعديل الاسم",    callback_data=f"cnt|edit_cd_name|{idx}"),
+                 InlineKeyboardButton("📅 تعديل التاريخ",  callback_data=f"cnt|edit_cd_date|{idx}")],
+                [InlineKeyboardButton("🗑 حذف",            callback_data=f"cnt|del_cd|{idx}")],
+                [InlineKeyboardButton("◀️ رجوع",           callback_data="cnt|list_cd")],
+            ]
+            await query.edit_message_text(
+                f"📅 {nm}\n📆 {dt}",
+                reply_markup=InlineKeyboardMarkup(kb_e))
+            return ConversationHandler.END
+
+        if action == "edit_cd_name":
+            idx = int(cb.split("|")[2])
+            context.user_data["action"]   = "edit_cd_name"
+            context.user_data["edit_idx"] = idx
+            await query.edit_message_text(
+                "✏️ اكتب الاسم الجديد للامتحان:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="cnt|list_cd")]]))
+            return WAIT_FOLDER
+
+        if action == "edit_cd_date":
+            idx = int(cb.split("|")[2])
+            context.user_data["action"]   = "edit_cd_date"
+            context.user_data["edit_idx"] = idx
+            await query.edit_message_text(
+                "📅 اكتب التاريخ الجديد (مثال: 20/05/2026):",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="cnt|list_cd")]]))
+            return WAIT_FOLDER
+
+        if action == "rep_info":
+            idx = int(cb.split("|")[2])
+            reps = load_reports()
+            if idx >= len(reps): return ConversationHandler.END
+            r = reps[idx]
+            nm = r.get("name","?"); dt = r.get("date","?")
+            subj = r.get("subject","") or "—"
+            cls_l = get_class_display_name(r["cls"]) if r.get("cls") else "الكل"
+            grp_l = r.get("group","") or "الكل"
+            kb_ri = [
+                [InlineKeyboardButton("✏️ تعديل الاسم",    callback_data=f"cnt|edit_rep_name|{idx}"),
+                 InlineKeyboardButton("📚 تعديل المادة",   callback_data=f"cnt|edit_rep_subj|{idx}")],
+                [InlineKeyboardButton("📅 تعديل التاريخ",  callback_data=f"cnt|edit_rep_date|{idx}")],
+                [InlineKeyboardButton("🗑 حذف",            callback_data=f"cnt|del_report|{idx}")],
+                [InlineKeyboardButton("◀️ رجوع",           callback_data="cnt|list_rep")],
+            ]
+            await query.edit_message_text(
+                f"📋 {nm}\n📚 {subj}\n📆 {dt}\n🎓 {cls_l} | {grp_l}",
+                reply_markup=InlineKeyboardMarkup(kb_ri))
+            return ConversationHandler.END
+
+        if action == "edit_rep":
+            idx = int(cb.split("|")[2])
+            reps = load_reports()
+            if idx >= len(reps): return ConversationHandler.END
+            r = reps[idx]
+            nm = r.get("name","?"); dt = r.get("date","?"); subj = r.get("subject","")
+            kb_er = [
+                [InlineKeyboardButton("✏️ تعديل الاسم",    callback_data=f"cnt|edit_rep_name|{idx}"),
+                 InlineKeyboardButton("📚 تعديل المادة",   callback_data=f"cnt|edit_rep_subj|{idx}")],
+                [InlineKeyboardButton("📅 تعديل التاريخ",  callback_data=f"cnt|edit_rep_date|{idx}")],
+                [InlineKeyboardButton("🗑 حذف",            callback_data=f"cnt|del_report|{idx}")],
+                [InlineKeyboardButton("◀️ رجوع",           callback_data="cnt|list_rep")],
+            ]
+            await query.edit_message_text(
+                f"📋 {nm}" + (f"\n📚 {subj}" if subj else "") + f"\n📆 {dt}",
+                reply_markup=InlineKeyboardMarkup(kb_er))
+            return ConversationHandler.END
+
+        if action == "edit_rep_name":
+            idx = int(cb.split("|")[2])
+            context.user_data["action"]   = "edit_rep_name"
+            context.user_data["edit_idx"] = idx
+            await query.edit_message_text(
+                "✏️ اكتب الاسم الجديد للتقرير:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="cnt|list_rep")]]))
+            return WAIT_FOLDER
+
+        if action == "edit_rep_subj":
+            idx = int(cb.split("|")[2])
+            context.user_data["action"]   = "edit_rep_subj"
+            context.user_data["edit_idx"] = idx
+            await query.edit_message_text(
+                "📚 اكتب المادة الجديدة:",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="cnt|list_rep")]]))
+            return WAIT_FOLDER
+
+        if action == "edit_rep_date":
+            idx = int(cb.split("|")[2])
+            context.user_data["action"]   = "edit_rep_date"
+            context.user_data["edit_idx"] = idx
+            await query.edit_message_text(
+                "📅 اكتب التاريخ الجديد (مثال: 20/05/2026):",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="cnt|list_rep")]]))
+            return WAIT_FOLDER
+
         if action == "del_report" and len(cb.split("|")) > 2:
             idx = int(cb.split("|")[2])
             reps = load_reports()
             if 0 <= idx < len(reps): reps.pop(idx)
             save_reports(reps)
-            await query.answer("✅ Silindi", show_alert=True)
-            await query.delete_message()
+            await query.answer("✅ تم الحذف", show_alert=True)
+            await query.edit_message_text("📋 إدارة التقارير:", reply_markup=InlineKeyboardMarkup(_rep_list_kb(uid)))
+            return ConversationHandler.END
             return ConversationHandler.END
 
         if action == "add_folder":
@@ -8854,6 +9069,126 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         kb_wd.append([InlineKeyboardButton("◀️ İptal", callback_data="lab|fixed_panel")])
         await update.message.reply_text("📅 Hangi gün tekrar eder?", reply_markup=InlineKeyboardMarkup(kb_wd))
         return WAIT_FOLDER
+
+    # ── Düzenleme (edit) metin handler'ları ─────────────
+    if action == "edit_cd_name" and is_admin(uid):
+        idx = context.user_data.pop("edit_idx", None)
+        if idx is not None:
+            cds = load_countdowns()
+            if 0 <= idx < len(cds):
+                cds[idx]["name"] = text.strip()
+                save_countdowns(cds)
+                await update.message.reply_text("✅ تم تحديث اسم الامتحان", reply_markup=reply_kb(uid))
+            else:
+                await update.message.reply_text("❌ لم يُعثر على الامتحان")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "edit_cd_date" and is_admin(uid):
+        idx = context.user_data.pop("edit_idx", None)
+        if idx is not None:
+            cds = load_countdowns()
+            if 0 <= idx < len(cds):
+                from datetime import datetime as _dte
+                raw = text.strip()
+                try:
+                    date_only = raw.split()[0]
+                    try:    ts = _dte.strptime(date_only, "%d/%m/%Y").timestamp()
+                    except: ts = _dte.strptime(date_only, "%Y-%m-%d").timestamp()
+                    cds[idx]["date"] = date_only if "/" in date_only else _dte.strptime(date_only, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    cds[idx]["ts"]   = ts
+                    save_countdowns(cds)
+                    await update.message.reply_text("✅ تم تحديث تاريخ الامتحان", reply_markup=reply_kb(uid))
+                except:
+                    await update.message.reply_text("❌ تاريخ غير صحيح. مثال: 20/05/2026")
+            else:
+                await update.message.reply_text("❌ لم يُعثر على الامتحان")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "edit_rep_name" and is_admin(uid):
+        idx = context.user_data.pop("edit_idx", None)
+        if idx is not None:
+            reps = load_reports()
+            if 0 <= idx < len(reps):
+                reps[idx]["name"] = text.strip()
+                save_reports(reps)
+                await update.message.reply_text("✅ تم تحديث اسم التقرير", reply_markup=reply_kb(uid))
+            else:
+                await update.message.reply_text("❌ لم يُعثر على التقرير")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "edit_rep_subj" and is_admin(uid):
+        idx = context.user_data.pop("edit_idx", None)
+        if idx is not None:
+            reps = load_reports()
+            if 0 <= idx < len(reps):
+                reps[idx]["subject"] = text.strip()
+                save_reports(reps)
+                await update.message.reply_text("✅ تم تحديث المادة", reply_markup=reply_kb(uid))
+            else:
+                await update.message.reply_text("❌ لم يُعثر على التقرير")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "edit_rep_date" and is_admin(uid):
+        idx = context.user_data.pop("edit_idx", None)
+        if idx is not None:
+            reps = load_reports()
+            if 0 <= idx < len(reps):
+                from datetime import datetime as _dte2
+                raw = text.strip()
+                try:
+                    date_only = raw.split()[0]
+                    time_only = raw.split()[1] if len(raw.split()) > 1 else ""
+                    try:    ts = _dte2.strptime(f"{date_only} {time_only}".strip(), "%d/%m/%Y %H:%M").timestamp() if time_only else _dte2.strptime(date_only, "%d/%m/%Y").timestamp()
+                    except: ts = _dte2.strptime(date_only, "%Y-%m-%d").timestamp()
+                    reps[idx]["date"] = date_only if "/" in date_only else _dte2.strptime(date_only, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    if time_only: reps[idx]["time"] = time_only
+                    reps[idx]["ts"] = ts
+                    save_reports(reps)
+                    await update.message.reply_text("✅ تم تحديث تاريخ التقرير", reply_markup=reply_kb(uid))
+                except:
+                    await update.message.reply_text("❌ تاريخ غير صحيح. مثال: 20/05/2026 أو 20/05/2026 09:30")
+            else:
+                await update.message.reply_text("❌ لم يُعثر على التقرير")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "edit_lab_note" and is_admin(uid):
+        week = context.user_data.pop("edit_lab_week", None)
+        if week:
+            sched = load_lab_schedule()
+            for e in sched:
+                if e.get("week") == week:
+                    e["note"] = "" if text.strip() == "-" else text.strip()
+                    break
+            save_lab_schedule(sched)
+            await update.message.reply_text("✅ تم تحديث الملاحظة", reply_markup=reply_kb(uid))
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
+
+    if action == "edit_lab_date" and is_admin(uid):
+        old_week = context.user_data.pop("edit_lab_week", None)
+        if old_week:
+            from datetime import datetime as _dte3
+            raw = text.strip()
+            try:
+                # Validate date format
+                try:    new_week = _dte3.strptime(raw, "%Y-%m-%d").strftime("%Y-%m-%d")
+                except: new_week = _dte3.strptime(raw, "%d/%m/%Y").strftime("%Y-%m-%d")
+                sched = load_lab_schedule()
+                for e in sched:
+                    if e.get("week") == old_week:
+                        e["week"] = new_week
+                        break
+                save_lab_schedule(sched)
+                await update.message.reply_text(f"✅ تم تحديث التاريخ إلى {new_week}", reply_markup=reply_kb(uid))
+            except:
+                await update.message.reply_text("❌ تاريخ غير صحيح. مثال: 2026-05-20")
+        context.user_data.pop("action", None)
+        return ConversationHandler.END
 
     if action == "report_name" and is_admin(uid):
         context.user_data["report_name"] = text
