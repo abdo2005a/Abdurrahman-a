@@ -2455,7 +2455,7 @@ def load_settings():
             "btn_search": True,
             "btn_help":   True,
         },
-        "source_channel_id": "-1001003838833995",
+        "source_channel_id": "@abdulrahman100a",
     }
     data = load_json(SETTINGS_FILE, default)
     for k, v in default.items():
@@ -7168,12 +7168,32 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             s = load_settings()
             cur = s.get("source_channel_id", "—") or "—"
             await query.edit_message_text(
-                f"📡 <b>Depolama Kanalı ID</b>\n\nMevcut: <code>{cur}</code>\n\n"
-                "Kanal ID'sini gir (örnek: <code>-1001234567890</code>)\n"
+                f"📡 <b>Depolama Kanalı</b>\n\nMevcut: <code>{cur}</code>\n\n"
+                "Yeni kanal gir:\n"
+                "• Username: <code>@abdulrahman100a</code>\n"
+                "• Veya sayısal ID: <code>-1001003838833995</code>\n"
+                "• Veya link: <code>https://t.me/abdulrahman100a</code>\n\n"
                 "⚠️ Botun kanalda <b>yönetici</b> olması ve 'Mesaj Gönder' izninin olması şart!",
                 parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")]]))
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🧪 Kanalı Test Et", callback_data="set|test_channel")],
+                    [InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")]
+                ]))
             return WAIT_BOT_NAME
+
+        if action == "test_channel":
+            s = load_settings()
+            cur = s.get("source_channel_id", "") or ""
+            if not cur:
+                await query.answer("❌ Kanal ID ayarlanmamış!", show_alert=True)
+                return ConversationHandler.END
+            chat = _channel_target(cur)
+            try:
+                await context.bot.send_message(chat, "🧪 Bot bağlantı testi — bu mesajı görüyorsanız kanal entegrasyonu çalışıyor ✅")
+                await query.answer("✅ Test mesajı gönderildi!", show_alert=True)
+            except Exception as e:
+                await query.answer(f"❌ Hata: {e}", show_alert=True)
+            return ConversationHandler.END
 
         if action == "class_names":
             names = load_class_names()
@@ -9659,30 +9679,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 #  KANAL MIRROR YARDIMCISI
 # ================================================================
 
+def _channel_target(cid: str):
+    """Kanal ID'sini Telegram'ın beklediği formata çevir (int veya @username)."""
+    c = cid.strip()
+    if not c: return None
+    # @ ile başlıyorsa ya da sayısal değilse username olarak kullan
+    if c.startswith("@"):
+        return c
+    stripped = c.lstrip("-")
+    if stripped.isdigit():
+        return int(c)
+    # https://t.me/xxx gibi link verilmişse username çıkar
+    if "t.me/" in c:
+        username = c.rstrip("/").split("t.me/")[-1].split("/")[0]
+        return "@" + username if username else None
+    # @ eklenmemiş düz username
+    return "@" + c
+
+
 async def _mirror_to_channel(bot, fobj: dict, folder_label: str = ""):
     """Dosyayı kaynak kanala sessizce gönder (depolama amaçlı)."""
     s   = load_settings()
     cid = s.get("source_channel_id", "")
     if not cid: return
+    chat = _channel_target(cid)
+    if chat is None: return
     fid  = fobj.get("file_id", "")
     if not fid: return
     ftype = fobj.get("type", "")
     cap   = fobj.get("caption") or fobj.get("name") or ""
-    # Caption'a klasör yolunu ekle (kanalda organize görünsün)
     chan_cap = f"📁 {folder_label}\n📎 {cap}"[:1020] if folder_label else cap[:1020]
     try:
-        if   ftype == "photo":     await bot.send_photo(    int(cid), fid, caption=chan_cap)
-        elif ftype == "video":     await bot.send_video(    int(cid), fid, caption=chan_cap)
-        elif ftype == "document":  await bot.send_document( int(cid), fid, caption=chan_cap)
-        elif ftype == "audio":     await bot.send_audio(    int(cid), fid, caption=chan_cap)
-        elif ftype == "animation": await bot.send_animation(int(cid), fid, caption=chan_cap)
-        elif ftype == "voice":     await bot.send_voice(    int(cid), fid)
+        if   ftype == "photo":     await bot.send_photo(    chat, fid, caption=chan_cap)
+        elif ftype == "video":     await bot.send_video(    chat, fid, caption=chan_cap)
+        elif ftype == "document":  await bot.send_document( chat, fid, caption=chan_cap)
+        elif ftype == "audio":     await bot.send_audio(    chat, fid, caption=chan_cap)
+        elif ftype == "animation": await bot.send_animation(chat, fid, caption=chan_cap)
+        elif ftype == "voice":     await bot.send_voice(    chat, fid)
         else:
             logger.warning(f"Kanal mirror: bilinmeyen tür '{ftype}'")
             return
-        logger.info(f"Kanal mirror OK: {ftype} → {cid} [{folder_label}]")
+        logger.info(f"Kanal mirror OK: {ftype} → {chat} [{folder_label}]")
     except Exception as e:
-        logger.warning(f"Kanal mirror hatası ({ftype}) → {cid}: {e}")
+        logger.warning(f"Kanal mirror hatası ({ftype}) → {chat}: {e}")
 
 
 # ================================================================
