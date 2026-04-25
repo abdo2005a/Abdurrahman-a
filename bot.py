@@ -1180,8 +1180,10 @@ def get_reports(cls: str = "", shift: str = "", uid: str = "") -> list:
         if r.get("ts", 0) > now:
             r_cls   = r.get("cls", "")
             r_shift = r.get("shift", "")
-            if all_cls and r_cls and r_cls not in all_cls: continue
-            is_extra = bool(r_cls and r_cls in extra_cls and r_cls != cls)
+            is_extra = bool(r_cls and cls and r_cls in extra_cls and r_cls != cls)
+            if r_cls and not is_extra:
+                if uid and (not all_cls or r_cls not in all_cls):
+                    continue
             r_grp = r.get("group", "")
             if r_grp and uid and not is_extra:
                 u_grp = load_groups().get(str(uid), "")
@@ -1484,11 +1486,12 @@ def get_countdowns(cls: str = "", shift: str = "", uid: str = "") -> list:
         if c.get("ts", 0) > now:
             cd_cls   = c.get("cls", "")
             cd_shift = c.get("shift", "")
-            # Sınıf — ana veya ek sınıftan biri eşleşmeli
-            if all_cls and cd_cls and cd_cls not in all_cls:
-                continue
-            # Ek sınıf öğesi için grup+shift filtresi atlanır (tüm gruplar görünür)
-            is_extra = bool(cd_cls and cd_cls in extra_cls and cd_cls != cls)
+            # Ek sınıf: ana sınıf mevcut ve bu sınıf ekstradan → grup/shift filtresi atlanır
+            is_extra = bool(cd_cls and cls and cd_cls in extra_cls and cd_cls != cls)
+            # Sınıf filtresi: uid verilmişse (öğrenci) sıkı filtre; uid="" ise admin, hepsini görür
+            if cd_cls and not is_extra:
+                if uid and (not all_cls or cd_cls not in all_cls):
+                    continue
             # Grup — A/B/C filtresi
             cd_grp = c.get("group","")
             if cd_grp and uid and not is_extra:
@@ -3229,9 +3232,15 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 if e_dt < today_ts: continue
                 lab_cls = e.get("cls", "")
                 lab_grp = e.get("group", "")
-                # Check if this entry belongs to extra class (no group filter for extra)
-                is_extra_lab = bool(lab_cls and lab_cls in extra_cls_lab and lab_cls != user_cls)
-                if lab_cls and user_cls and lab_cls != user_cls and not is_extra_lab: continue
+                # Extra class: only when student has a primary class and this lab is from extras
+                is_extra_lab = bool(lab_cls and user_cls and lab_cls in extra_cls_lab and lab_cls != user_cls)
+                if lab_cls and not is_extra_lab:
+                    if is_admin(uid):
+                        # Secondary admin: None = no restriction; specific cls = filter
+                        if user_cls and lab_cls != user_cls: continue
+                    else:
+                        # Student: None = no class set, skip class-specific labs
+                        if not user_cls or lab_cls != user_cls: continue
                 if lab_grp and user_grp and not user_grp.startswith(lab_grp) and not is_extra_lab: continue
                 key = (e["week"], lab_grp, lab_cls)
                 if key in seen_lab_keys: continue
@@ -3360,8 +3369,16 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     # ── Mini Test (Quiz) ─────────────────────────────
     if text in (TR["quiz_btn"], AR["quiz_btn"]):
         quizzes = [q for q in load_quizzes() if q.get("active")]
-        cls = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
-        quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == cls]
+        if not is_admin(uid):
+            cls = get_user_class(uid)
+            if cls:
+                quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == cls]
+            else:
+                quizzes = [q for q in quizzes if not q.get("cls")]
+        elif not is_main_admin(uid):
+            adm_cls = get_admin_cls(uid)
+            if adm_cls:
+                quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == adm_cls]
         if not quizzes:
             await update.message.reply_text(L(uid,"quiz_none"))
         else:
