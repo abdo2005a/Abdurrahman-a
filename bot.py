@@ -2627,6 +2627,8 @@ ALL_BTNS = {
     TR["btn_reports"],   AR["btn_reports"],
     TR["quiz_btn"],      AR["quiz_btn"],
     TR["rules_btn"],     AR["rules_btn"],
+    TR["hw_btn"],        AR["hw_btn"],
+    TR["tt_btn"],        AR["tt_btn"],
     "\U0001f52c \u0627\u0644\u0645\u062e\u062a\u0628\u0631",
     "🔬 المختبر",
     "🔄 وضع التحديث",
@@ -3849,7 +3851,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     cb.startswith("class_pick|") or cb.startswith("shift_pick|") or
                     cb.startswith("group_pick|") or cb == "class_change" or
                     cb == "group_pick_start" or cb.startswith("reminder|") or
-                    cb.startswith("notes|") or cb == "nav|root" or cb == "close")
+                    cb.startswith("notes|") or cb.startswith("hw|") or
+                    cb == "nav|root" or cb == "close")
         if s.get("maintenance"):
             if adm:
                 # İkincil admin — tam bakımda bloklanır
