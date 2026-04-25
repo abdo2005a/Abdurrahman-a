@@ -2507,6 +2507,7 @@ def load_settings():
             "btn_search": True,
             "btn_help":   True,
         },
+        "source_channel_id": "@abdulrahman100a",
     }
     data = load_json(SETTINGS_FILE, default)
     for k, v in default.items():
@@ -5823,9 +5824,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
                     [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
                      InlineKeyboardButton("📜 Kural Metni",     callback_data="set|rules_text")],
+                    [InlineKeyboardButton("📡 Depolama Kanalı",  callback_data="set|storage_channel")],
                     [InlineKeyboardButton("◀️ Geri",             callback_data="close")],
                 ]
-                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+                s2 = load_settings()
+                cid_display = s2.get("source_channel_id", "—") or "—"
+                txt += f"\n📡 Depolama Kanalı: <code>{cid_display}</code>"
+                await query.edit_message_text(txt, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         elif action == "cur":
@@ -7729,6 +7734,38 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f"📄 Bot açıklamasını yaz (BotFather'daki 'about' kısmı):\n\nMevcut: {s.get('bot_description','—')[:100]}",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
             return WAIT_BOT_NAME  # aynı state kullan
+
+        if action == "storage_channel":
+            context.user_data["action"] = "set_storage_channel"
+            s = load_settings()
+            cur = s.get("source_channel_id", "—") or "—"
+            await query.edit_message_text(
+                f"📡 <b>Depolama Kanalı</b>\n\nMevcut: <code>{cur}</code>\n\n"
+                "Yeni kanal gir:\n"
+                "• Username: <code>@abdulrahman100a</code>\n"
+                "• Veya sayısal ID: <code>-1001003838833995</code>\n"
+                "• Veya link: <code>https://t.me/abdulrahman100a</code>\n\n"
+                "⚠️ Botun kanalda <b>yönetici</b> olması ve 'Mesaj Gönder' izninin olması şart!",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🧪 Kanalı Test Et", callback_data="set|test_channel")],
+                    [InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")]
+                ]))
+            return WAIT_BOT_NAME
+
+        if action == "test_channel":
+            s = load_settings()
+            cur = s.get("source_channel_id", "") or ""
+            if not cur:
+                await query.answer("❌ Kanal ID ayarlanmamış!", show_alert=True)
+                return ConversationHandler.END
+            chat = _channel_target(cur)
+            try:
+                await context.bot.send_message(chat, "🧪 Bot bağlantı testi — bu mesajı görüyorsanız kanal entegrasyonu çalışıyor ✅")
+                await query.answer("✅ Test mesajı gönderildi!", show_alert=True)
+            except Exception as e:
+                await query.answer(f"❌ Hata: {e}", show_alert=True)
+            return ConversationHandler.END
 
         if action == "class_names":
             names = load_class_names()
@@ -10396,6 +10433,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         log_admin_action(uid, "SET_RULES", text[:50])
         context.user_data.pop("action",None); return ConversationHandler.END
 
+    if action == "set_storage_channel" and is_main_admin(uid):
+        cid = text.strip().replace(" ", "")
+        # Auto-fix: eğer -100 ile başlamıyorsa ekle
+        if cid.lstrip("-").isdigit() and not cid.startswith("-100"):
+            cid = "-100" + cid.lstrip("-")
+        if not cid.lstrip("-").isdigit():
+            await update.message.reply_text("❌ Geçersiz ID. Sadece sayı gir (örnek: -1001234567890)")
+            return WAIT_BOT_NAME
+        s = load_settings(); s["source_channel_id"] = cid; save_settings(s)
+        await update.message.reply_text(
+            f"✅ Depolama kanalı ayarlandı: <code>{cid}</code>\n\n"
+            "⚠️ Botu bu kanalda <b>yönetici</b> yap ve 'Mesaj Gönder' iznini ver!",
+            parse_mode="HTML")
+        context.user_data.pop("action",None); return ConversationHandler.END
+
     if action == "add_folder":
         if not text: await update.message.reply_text(L(uid,"folder_empty")); return WAIT_FOLDER
         # Çoklu satır — her satır ayrı klasör
@@ -10483,6 +10535,55 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return WAIT_FILE
 
     return ConversationHandler.END
+
+# ================================================================
+#  KANAL MIRROR YARDIMCISI
+# ================================================================
+
+def _channel_target(cid: str):
+    """Kanal ID'sini Telegram'ın beklediği formata çevir (int veya @username)."""
+    c = cid.strip()
+    if not c: return None
+    # @ ile başlıyorsa ya da sayısal değilse username olarak kullan
+    if c.startswith("@"):
+        return c
+    stripped = c.lstrip("-")
+    if stripped.isdigit():
+        return int(c)
+    # https://t.me/xxx gibi link verilmişse username çıkar
+    if "t.me/" in c:
+        username = c.rstrip("/").split("t.me/")[-1].split("/")[0]
+        return "@" + username if username else None
+    # @ eklenmemiş düz username
+    return "@" + c
+
+
+async def _mirror_to_channel(bot, fobj: dict, folder_label: str = ""):
+    """Dosyayı kaynak kanala sessizce gönder (depolama amaçlı)."""
+    s   = load_settings()
+    cid = s.get("source_channel_id", "")
+    if not cid: return
+    chat = _channel_target(cid)
+    if chat is None: return
+    fid  = fobj.get("file_id", "")
+    if not fid: return
+    ftype = fobj.get("type", "")
+    cap   = fobj.get("caption") or fobj.get("name") or ""
+    chan_cap = f"📁 {folder_label}\n📎 {cap}"[:1020] if folder_label else cap[:1020]
+    try:
+        if   ftype == "photo":     await bot.send_photo(    chat, fid, caption=chan_cap)
+        elif ftype == "video":     await bot.send_video(    chat, fid, caption=chan_cap)
+        elif ftype == "document":  await bot.send_document( chat, fid, caption=chan_cap)
+        elif ftype == "audio":     await bot.send_audio(    chat, fid, caption=chan_cap)
+        elif ftype == "animation": await bot.send_animation(chat, fid, caption=chan_cap)
+        elif ftype == "voice":     await bot.send_voice(    chat, fid)
+        else:
+            logger.warning(f"Kanal mirror: bilinmeyen tür '{ftype}'")
+            return
+        logger.info(f"Kanal mirror OK: {ftype} → {chat} [{folder_label}]")
+    except Exception as e:
+        logger.warning(f"Kanal mirror hatası ({ftype}) → {chat}: {e}")
+
 
 # ================================================================
 #  MEDYA GİRİŞ
@@ -10725,9 +10826,11 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 ct      = load_content()
                 fld     = get_folder(ct, p)
                 added   = 0
+                folder_label = "/".join(p) if p else "/"
                 for item in items:
                     fld.setdefault("files", []).append(item)
                     added += 1
+                    await _mirror_to_channel(c.bot, item, folder_label)
                 save_content(ct)
                 kb = [[InlineKeyboardButton(L(str(user.id),"close"), callback_data="nav|root")]]
                 try:
@@ -10781,6 +10884,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
         # Tekli dosya — direkt kaydet
         folder.setdefault("files",[]).append(fobj); save_content(content)
+        # Kanala mirror et (sessiz — hata olursa geç)
+        await _mirror_to_channel(context.bot, fobj, "/".join(path) if path else "/")
 
         # Sayacı güncelle veya yeni mesaj gönder
         status_id = context.user_data.get("add_file_status_id")
