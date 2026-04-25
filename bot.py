@@ -2455,6 +2455,7 @@ def load_settings():
             "btn_search": True,
             "btn_help":   True,
         },
+        "source_channel_id": "-1001003838833995",
     }
     data = load_json(SETTINGS_FILE, default)
     for k, v in default.items():
@@ -5587,9 +5588,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
                     [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
                      InlineKeyboardButton("📜 Kural Metni",     callback_data="set|rules_text")],
+                    [InlineKeyboardButton("📡 Depolama Kanalı",  callback_data="set|storage_channel")],
                     [InlineKeyboardButton("◀️ Geri",             callback_data="close")],
                 ]
-                await query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb))
+                s2 = load_settings()
+                cid_display = s2.get("source_channel_id", "—") or "—"
+                txt += f"\n📡 Depolama Kanalı: <code>{cid_display}</code>"
+                await query.edit_message_text(txt, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
         elif action == "cur":
@@ -7157,6 +7162,18 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 f"📄 Bot açıklamasını yaz (BotFather'daki 'about' kısmı):\n\nMevcut: {s.get('bot_description','—')[:100]}",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(TR["cancel"], callback_data="close")]]))
             return WAIT_BOT_NAME  # aynı state kullan
+
+        if action == "storage_channel":
+            context.user_data["action"] = "set_storage_channel"
+            s = load_settings()
+            cur = s.get("source_channel_id", "—") or "—"
+            await query.edit_message_text(
+                f"📡 <b>Depolama Kanalı ID</b>\n\nMevcut: <code>{cur}</code>\n\n"
+                "Kanal ID'sini gir (örnek: <code>-1001234567890</code>)\n"
+                "⚠️ Botun kanalda <b>yönetici</b> olması ve 'Mesaj Gönder' izninin olması şart!",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")]]))
+            return WAIT_BOT_NAME
 
         if action == "class_names":
             names = load_class_names()
@@ -9535,6 +9552,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         log_admin_action(uid, "SET_RULES", text[:50])
         context.user_data.pop("action",None); return ConversationHandler.END
 
+    if action == "set_storage_channel" and is_main_admin(uid):
+        cid = text.strip().replace(" ", "")
+        # Auto-fix: eğer -100 ile başlamıyorsa ekle
+        if cid.lstrip("-").isdigit() and not cid.startswith("-100"):
+            cid = "-100" + cid.lstrip("-")
+        if not cid.lstrip("-").isdigit():
+            await update.message.reply_text("❌ Geçersiz ID. Sadece sayı gir (örnek: -1001234567890)")
+            return WAIT_BOT_NAME
+        s = load_settings(); s["source_channel_id"] = cid; save_settings(s)
+        await update.message.reply_text(
+            f"✅ Depolama kanalı ayarlandı: <code>{cid}</code>\n\n"
+            "⚠️ Botu bu kanalda <b>yönetici</b> yap ve 'Mesaj Gönder' iznini ver!",
+            parse_mode="HTML")
+        context.user_data.pop("action",None); return ConversationHandler.END
+
     if action == "add_folder":
         if not text: await update.message.reply_text(L(uid,"folder_empty")); return WAIT_FOLDER
         # Çoklu satır — her satır ayrı klasör
@@ -9645,8 +9677,12 @@ async def _mirror_to_channel(bot, fobj: dict, folder_label: str = ""):
         elif ftype == "audio":     await bot.send_audio(    int(cid), fid, caption=chan_cap)
         elif ftype == "animation": await bot.send_animation(int(cid), fid, caption=chan_cap)
         elif ftype == "voice":     await bot.send_voice(    int(cid), fid)
+        else:
+            logger.warning(f"Kanal mirror: bilinmeyen tür '{ftype}'")
+            return
+        logger.info(f"Kanal mirror OK: {ftype} → {cid} [{folder_label}]")
     except Exception as e:
-        logger.warning(f"Kanal mirror hatası ({ftype}): {e}")
+        logger.warning(f"Kanal mirror hatası ({ftype}) → {cid}: {e}")
 
 
 # ================================================================
