@@ -3595,6 +3595,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
             [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
              InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+            [InlineKeyboardButton("📈 Sınıf Atlatma",    callback_data="mgmt|promote_cls")],
             [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
              InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
             [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
@@ -4543,6 +4544,60 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "\n".join(lines),
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri",   callback_data="nav|mgmt_panel")]]))
         return ConversationHandler.END
+
+    # ── Sınıf Atlatma ────────────────────────────────
+    if cb.startswith("mgmt|promote") and is_main_admin(uid):
+        promote_parts = cb.split("|")
+        promote_act   = promote_parts[2] if len(promote_parts) > 2 else ""
+
+        if not promote_act:  # mgmt|promote_cls — sınıf seçim ekranı
+            classes = load_classes()
+            cls_counts = {c: sum(1 for v in classes.values() if v == c) for c in CLASS_DEFS}
+            CLASS_NEXT = {"1": "2", "2": "3", "3": "4"}
+            kb = []
+            for src, dst in CLASS_NEXT.items():
+                cnt  = cls_counts.get(src, 0)
+                src_l = CLASS_DEFS[src]["tr"]; dst_l = CLASS_DEFS[dst]["tr"]
+                kb.append([InlineKeyboardButton(
+                    f"📈 {src_l} → {dst_l}  ({cnt} öğrenci)",
+                    callback_data=f"mgmt|promote|confirm|{src}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text("📈 Sınıf Atlatma\n\nHangi sınıfı atlat?", reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if promote_act == "confirm":
+            src_cls = promote_parts[3]
+            dst_cls = {"1":"2","2":"3","3":"4"}.get(src_cls)
+            if not dst_cls: return ConversationHandler.END
+            classes  = load_classes()
+            cnt      = sum(1 for v in classes.values() if v == src_cls)
+            src_l    = CLASS_DEFS[src_cls]["tr"]; dst_l = CLASS_DEFS[dst_cls]["tr"]
+            kb = [
+                [InlineKeyboardButton(f"✅ Evet, {cnt} öğrenciyi atla", callback_data=f"mgmt|promote|do|{src_cls}")],
+                [InlineKeyboardButton("❌ İptal",                        callback_data="mgmt|promote_cls")],
+            ]
+            await query.edit_message_text(
+                f"⚠️ {src_l} → {dst_l}\n\n{cnt} öğrenci sınıf değiştirecek.\nBu işlem geri alınamaz!",
+                reply_markup=InlineKeyboardMarkup(kb))
+            return ConversationHandler.END
+
+        if promote_act == "do":
+            src_cls = promote_parts[3]
+            dst_cls = {"1":"2","2":"3","3":"4"}.get(src_cls)
+            if not dst_cls: return ConversationHandler.END
+            classes = load_classes()
+            moved   = 0
+            for uid_s, c in list(classes.items()):
+                if c == src_cls:
+                    classes[uid_s] = dst_cls
+                    moved += 1
+            save_classes(classes)
+            src_l = CLASS_DEFS[src_cls]["tr"]; dst_l = CLASS_DEFS[dst_cls]["tr"]
+            await query.answer(f"✅ {moved} öğrenci {src_l}→{dst_l} taşındı", show_alert=True)
+            await query.edit_message_text(
+                f"✅ Sınıf Atlatma Tamamlandı\n\n{moved} öğrenci {src_l} → {dst_l}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")]]))
+            return ConversationHandler.END
 
     # ── İçerik işlemleri — pin/move/copy/sort/folder_desc ──
     if cb.startswith("extra|") and is_main_admin(uid):
@@ -5587,6 +5642,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
                     [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
                      InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                    [InlineKeyboardButton("📈 Sınıf Atlatma",    callback_data="mgmt|promote_cls")],
                     [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
                      InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
                     [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
@@ -5793,6 +5849,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
                 [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
                  InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                [InlineKeyboardButton("📈 Sınıf Atlatma",    callback_data="mgmt|promote_cls")],
                 [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
                  InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
                 [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
@@ -5843,6 +5900,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                  InlineKeyboardButton(TR["broadcast"],        callback_data="mgmt|broadcast")],
                 [InlineKeyboardButton(TR["bcast_targeted"],   callback_data="bcast|panel"),
                  InlineKeyboardButton("🎓 Sınıf İstat.",     callback_data="mgmt|class_stats")],
+                [InlineKeyboardButton("📈 Sınıf Atlatma",    callback_data="mgmt|promote_cls")],
                 [InlineKeyboardButton(TR["poll_btn"],         callback_data="mgmt|poll"),
                  InlineKeyboardButton(TR["admin_log_btn"],    callback_data="admin|log")],
                 [InlineKeyboardButton(TR["excel_all_btn"],    callback_data="export|excel_all"),
@@ -6302,7 +6360,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if is_main_admin(uid):
                 kb.append([InlineKeyboardButton("🎓 Sınıf Değiştir", callback_data=f"user|change_cls|{target}"),
                             InlineKeyboardButton("👥 Grup Değiştir",  callback_data=f"user|change_grp|{target}")])
-                kb.append([InlineKeyboardButton("➕ Ek Sınav Sınıfı", callback_data=f"user|extra_cls|{target}")])
+                kb.append([InlineKeyboardButton("📚 Ek Sınıf Erişimi", callback_data=f"user|extra_cls|{target}")])
             kb.append([InlineKeyboardButton("📥 Aktivite İndir", callback_data=f"user|export|{target}")])
             if is_main_admin(uid):
                 kb.append([InlineKeyboardButton(TR["excel_user_btn"], callback_data=f"export|excel_user|{target}")])
@@ -6660,11 +6718,10 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             return ConversationHandler.END
 
         if action == "extra_cls":
-            # Ek sınav takibi — kullanıcı başka sınıfın sınavlarını da görsün
+            # Ek sınıf erişimi — öğrenci başka sınıfın rapor/lab/sınavlarını görsün
             target = parts[2]
             u_e = load_users().get(target,{})
             name_e = u_e.get("full_name") or u_e.get("first_name") or target
-            # Mevcut ek sınıflar
             extra_cls_data = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
             current_extra = extra_cls_data.get(str(target), [])
             kb = []
@@ -6675,7 +6732,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     callback_data=f"user|toggle_xcls|{target}|{cls_id}")])
             kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"user|info|{target}")])
             await query.edit_message_text(
-                f"📚 Ek Sınav Sınıfları\n{name_e}\n\n✅ = ekli, ➕ = ekle/çıkar:",
+                f"📚 Ek Sınıf Erişimi\n👤 {name_e}\n\n"
+                f"Seçilen sınıfın sınavları, raporları ve lab programı da gösterilir.\n"
+                f"✅ = ekli  ➕ = ekle/çıkar:",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
 
@@ -6695,7 +6754,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 _icon = "✅" if _cid in cur else "➕"
                 kb_xe.append([InlineKeyboardButton(f"{_icon} {_cdef['tr']}", callback_data=f"user|toggle_xcls|{target}|{_cid}")])
             kb_xe.append([InlineKeyboardButton("◀️ Geri", callback_data=f"user|info|{target}")])
-            await query.edit_message_text(f"➕ Ek Sınav Takibi: {name_xe}", reply_markup=InlineKeyboardMarkup(kb_xe))
+            await query.edit_message_text(
+                f"📚 Ek Sınıf Erişimi: {name_xe}\n\n✅ = ekli  ➕ = ekle/çıkar:",
+                reply_markup=InlineKeyboardMarkup(kb_xe))
             return ConversationHandler.END
 
         if action == "change_cls":
@@ -7118,7 +7179,6 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             save_reports(reps)
             await query.answer("✅ تم الحذف", show_alert=True)
             await query.edit_message_text("📋 إدارة التقارير:", reply_markup=InlineKeyboardMarkup(_rep_list_kb(uid)))
-            return ConversationHandler.END
             return ConversationHandler.END
 
         if action == "add_folder":
