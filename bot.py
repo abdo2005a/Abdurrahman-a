@@ -10492,6 +10492,42 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     user = update.effective_user; uid = str(user.id); msg = update.message
     register_user(user)
 
+    # ── Kanaldan forward: admin dosyayı kanaldan bota iletirse otomatik yakala ──
+    if is_admin(uid) and msg:
+        fwd_chat = getattr(msg, "forward_from_chat", None)
+        if fwd_chat is None:
+            # PTB v20: forward_origin üzerinden dene
+            fo = getattr(msg, "forward_origin", None)
+            if fo and hasattr(fo, "chat"):
+                fwd_chat = fo.chat
+        if fwd_chat:
+            s_fw = load_settings()
+            src_fw = str(s_fw.get("source_channel_id", ""))
+            def _norm(v): return str(v).lstrip("-").lstrip("0") or "0"
+            if src_fw and _norm(fwd_chat.id) == _norm(src_fw):
+                # Dosyayı çıkar
+                fid = ftype = cap = None
+                if   msg.photo:     fid = msg.photo[-1].file_id; ftype = "photo";    cap = msg.caption or "photo"
+                elif msg.video:     fid = msg.video.file_id;     ftype = "video";    cap = msg.caption or msg.video.file_name or "video"
+                elif msg.document:  fid = msg.document.file_id;  ftype = "document"; cap = msg.caption or msg.document.file_name or "document"
+                elif msg.audio:     fid = msg.audio.file_id;     ftype = "audio";    cap = msg.caption or msg.audio.file_name or "audio"
+                elif msg.animation: fid = msg.animation.file_id; ftype = "animation";cap = msg.caption or "gif"
+                elif msg.voice:     fid = msg.voice.file_id;     ftype = "voice";    cap = "voice"
+                if fid:
+                    import uuid as _uuid2
+                    key2 = _uuid2.uuid4().hex[:8]
+                    context.bot_data.setdefault("pending_ch", {})[key2] = {"fid": fid, "ftype": ftype, "cap": cap}
+                    content_fw = load_content()
+                    top_fw = list(content_fw.get("folders", {}).keys())
+                    icon_map2 = {"photo":"🖼","video":"🎬","document":"📄","audio":"🎵","animation":"🎞","voice":"🎙"}
+                    kb2 = [[InlineKeyboardButton(f"📁 {fn[:30]}", callback_data=f"chan|add|{key2}|{i}")]
+                           for i, fn in enumerate(top_fw[:18])]
+                    kb2.append([InlineKeyboardButton("🗑 Atla", callback_data=f"chan|skip|{key2}")])
+                    await msg.reply_text(
+                        f"📥 Kanaldan iletildi: {icon_map2.get(ftype,'📎')} {(cap or '')[:50]}\nHangi klasöre eklensin?",
+                        reply_markup=InlineKeyboardMarkup(kb2))
+                    return ConversationHandler.END
+
     if not is_main_admin(uid):
         if is_blocked(uid): return ConversationHandler.END
         s = load_settings()
