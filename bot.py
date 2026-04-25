@@ -2497,9 +2497,10 @@ def load_settings():
         "bot_name":          "بوت مهندسي المستقبل",
         "welcome_msg":       DEFAULT_WELCOME_AR,
         "bot_photo_id":      None,
-        "exam_remind_days":  [1],
-        "lab_remind_days":   [1],
-        "anon_group_id":     None,
+        "exam_remind_days":   [1],
+        "lab_remind_days":    [1],
+        "report_remind_days": [1],
+        "anon_group_id":      None,
         "lab_remind_hour":   20,
         "user_buttons": {
             "btn_search": True,
@@ -2764,26 +2765,30 @@ def reply_kb(uid):
         row2 = [KeyboardButton("🔬 المختبر")]
         if ub.get("btn_reminder",  True): row2.append(KeyboardButton(AR["btn_reminder"]))
         rows.append(row2)
-        # Satır 3: Notlar + Ara
+        # Satır 3: Ödevler + Ders Programı (sınıf seçilmişse)
+        u_cls_kb = get_user_class(uid)
+        if u_cls_kb:
+            rows.append([KeyboardButton(AR["hw_btn"]), KeyboardButton(AR["tt_btn"])])
+        # Satır 4: Notlar + Ara
         row3 = []
         if ub.get("btn_notes",     True): row3.append(KeyboardButton(AR["btn_notes"]))
         if ub.get("btn_search",    True): row3.append(KeyboardButton(AR["btn_search"]))
         if row3: rows.append(row3)
-        # Satır 4: Favoriler + Son Görüntülenen
+        # Satır 5: Favoriler + Son Görüntülenen
         row4 = []
         if ub.get("btn_favorites", True): row4.append(KeyboardButton(AR["btn_favorites"]))
         if ub.get("btn_recent",    True): row4.append(KeyboardButton(AR["btn_recent"]))
         if row4: rows.append(row4)
-        # Satır 5: Profil + Mesaj Gönder
+        # Satır 6: Profil + Mesaj Gönder
         row5 = [KeyboardButton(AR["profile_btn"])]
         if ub.get("btn_help",      True): row5.append(KeyboardButton(AR["btn_help"]))
         rows.append(row5)
-        # Satır 6: Liderboard + Test
+        # Satır 7: Liderboard + Test
         row6 = []
         if ub.get("btn_leaderboard", True): row6.append(KeyboardButton(AR["btn_leaderboard"]))
         if ub.get("quiz_btn",      True): row6.append(KeyboardButton(AR["quiz_btn"]))
         if row6: rows.append(row6)
-        # Satır 7: Kurallar
+        # Satır 8: Kurallar
         rows.append([KeyboardButton(AR["rules_btn"])])
         if not rows: rows = [[]]
         return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -3416,6 +3421,86 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=InlineKeyboardMarkup(remind_kb) if remind_kb else None)
         return
 
+    # ── Ödevlerim ────────────────────────────────────
+    if text in (TR["hw_btn"], AR["hw_btn"]):
+        cls_hw  = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
+        sft_hw  = get_user_shift(uid) if not is_admin(uid) else get_admin_shift(uid)
+        grp_hw  = load_groups().get(uid, "")
+        all_hw  = load_homework()
+        now_hw  = datetime.now(IRAQ_TZ)
+        my_hw   = []
+        for h in all_hw:
+            if h.get("cls") and cls_hw and h.get("cls") != cls_hw: continue
+            if h.get("shift") and sft_hw:
+                u_n = "sabahi" if sft_hw in ("sabahi","sabah") else "masaiy"
+                h_n = "sabahi" if h["shift"] in ("sabahi","sabah") else "masaiy"
+                if u_n != h_n: continue
+            if h.get("group") and grp_hw and not grp_hw.startswith(h.get("group","")): continue
+            try:
+                due_dt = datetime.strptime(h.get("due_date",""), "%d/%m/%Y").replace(tzinfo=IRAQ_TZ)
+                days_l = (due_dt - now_hw).days
+            except: days_l = 0
+            my_hw.append((h, days_l))
+        if not my_hw:
+            await update.message.reply_text(L(uid,"hw_none"))
+            return
+        lines_hw = [f"{L(uid,'hw_list_title')}\n"]
+        kb_hw = []
+        for h, days_l in my_hw[:10]:
+            nm   = h.get("name","?")
+            subj = h.get("subject","") or ""
+            subj_lbl = f" [{subj}]" if subj else ""
+            if days_l < 0:   when_hw = "🔴 منتهي" if not is_main_admin(uid) else "🔴 Geçti"
+            elif days_l == 0: when_hw = "🔴 اليوم" if not is_main_admin(uid) else "🔴 Bugün"
+            elif days_l == 1: when_hw = "🟠 غداً"  if not is_main_admin(uid) else "🟠 Yarın"
+            elif days_l <= 7: when_hw = f"🟡 {days_l} أيام" if not is_main_admin(uid) else f"🟡 {days_l} gün"
+            else:             when_hw = f"🟢 {days_l} يوم"  if not is_main_admin(uid) else f"🟢 {days_l} gün"
+            lines_hw.append(f"\n📝 {nm}{subj_lbl}\n   {when_hw} — {h.get('due_date','?')}")
+            already = uid in h.get("submissions", {})
+            btn_lbl = L(uid,"hw_submitted") if already else L(uid,"hw_submit_btn")
+            if not already:
+                kb_hw.append([InlineKeyboardButton(f"{btn_lbl}: {nm[:20]}", callback_data=f"hw|submit|{h.get('id','')}")])
+        kb_hw.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+        sent = await update.message.reply_text(
+            "\n".join(lines_hw),
+            reply_markup=InlineKeyboardMarkup(kb_hw))
+        context.user_data["last_inline_msg"] = sent.message_id
+        return
+
+    # ── Ders Programım ───────────────────────────────
+    if text in (TR["tt_btn"], AR["tt_btn"]):
+        cls_tt  = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
+        sft_tt  = get_user_shift(uid) if not is_admin(uid) else get_admin_shift(uid)
+        if not cls_tt:
+            await update.message.reply_text(L(uid,"class_unknown"))
+            return
+        tt_data  = load_timetable()
+        schedule = tt_data.get(cls_tt, {}).get(sft_tt or "sabahi", {})
+        DAYS_AR  = {0:"السبت",1:"الأحد",2:"الاثنين",3:"الثلاثاء",4:"الأربعاء",5:"الخميس",6:"الجمعة"}
+        DAYS_TR  = {0:"Cumartesi",1:"Pazar",2:"Pazartesi",3:"Salı",4:"Çarşamba",5:"Perşembe",6:"Cuma"}
+        days_map = DAYS_TR if is_main_admin(uid) else DAYS_AR
+        # Iraq: today's day_num — 0=Saturday: weekday() for Iraq: Saturday=5 in Python
+        # Map Python weekday to Iraq day_num: Mon=2,Tue=3,Wed=4,Thu=5,Fri=6,Sat=0,Sun=1
+        _py_to_iraq = {5:0, 6:1, 0:2, 1:3, 2:4, 3:5, 4:6}
+        today_iraq = _py_to_iraq.get(datetime.now(IRAQ_TZ).weekday(), 0)
+        lines_tt = [f"📅 {L(uid,'tt_btn')}\n"]
+        has_schedule = False
+        for day_num in range(7):
+            entries = schedule.get(str(day_num), [])
+            if not entries: continue
+            has_schedule = True
+            marker = " ◀️ اليوم" if day_num == today_iraq and not is_main_admin(uid) else (" ◀️ Bugün" if day_num == today_iraq else "")
+            lines_tt.append(f"\n{'📍' if day_num == today_iraq else '📌'} {days_map[day_num]}{marker}:")
+            for e in sorted(entries, key=lambda x: x.get("hour","")):
+                lines_tt.append(f"  {e.get('hour','?')} — {e.get('subject','?')}")
+        if not has_schedule:
+            await update.message.reply_text(L(uid,"tt_none"))
+            return
+        await update.message.reply_text(
+            "\n".join(lines_tt),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
+        return
+
     # ── Mini Test (Quiz) ─────────────────────────────
     if text in (TR["quiz_btn"], AR["quiz_btn"]):
         quizzes = [q for q in load_quizzes() if q.get("active")]
@@ -3649,6 +3734,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
              InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
             [InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+            [InlineKeyboardButton("📥 Excel İmport",     callback_data="mgmt|excel_import"),
+             InlineKeyboardButton("📝 Ödevler",          callback_data="cnt|list_hw")],
+            [InlineKeyboardButton("📅 Ders Prog.",       callback_data="mgmt|timetable")],
             [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
             [InlineKeyboardButton("◀️ Geri",              callback_data="close")],
         ]
@@ -5696,6 +5784,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     [InlineKeyboardButton("🏆 Liderboard",       callback_data="misc|leaderboard"),
                      InlineKeyboardButton("📊 Sınıf Analizi",   callback_data="admin|class_analysis")],
                     [InlineKeyboardButton("📨 Seçili Kişilere",  callback_data="msgsel|panel")],
+                    [InlineKeyboardButton("📥 Excel İmport",     callback_data="mgmt|excel_import"),
+                     InlineKeyboardButton("📝 Ödevler",          callback_data="cnt|list_hw")],
+                    [InlineKeyboardButton("📅 Ders Prog.",       callback_data="mgmt|timetable")],
                     [InlineKeyboardButton("📦 Tek Dosya Yedek",  callback_data="backup|full")],
                 ]
                 await query.edit_message_text(TR["mgmt_panel"], reply_markup=InlineKeyboardMarkup(kb))
@@ -6236,6 +6327,74 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             except Exception:
                 await query.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
+
+        if action == "excel_import" and is_main_admin(uid):
+            context.user_data["action"] = "excel_import"
+            await query.edit_message_text(
+                "📥 Excel dosyası yükle (.xlsx)\n\n"
+                "Sütunlar:\n"
+                "  A = İsim\n"
+                "  B = Sınıf (1-4)\n"
+                "  C = Shift (sabahi/masaiy)\n"
+                "  D = Grup (A1-C3)\n"
+                "  E = TelegramID (isteğe bağlı)\n\n"
+                "Dosyayı şimdi gönderin:",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ İptal", callback_data="nav|mgmt_panel")
+                ]]))
+            return WAIT_FOLDER
+
+        if action == "timetable" and is_main_admin(uid):
+            kb_tt = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                kb_tt.append([
+                    InlineKeyboardButton(
+                        f"🎓 {cls_def['tr']} — Sabah",
+                        callback_data=f"mgmt|tt_cls|{cls_id}|sabahi"),
+                    InlineKeyboardButton(
+                        f"🎓 {cls_def['tr']} — Akşam",
+                        callback_data=f"mgmt|tt_cls|{cls_id}|masaiy"),
+                ])
+            kb_tt.append([InlineKeyboardButton("◀️ Geri", callback_data="nav|mgmt_panel")])
+            await query.edit_message_text(
+                TR["tt_panel"],
+                reply_markup=InlineKeyboardMarkup(kb_tt))
+            return ConversationHandler.END
+
+        if action == "tt_cls" and is_main_admin(uid):
+            cls_tt  = parts[2]
+            sft_tt  = parts[3]
+            tt_data = load_timetable()
+            days_tt = ["Cumartesi","Pazar","Pazartesi","Salı","Çarşamba","Perşembe","Cuma"]
+            schedule_tt = tt_data.get(cls_tt, {}).get(sft_tt, {})
+            lines_tt = [f"📅 {CLASS_DEFS.get(cls_tt,{}).get('tr','?')} — {'Sabah' if sft_tt=='sabahi' else 'Akşam'}\n"]
+            for day_num in range(7):
+                entries_tt = schedule_tt.get(str(day_num), [])
+                if entries_tt:
+                    lines_tt.append(f"\n{days_tt[day_num]}:")
+                    for e_tt in sorted(entries_tt, key=lambda x: x.get("hour","")):
+                        lines_tt.append(f"  {e_tt.get('hour','?')} — {e_tt.get('subject','?')}")
+            kb_ttc = [
+                [InlineKeyboardButton("✏️ Düzenle", callback_data=f"mgmt|tt_edit|{cls_tt}|{sft_tt}")],
+                [InlineKeyboardButton("◀️ Geri",    callback_data="mgmt|timetable")],
+            ]
+            await query.edit_message_text(
+                "\n".join(lines_tt) or TR["tt_none"],
+                reply_markup=InlineKeyboardMarkup(kb_ttc))
+            return ConversationHandler.END
+
+        if action == "tt_edit" and is_main_admin(uid):
+            cls_tte = parts[2]
+            sft_tte = parts[3]
+            context.user_data["action"]    = "edit_timetable"
+            context.user_data["tt_cls"]    = cls_tte
+            context.user_data["tt_shift"]  = sft_tte
+            await query.edit_message_text(
+                TR["tt_edit_prompt"],
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ İptal", callback_data=f"mgmt|tt_cls|{cls_tte}|{sft_tte}")
+                ]]))
+            return WAIT_FOLDER
 
     if cb.startswith("rem_admin|") and is_main_admin(uid):
         target = int(cb.split("|")[1])
@@ -7227,6 +7386,79 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.edit_message_text("📋 إدارة التقارير:", reply_markup=InlineKeyboardMarkup(_rep_list_kb(uid)))
             return ConversationHandler.END
 
+        # ── Ödev Yönetimi ────────────────────────────────
+        def _hw_list_kb(admin_uid):
+            """Homework yönetim klavyesi."""
+            all_hw = load_homework()
+            adm_cls = get_admin_cls(admin_uid)
+            adm_grp = get_admin_grp(admin_uid)
+            kb_l = [[InlineKeyboardButton("➕ Yeni Ödev Ekle", callback_data="cnt|add_hw")]]
+            shown = 0
+            for i, h in enumerate(all_hw):
+                if shown >= 12: break
+                if not is_main_admin(admin_uid):
+                    if adm_cls and h.get("cls","") and h.get("cls","") != adm_cls: continue
+                    if adm_grp and h.get("group","") and not h.get("group","").startswith(adm_grp): continue
+                nm   = (h.get("name","?") or "?")[:20]
+                subj = f" [{h['subject']}]" if h.get("subject") else ""
+                dt   = h.get("due_date","?")
+                subs = len(h.get("submissions", {}))
+                kb_l.append([
+                    InlineKeyboardButton(f"📝 {nm}{subj} — {dt} ({subs})", callback_data=f"cnt|hw_info|{i}"),
+                    InlineKeyboardButton("🗑", callback_data=f"cnt|del_hw|{i}"),
+                ])
+                shown += 1
+            kb_l.append([InlineKeyboardButton("◀️ رجوع", callback_data="nav|mgmt_panel")])
+            return kb_l
+
+        if action == "list_hw":
+            if is_main_admin(uid) or get_admin_perm(uid, "can_countdown"):
+                await query.edit_message_text(
+                    L(uid,"hw_panel"),
+                    reply_markup=InlineKeyboardMarkup(_hw_list_kb(uid)))
+            return ConversationHandler.END
+
+        if action == "add_hw":
+            if is_main_admin(uid) or get_admin_perm(uid, "can_countdown"):
+                context.user_data["action"] = "hw_name"
+                await query.edit_message_text(
+                    L(uid,"hw_name_prompt"),
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton(L(uid,"cancel"), callback_data="cnt|list_hw")
+                    ]]))
+                return WAIT_FOLDER
+            return ConversationHandler.END
+
+        if action == "hw_info":
+            idx_hi = int(cb.split("|")[2])
+            all_hw = load_homework()
+            if idx_hi >= len(all_hw): return ConversationHandler.END
+            h = all_hw[idx_hi]
+            nm   = h.get("name","?"); dt = h.get("due_date","?")
+            subj = h.get("subject","") or "—"
+            subs = len(h.get("submissions",{}))
+            users_d = load_users()
+            total_t = len([u_ for u_ in users_d if not is_admin(u_)])
+            cls_l   = get_class_display_name(h["cls"]) if h.get("cls") else "الكل"
+            grp_l   = h.get("group","") or "الكل"
+            kb_hi = [
+                [InlineKeyboardButton("🗑 Sil", callback_data=f"cnt|del_hw|{idx_hi}")],
+                [InlineKeyboardButton("◀️ رجوع", callback_data="cnt|list_hw")],
+            ]
+            await query.edit_message_text(
+                f"📝 {nm}\n📚 {subj}\n📆 {dt}\n🎓 {cls_l} | {grp_l}\n👥 Teslim Edenler: {subs}",
+                reply_markup=InlineKeyboardMarkup(kb_hi))
+            return ConversationHandler.END
+
+        if action == "del_hw":
+            idx_dh = int(cb.split("|")[2])
+            all_hw = load_homework()
+            if 0 <= idx_dh < len(all_hw): all_hw.pop(idx_dh)
+            save_homework(all_hw)
+            await query.answer("✅ Ödev silindi", show_alert=True)
+            await query.edit_message_text(L(uid,"hw_panel"), reply_markup=InlineKeyboardMarkup(_hw_list_kb(uid)))
+            return ConversationHandler.END
+
         if action == "add_folder":
             if not get_admin_perm(uid, "can_add_folder"):
                 await query.answer("Yetkin yok / ليس لديك صلاحية", show_alert=True)
@@ -7535,7 +7767,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             await query.delete_message()
             return ConversationHandler.END
 
-        if action in ("remind_cfg", "toggle_exam_day", "toggle_lab_day"):
+        if action in ("remind_cfg", "toggle_exam_day", "toggle_lab_day", "toggle_report_day"):
             s = load_settings()
             # Toggle güncelleme
             if action == "toggle_exam_day":
@@ -7560,28 +7792,47 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                     days.append(d)
                 s["lab_remind_days"] = sorted(days)
                 save_settings(s)
+            elif action == "toggle_report_day":
+                d = int(cb.split("|")[2])
+                days = s.get("report_remind_days", [1])
+                if isinstance(days, int): days = [days]
+                if d in days:
+                    days.remove(d)
+                    if not days: days = [1]
+                else:
+                    days.append(d)
+                s["report_remind_days"] = sorted(days)
+                save_settings(s)
             # Panel yeniden çiz (doğrudan — recursive yok)
-            exam_days = s.get("exam_remind_days", [1])
+            exam_days   = s.get("exam_remind_days", [1])
             if isinstance(exam_days, int): exam_days = [exam_days]
-            lab_days  = s.get("lab_remind_days",  [1])
+            lab_days    = s.get("lab_remind_days",  [1])
             if isinstance(lab_days, int):  lab_days  = [lab_days]
-            exam_lbl = ", ".join(f"{d}g" for d in sorted(exam_days))
-            lab_lbl  = ", ".join(f"{d}g" for d in sorted(lab_days))
+            report_days = s.get("report_remind_days", [1])
+            if isinstance(report_days, int): report_days = [report_days]
+            exam_lbl   = ", ".join(f"{d}g" for d in sorted(exam_days))
+            lab_lbl    = ", ".join(f"{d}g" for d in sorted(lab_days))
+            report_lbl = ", ".join(f"{d}g" for d in sorted(report_days))
             exam_row = [InlineKeyboardButton(
                 f"{'✅' if d in exam_days else '⬜'} {d}g",
                 callback_data=f"set|toggle_exam_day|{d}") for d in [1, 2, 3, 5, 7]]
             lab_row = [InlineKeyboardButton(
                 f"{'✅' if d in lab_days else '⬜'} {d}g",
                 callback_data=f"set|toggle_lab_day|{d}") for d in [1, 2, 3]]
+            report_row = [InlineKeyboardButton(
+                f"{'✅' if d in report_days else '⬜'} {d}g",
+                callback_data=f"set|toggle_report_day|{d}") for d in [1, 2, 3]]
             kb = [
                 exam_row,
                 lab_row,
+                report_row,
                 [InlineKeyboardButton("◀️ رجوع", callback_data="nav|mgmt_panel")],
             ]
             await query.edit_message_text(
                 f"⏰ إعدادات التذكيرات\n\n"
                 f"📚 الامتحانات — التذكير قبل: {exam_lbl}\n"
-                f"🔬 المختبر — التذكير قبل: {lab_lbl}\n\n"
+                f"🔬 المختبر — التذكير قبل: {lab_lbl}\n"
+                f"📋 التقارير — التذكير قبل: {report_lbl}\n\n"
                 f"اضغط على الأرقام لتفعيل/إلغاء كل تذكير",
                 reply_markup=InlineKeyboardMarkup(kb))
             return ConversationHandler.END
@@ -8208,6 +8459,41 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")
             ]]))
         return WAIT_FOLDER
+
+    if cb.startswith("hw_cls|") and is_admin(uid):
+        cls_val_hw = cb.split("|")[1]
+        context.user_data["hw_cls"]    = "" if cls_val_hw == "all" else cls_val_hw
+        context.user_data["hw_shift"]  = ""
+        context.user_data["hw_grp"]    = ""
+        context.user_data["action"]    = "hw_date"
+        await query.edit_message_text(
+            L(uid,"hw_date_prompt"),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(L(uid,"cancel"), callback_data="cnt|list_hw")
+            ]]))
+        return WAIT_FOLDER
+
+    if cb.startswith("hw|"):
+        parts  = cb.split("|")
+        action = parts[1]
+        if action == "submit":
+            hw_id = parts[2]
+            all_hw = load_homework()
+            found  = False
+            for h in all_hw:
+                if str(h.get("id","")) == hw_id:
+                    subs = h.setdefault("submissions", {})
+                    if uid in subs:
+                        await query.answer(L(uid,"hw_submitted"), show_alert=True)
+                    else:
+                        subs[uid] = datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")
+                        save_homework(all_hw)
+                        await query.answer(L(uid,"hw_submit_ok"), show_alert=True)
+                    found = True
+                    break
+            if not found:
+                await query.answer("❌", show_alert=True)
+            return ConversationHandler.END
 
     if cb.startswith("reminder|"):
         parts  = cb.split("|")
@@ -9262,6 +9548,96 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action", None)
         return ConversationHandler.END
 
+    if action == "hw_name" and is_admin(uid):
+        context.user_data["hw_name"] = text.strip()
+        context.user_data["action"]  = "hw_subj"
+        await update.message.reply_text(
+            L(uid,"hw_subj_prompt"),
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(L(uid,"cancel"), callback_data="cnt|list_hw")
+            ]]))
+        return WAIT_FOLDER
+
+    if action == "hw_subj" and is_admin(uid):
+        context.user_data["hw_subj"] = text.strip()
+        context.user_data["action"]  = "hw_date"
+        # Ask for class if main admin
+        adm_cls_hw = get_admin_cls(uid)
+        if adm_cls_hw:
+            context.user_data["hw_cls"] = adm_cls_hw
+            # Go directly to date
+            await update.message.reply_text(
+                L(uid,"hw_date_prompt"),
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(L(uid,"cancel"), callback_data="cnt|list_hw")
+                ]]))
+        else:
+            kb_hw_cls = []
+            for cls_id, cls_def in CLASS_DEFS.items():
+                kb_hw_cls.append([InlineKeyboardButton(cls_def["ar"], callback_data=f"hw_cls|{cls_id}")])
+            kb_hw_cls.append([InlineKeyboardButton("الكل", callback_data="hw_cls|all")])
+            await update.message.reply_text(
+                "🎓 السنة الدراسية:",
+                reply_markup=InlineKeyboardMarkup(kb_hw_cls))
+        return WAIT_FOLDER
+
+    if action == "hw_date" and is_admin(uid):
+        from datetime import datetime as _hdt
+        raw_hw = text.strip()
+        try:
+            _hdt.strptime(raw_hw, "%d/%m/%Y")
+            ts_hw = _hdt.strptime(raw_hw, "%d/%m/%Y").timestamp()
+        except:
+            await update.message.reply_text("❌ تاريخ غير صحيح. مثال: 20/05/2026"); return WAIT_FOLDER
+        hw_entry = {
+            "id":         f"hw_{int(ts_hw)}_{uid}",
+            "name":       context.user_data.pop("hw_name","?"),
+            "subject":    context.user_data.pop("hw_subj",""),
+            "cls":        context.user_data.pop("hw_cls",""),
+            "group":      context.user_data.pop("hw_grp",""),
+            "shift":      context.user_data.pop("hw_shift",""),
+            "due_date":   raw_hw,
+            "due_ts":     ts_hw,
+            "note":       "",
+            "created_by": uid,
+            "submissions": {},
+        }
+        all_hw = load_homework()
+        all_hw.append(hw_entry)
+        save_homework(all_hw)
+        await update.message.reply_text(L(uid,"hw_saved"))
+        context.user_data.pop("action",None)
+        return ConversationHandler.END
+
+    if action == "edit_timetable" and is_main_admin(uid):
+        import re as _re_tt
+        cls_tte  = context.user_data.pop("tt_cls","")
+        sft_tte  = context.user_data.pop("tt_shift","")
+        lines    = text.strip().split("\n")
+        new_sched = {}
+        ok_count = 0
+        for line in lines:
+            line = line.strip()
+            if not line: continue
+            # Format: day_num:HH:MM Subject
+            m = _re_tt.match(r'^(\d):(\d{2}:\d{2})\s+(.+)$', line)
+            if m:
+                day_num  = m.group(1)
+                hour     = m.group(2)
+                subject  = m.group(3).strip()
+                new_sched.setdefault(day_num, []).append({"hour": hour, "subject": subject})
+                ok_count += 1
+        if not ok_count:
+            await update.message.reply_text("❌ Format hatası. Örn: 0:08:00 Matematik")
+            return WAIT_FOLDER
+        tt_data = load_timetable()
+        tt_data.setdefault(cls_tte, {}).setdefault(sft_tte, {}).update(new_sched)
+        save_timetable(tt_data)
+        await update.message.reply_text(
+            L(uid,"tt_saved") + f"\n✅ {ok_count} ders kaydedildi")
+        context.user_data.pop("action",None)
+        return ConversationHandler.END
+
     if action == "edit_lab_note" and is_admin(uid):
         week = context.user_data.pop("edit_lab_week", None)
         if week:
@@ -10198,6 +10574,61 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await msg.reply_text(TR["set_photo_ok"])
         context.user_data.pop("action",None); return ConversationHandler.END
 
+    if action == "excel_import" and is_main_admin(uid):
+        if not msg.document:
+            await msg.reply_text("❌ Lütfen bir .xlsx dosyası gönderin."); return WAIT_FOLDER
+        fname = msg.document.file_name or ""
+        if not fname.lower().endswith(".xlsx"):
+            await msg.reply_text("❌ Sadece .xlsx dosyaları desteklenir."); return WAIT_FOLDER
+        try:
+            import openpyxl
+            f_obj = await context.bot.get_file(msg.document.file_id)
+            raw_xls = await f_obj.download_as_bytearray()
+            wb = openpyxl.load_workbook(io.BytesIO(bytes(raw_xls)))
+            ws = wb.active
+            created = 0; updated = 0; skipped = 0
+            classes = load_classes()
+        except ImportError:
+            await msg.reply_text("❌ openpyxl yüklü değil."); return ConversationHandler.END
+        except Exception as e_xls:
+            await msg.reply_text(f"❌ Dosya açılamadı: {e_xls}"); return ConversationHandler.END
+        try:
+            shifts_xls  = load_shifts()
+            groups_xls  = load_groups()
+            for row_xls in ws.iter_rows(min_row=2, values_only=True):
+                if not row_xls or not row_xls[0]: continue
+                name_xls  = str(row_xls[0]).strip() if row_xls[0] else ""
+                cls_xls   = str(row_xls[1]).strip() if len(row_xls) > 1 and row_xls[1] else ""
+                shift_xls = str(row_xls[2]).strip().lower() if len(row_xls) > 2 and row_xls[2] else ""
+                grp_xls   = str(row_xls[3]).strip() if len(row_xls) > 3 and row_xls[3] else ""
+                tgid_xls  = str(row_xls[4]).strip() if len(row_xls) > 4 and row_xls[4] else ""
+                if cls_xls not in ("1","2","3","4"): skipped += 1; continue
+                if tgid_xls and tgid_xls.isdigit():
+                    tgid_str = tgid_xls
+                    if classes.get(tgid_str,"") == cls_xls:
+                        updated += 1
+                    else:
+                        classes[tgid_str] = cls_xls
+                        created += 1
+                    if shift_xls in ("sabahi","masaiy"):
+                        shifts_xls[tgid_str] = shift_xls
+                    if grp_xls:
+                        groups_xls[tgid_str] = grp_xls
+                else:
+                    skipped += 1
+            save_classes(classes)
+            save_shifts(shifts_xls)
+            save_groups(groups_xls)
+            await msg.reply_text(
+                f"✅ Excel import tamamlandı\n\n"
+                f"✅ Oluşturuldu: {created}\n"
+                f"🔄 Güncellendi: {updated}\n"
+                f"⚠️ Atlandı: {skipped}")
+        except Exception as e_xls2:
+            await msg.reply_text(f"❌ İşlem hatası: {e_xls2}")
+        context.user_data.pop("action",None)
+        return ConversationHandler.END
+
     if action != "add_file": return ConversationHandler.END
 
     content = load_content(); path = context.user_data.get("path",[]); folder = get_folder(content,path)
@@ -10624,18 +11055,101 @@ def main():
             except Exception as e_:
                 logger.warning(f"Morning reminder failed for {uid_}: {e_}")
 
+    async def _check_report_reminders(ctx):
+        """Rapor teslim tarihinden N gün önce kullanıcılara bildirim gönder."""
+        from datetime import datetime as _dt, timedelta
+        s = load_settings()
+        remind_days_cfg = s.get("report_remind_days", [1])
+        if isinstance(remind_days_cfg, int): remind_days_cfg = [remind_days_cfg]
+        reps = load_reports()
+        changed = False
+        for r in reps:
+            notified_days = r.get("notified_days", [])
+            if r.get("notified") and not notified_days:
+                notified_days = [1]
+            for remind_days in remind_days_cfg:
+                if remind_days in notified_days:
+                    continue
+                target_date = (_dt.now() + timedelta(days=remind_days)).strftime("%d/%m/%Y")
+                if r.get("date","") != target_date:
+                    continue
+                name_r  = r.get("name","Rapor")
+                cls_r   = r.get("cls","")
+                shft_r  = r.get("shift","")
+                grp_r   = r.get("group","")
+                tgt_val = f"cls_{cls_r}" if cls_r else "all"
+                targets = get_target_users(tgt_val)
+                if shft_r:
+                    shfts = load_shifts()
+                    targets = [u for u in targets if shfts.get(u,"") in (shft_r,"sabah" if shft_r=="sabahi" else "gece")]
+                if grp_r:
+                    grps_ex = load_groups()
+                    targets = [u for u in targets if grps_ex.get(u,"").startswith(grp_r)]
+                day_lbl = "غداً" if remind_days == 1 else f"بعد {remind_days} أيام"
+                subj_r  = f" [{r['subject']}]" if r.get("subject") else ""
+                msg = f"⏰ تذكير بالتقرير\n\n📋 {name_r}{subj_r}\n📅 {day_lbl} — {target_date}"
+                for uid_ in targets:
+                    try: await ctx.bot.send_message(int(uid_), msg)
+                    except: pass
+                try:
+                    await ctx.bot.send_message(ADMIN_ID,
+                        f"📋 Rapor bildirimi gönderildi\nRapor: {name_r}\nTarih: {target_date}\nKişi: {len(targets)}")
+                except: pass
+                notified_days.append(remind_days)
+                r["notified_days"] = notified_days
+                r["notified"] = True
+                changed = True
+        if changed: save_reports(reps)
+
+    async def _weekly_admin_summary(ctx):
+        """Her Pazartesi 07:00 Irak saatinde admin aktivite özeti gönder."""
+        from datetime import datetime as _dt, timedelta
+        cutoff = _dt.now(IRAQ_TZ) - timedelta(days=7)
+        data = load_admin_activity()
+        users_d = load_users()
+        lines = ["📊 Haftalık Admin Özeti (Son 7 Gün)\n"]
+        admins_list = load_admins()
+        for adm_id in [str(ADMIN_ID)] + [str(a) for a in admins_list]:
+            entries = data.get(str(adm_id), [])
+            count = 0
+            for e in entries:
+                try:
+                    e_time = _dt.strptime(e["time"], "%Y-%m-%d %H:%M")
+                    e_time = e_time.replace(tzinfo=IRAQ_TZ)
+                    if e_time >= cutoff:
+                        count += 1
+                except: pass
+            if count == 0 and adm_id != str(ADMIN_ID): continue
+            u_ = users_d.get(str(adm_id), {})
+            name_ = u_.get("full_name") or u_.get("first_name") or f"ID:{adm_id}"
+            role_ = "👑 Süper Admin" if str(adm_id) == str(ADMIN_ID) else "👮 Admin"
+            lines.append(f"{role_} {name_}: {count} işlem")
+        msg = "\n".join(lines)
+        try:
+            await ctx.bot.send_message(ADMIN_ID, msg)
+        except Exception as e_:
+            logger.warning(f"Weekly admin summary failed: {e_}")
+
     job_queue = app.job_queue
     if job_queue:
+        from datetime import time as _dtime
         job_queue.run_repeating(_check_reminders, interval=30, first=5)
         job_queue.run_repeating(_check_exam_reminders, interval=3600, first=30)
         job_queue.run_repeating(_check_lab_reminders, interval=3600, first=60)
-        from datetime import time as _dtime
+        job_queue.run_repeating(_check_report_reminders, interval=3600, first=90)
         job_queue.run_daily(
             _daily_morning_reminder,
             time=_dtime(8, 0, 0, tzinfo=IRAQ_TZ),
         )
+        job_queue.run_daily(
+            _weekly_admin_summary,
+            time=_dtime(7, 0, 0, tzinfo=IRAQ_TZ),
+            days=(0,),
+        )
         print("✅ Hatırlatıcı job başlatıldı (60sn aralık)")
         print("✅ Sabah hatırlatma job'u başlatıldı (08:00 Irak)")
+        print("✅ Rapor hatırlatma job'u başlatıldı (3600sn aralık)")
+        print("✅ Haftalık admin özet job'u başlatıldı (Pazartesi 07:00)")
 
     # ── Startup: otomatik yedek geri yükleme ────────────────
     async def _startup_restore(application):
