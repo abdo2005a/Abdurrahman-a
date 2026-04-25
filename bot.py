@@ -1184,12 +1184,15 @@ def get_reports(cls: str = "", shift: str = "", uid: str = "") -> list:
         if r.get("ts", 0) > now:
             r_cls   = r.get("cls", "")
             r_shift = r.get("shift", "")
-            if all_cls and r_cls and r_cls not in all_cls: continue
+            is_extra = bool(r_cls and cls and r_cls in extra_cls and r_cls != cls)
+            if r_cls and not is_extra:
+                if uid and (not all_cls or r_cls not in all_cls):
+                    continue
             r_grp = r.get("group", "")
-            if r_grp and uid:
+            if r_grp and uid and not is_extra:
                 u_grp = load_groups().get(str(uid), "")
                 if not u_grp.startswith(r_grp): continue
-            if r_shift and shift:
+            if r_shift and shift and not is_extra:
                 u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
                 c_norm = "sabahi" if r_shift in ("sabahi","sabah") else "masaiy"
                 if u_norm != c_norm: continue
@@ -1341,17 +1344,17 @@ def get_current_lab_week():
             return entry
     return None
 
-def add_lab_week(week_start_str: str, group: str, note: str = ""):
+def add_lab_week(week_start_str: str, group: str, note: str = "", cls: str = ""):
     """Tarihe grup+lab ata. Aynı tarih-grup varsa güncelle, yoksa ekle."""
     schedule = load_lab_schedule()
-    # Aynı tarih + aynı grup varsa güncelle
     for entry in schedule:
         if entry.get("week") == week_start_str and entry.get("group") == group:
             entry["note"] = note
+            if cls: entry["cls"] = cls
             save_lab_schedule(schedule)
             return
-    # Yeni ekle — Aynı tarihte farklı gruplar olabilir
     schedule.append({"week": week_start_str, "group": group, "note": note,
+                     "cls": cls,
                      "added": datetime.now(IRAQ_TZ).strftime("%Y-%m-%d %H:%M")})
     schedule = sorted(schedule, key=lambda x: (x["week"], x.get("group","")))
     save_lab_schedule(schedule)
@@ -1487,17 +1490,20 @@ def get_countdowns(cls: str = "", shift: str = "", uid: str = "") -> list:
         if c.get("ts", 0) > now:
             cd_cls   = c.get("cls", "")
             cd_shift = c.get("shift", "")
-            # Sınıf — ana veya ek sınıftan biri eşleşmeli
-            if all_cls and cd_cls and cd_cls not in all_cls:
-                continue
+            # Ek sınıf: ana sınıf mevcut ve bu sınıf ekstradan → grup/shift filtresi atlanır
+            is_extra = bool(cd_cls and cls and cd_cls in extra_cls and cd_cls != cls)
+            # Sınıf filtresi: uid verilmişse (öğrenci) sıkı filtre; uid="" ise admin, hepsini görür
+            if cd_cls and not is_extra:
+                if uid and (not all_cls or cd_cls not in all_cls):
+                    continue
             # Grup — A/B/C filtresi
             cd_grp = c.get("group","")
-            if cd_grp and uid:
+            if cd_grp and uid and not is_extra:
                 u_grp = load_groups().get(str(uid),"")
                 if not u_grp.startswith(cd_grp):
                     continue
             # Shift
-            if cd_shift and shift:
+            if cd_shift and shift and not is_extra:
                 u_norm = "sabahi" if shift in ("sabahi","sabah") else "masaiy"
                 c_norm = "sabahi" if cd_shift in ("sabahi","sabah") else "masaiy"
                 if u_norm != c_norm:
@@ -1625,6 +1631,16 @@ def get_admin_grp(admin_uid: str):
     if is_main_admin(admin_uid): return None
     perms = load_admin_perms()
     return perms.get(str(admin_uid), {}).get("grp", None)
+
+def get_admin_grps(admin_uid: str) -> list:
+    """Admin'in yönettiği grupların listesi (birden fazla olabilir). Boş=hepsi."""
+    if is_main_admin(admin_uid): return []
+    perms = load_admin_perms()
+    p = perms.get(str(admin_uid), {})
+    grps = p.get("grps", [])
+    if not grps and p.get("grp"):
+        grps = [p["grp"]]
+    return grps
 
 def get_admin_shift(admin_uid: str):
     """Admin hangi vardiyayı yönetiyor? None=hepsi."""
@@ -3093,33 +3109,31 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Favoriler ────────────────────────────────────
     if text in (TR["btn_favorites"], AR["btn_favorites"]):
-        if not is_admin(uid):
-            favs = get_favorites(uid)
-            if not favs:
-                await update.message.reply_text(L(uid,"fav_empty")); return
-            kb = []
-            for idx, f in enumerate(favs[:15]):
-                cap = f.get("caption", f.get("name","?"))[:35]
-                kb.append([InlineKeyboardButton(f"⭐ {cap}", callback_data=f"fav|open|{idx}")])
-            kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
-            await update.message.reply_text(L(uid,"fav_list"), reply_markup=InlineKeyboardMarkup(kb))
+        favs = get_favorites(uid)
+        if not favs:
+            await update.message.reply_text(L(uid,"fav_empty")); return
+        kb = []
+        for idx, f in enumerate(favs[:15]):
+            cap = f.get("caption", f.get("name","?"))[:35]
+            kb.append([InlineKeyboardButton(f"⭐ {cap}", callback_data=f"fav|open|{idx}")])
+        kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
+        await update.message.reply_text(L(uid,"fav_list"), reply_markup=InlineKeyboardMarkup(kb))
         return
 
     # ── Son Görüntülenenler ──────────────────────────
     if text in (TR["btn_recent"], AR["btn_recent"]):
-        if not is_admin(uid):
-            recent = get_recently_viewed(uid)
-            if not recent:
-                await update.message.reply_text(L(uid,"recent_empty")); return
-            kb = []
-            for entry in reversed(recent[-10:]):
-                f   = entry["file"]
-                cap = f.get("caption", f.get("name","?"))[:35]
-                t   = entry.get("time","")[-5:]
-                key = f.get("file_id") or f.get("caption","?")
-                kb.append([InlineKeyboardButton(f"🕐 {t} — {cap}", callback_data=f"recent|open|{key}")])
-            kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
-            await update.message.reply_text(L(uid,"recent_list"), reply_markup=InlineKeyboardMarkup(kb))
+        recent = get_recently_viewed(uid)
+        if not recent:
+            await update.message.reply_text(L(uid,"recent_empty")); return
+        kb = []
+        for entry in reversed(recent[-10:]):
+            f   = entry["file"]
+            cap = f.get("caption", f.get("name","?"))[:35]
+            t   = entry.get("time","")[-5:]
+            key = f.get("file_id") or f.get("caption","?")
+            kb.append([InlineKeyboardButton(f"🕐 {t} — {cap}", callback_data=f"recent|open|{key}")])
+        kb.append([InlineKeyboardButton(L(uid,"back"),  callback_data="nav|root")])
+        await update.message.reply_text(L(uid,"recent_list"), reply_markup=InlineKeyboardMarkup(kb))
         return
 
     # ── Liderboard (herkes) ──────────────────────────
@@ -3138,26 +3152,24 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Notlarım ─────────────────────────────────────
     if text in (TR["btn_notes"], AR["btn_notes"]):
-        if not is_admin(uid):
-            notes = get_user_notes(uid)
-            kb = []
-            # Son 15 not — her not buton olarak
-            for n in notes[-15:]:
-                icon = {"text":"✍️","photo":"🖼","video":"🎥","voice":"🎙","audio":"🎵","document":"📄"}.get(n.get("type","text"),"📌")
-                subj = n.get("subject","") or ""
-                cap  = n.get("content","")[:25] or f"[{n.get('type','medya')}]"
-                lbl  = f"{icon} {subj+': ' if subj else ''}{cap}"
-                kb.append([
-                    InlineKeyboardButton(lbl[:45], callback_data=f"notes|view|{n['id']}"),
-                    InlineKeyboardButton("🗑", callback_data=f"notes|del|{n['id']}"),
-                ])
-            kb.append([InlineKeyboardButton("➕ إضافة ملاحظة", callback_data="notes|new")])
-            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
-            cnt_txt = f"({len(notes)} ملاحظة)" if notes else "لا توجد ملاحظات بعد"
-            sent = await update.message.reply_text(
-                f"📝 ملاحظاتي\n\n{cnt_txt}",
-                reply_markup=InlineKeyboardMarkup(kb))
-            context.user_data["last_inline_msg"] = sent.message_id
+        notes = get_user_notes(uid)
+        kb = []
+        for n in notes[-15:]:
+            icon = {"text":"✍️","photo":"🖼","video":"🎥","voice":"🎙","audio":"🎵","document":"📄"}.get(n.get("type","text"),"📌")
+            subj = n.get("subject","") or ""
+            cap  = n.get("content","")[:25] or f"[{n.get('type','medya')}]"
+            lbl  = f"{icon} {subj+': ' if subj else ''}{cap}"
+            kb.append([
+                InlineKeyboardButton(lbl[:45], callback_data=f"notes|view|{n['id']}"),
+                InlineKeyboardButton("🗑", callback_data=f"notes|del|{n['id']}"),
+            ])
+        kb.append([InlineKeyboardButton("➕ إضافة ملاحظة", callback_data="notes|new")])
+        kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+        cnt_txt = f"({len(notes)} ملاحظة)" if notes else "لا توجد ملاحظات بعد"
+        sent = await update.message.reply_text(
+            f"📝 ملاحظاتي\n\n{cnt_txt}",
+            reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data["last_inline_msg"] = sent.message_id
         return
 
     # ── Hatırlatıcım ─────────────────────────────────
@@ -3203,23 +3215,43 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data["last_inline_msg"] = sent.message_id
         return WAIT_FOLDER
 
-    if text == "🔬 المختبر" and not is_admin(uid):
+    if text == "🔬 المختبر" and not is_main_admin(uid):
         from datetime import datetime as _dt
         ARABIC_DAYS = {0:"الاثنين",1:"الثلاثاء",2:"الأربعاء",3:"الخميس",4:"الجمعة",5:"السبت",6:"الأحد"}
-        user_grp = load_groups().get(uid, "")
+        user_grp = load_groups().get(uid, "") or get_admin_grp(uid)
+        user_cls = get_user_class(uid) if not is_admin(uid) else get_admin_cls(uid)
+        # Extra classes for students (not admins)
+        extra_cls_lab = []
+        if not is_admin(uid):
+            extra_data_lab = load_json(os.path.join(BASE_DIR, "user_extra_cls.json"), {})
+            extra_cls_lab  = extra_data_lab.get(str(uid), [])
         schedule = load_lab_schedule()
         today_ts = _dt.now().date()
 
         my_labs = []
+        seen_lab_keys = set()
         for e in schedule:
             try:
                 e_dt = _dt.strptime(e["week"], "%Y-%m-%d").date()
-                lab_grp = e.get("group","")
-                if e_dt >= today_ts and (not lab_grp or user_grp.startswith(lab_grp)):
-                    day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
-                    date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
-                    note = e.get("note","")
-                    my_labs.append((date_disp, note, False))
+                if e_dt < today_ts: continue
+                lab_cls = e.get("cls", "")
+                lab_grp = e.get("group", "")
+                # Extra class: only when student has a primary class and this lab is from extras
+                is_extra_lab = bool(lab_cls and user_cls and lab_cls in extra_cls_lab and lab_cls != user_cls)
+                if lab_cls and not is_extra_lab:
+                    if is_admin(uid):
+                        # Secondary admin: None = no restriction; specific cls = filter
+                        if user_cls and lab_cls != user_cls: continue
+                    else:
+                        # Student: None = no class set, skip class-specific labs
+                        if not user_cls or lab_cls != user_cls: continue
+                if lab_grp and user_grp and not user_grp.startswith(lab_grp) and not is_extra_lab: continue
+                key = (e["week"], lab_grp, lab_cls)
+                if key in seen_lab_keys: continue
+                seen_lab_keys.add(key)
+                day_name = ARABIC_DAYS.get(e_dt.weekday(), "")
+                date_disp = f"{day_name} {e_dt.strftime('%d/%m/%Y')}"
+                my_labs.append((date_disp, e.get("note",""), False))
             except: pass
 
         # Fixed/recurring lab entries for user's group
@@ -3227,9 +3259,9 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         for fl in fixed_labs:
             fl_grps = fl.get("groups", [fl.get("group","")])
             fl_grps = [g for g in fl_grps if g]
-            if not fl_grps or any(user_grp.startswith(g) for g in fl_grps):
-                day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
-                my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
+            if fl_grps and user_grp and not any(user_grp.startswith(g) for g in fl_grps): continue
+            day_name_f = ARABIC_DAYS.get(fl.get("weekday",0),"")
+            my_labs.append((f"📌 {day_name_f} (أسبوعياً)", fl.get("name",""), True))
 
         if not my_labs:
             await update.message.reply_text(
@@ -3245,9 +3277,30 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if text in (TR["btn_reports"], AR["btn_reports"]):
-        cls   = get_user_class(uid) if not is_admin(uid) else ""
-        shift = get_user_shift(uid) if not is_admin(uid) else ""
-        reps  = get_reports(cls, shift, uid=uid if not is_admin(uid) else "")
+        if not is_admin(uid):
+            cls   = get_user_class(uid)
+            shift = get_user_shift(uid)
+            reps  = get_reports(cls, shift, uid=uid)
+        elif not is_main_admin(uid):
+            all_reps    = get_reports("", "", uid="")
+            adm_cls_r   = get_admin_cls(uid)
+            adm_grps_r  = get_admin_grps(uid)
+            adm_sft_r   = get_admin_shift(uid)
+            reps = []
+            for r in all_reps:
+                if adm_cls_r and r.get("cls","") and r.get("cls","") != adm_cls_r: continue
+                if adm_grps_r:
+                    r_grp = r.get("group","")
+                    if r_grp and not any(r_grp.startswith(g) for g in adm_grps_r): continue
+                if adm_sft_r:
+                    r_sft = r.get("shift","")
+                    if r_sft:
+                        u_n = "sabahi" if adm_sft_r in ("sabahi","sabah") else "masaiy"
+                        c_n = "sabahi" if r_sft    in ("sabahi","sabah") else "masaiy"
+                        if u_n != c_n: continue
+                reps.append(r)
+        else:
+            reps = get_reports("", "", uid="")
         if not reps:
             await update.message.reply_text(L(uid,"reports_none"))
         else:
@@ -3265,9 +3318,30 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if text in (TR["countdown_btn"], AR["countdown_btn"]):
-        cls   = get_user_class(uid) if not is_admin(uid) else ""
-        shift = get_user_shift(uid)  if not is_admin(uid) else ""
-        cds   = get_countdowns(cls, shift, uid=uid if not is_admin(uid) else "")
+        if not is_admin(uid):
+            cls   = get_user_class(uid)
+            shift = get_user_shift(uid)
+            cds   = get_countdowns(cls, shift, uid=uid)
+        elif not is_main_admin(uid):
+            all_cds    = get_countdowns("", "", uid="")
+            adm_cls_c  = get_admin_cls(uid)
+            adm_grps_c = get_admin_grps(uid)
+            adm_sft_c  = get_admin_shift(uid)
+            cds = []
+            for c in all_cds:
+                if adm_cls_c and c.get("cls","") and c.get("cls","") != adm_cls_c: continue
+                if adm_grps_c:
+                    c_grp = c.get("group","")
+                    if c_grp and not any(c_grp.startswith(g) for g in adm_grps_c): continue
+                if adm_sft_c:
+                    c_sft = c.get("shift","")
+                    if c_sft:
+                        u_n = "sabahi" if adm_sft_c in ("sabahi","sabah") else "masaiy"
+                        c_n = "sabahi" if c_sft     in ("sabahi","sabah") else "masaiy"
+                        if u_n != c_n: continue
+                cds.append(c)
+        else:
+            cds = get_countdowns("", "", uid="")
         if not cds:
             await update.message.reply_text(L(uid,"countdown_none"))
         else:
@@ -3298,21 +3372,28 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # ── Mini Test (Quiz) ─────────────────────────────
     if text in (TR["quiz_btn"], AR["quiz_btn"]):
+        quizzes = [q for q in load_quizzes() if q.get("active")]
         if not is_admin(uid):
-            quizzes = [q for q in load_quizzes() if q.get("active")]
             cls = get_user_class(uid)
-            quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == cls]
-            if not quizzes:
-                await update.message.reply_text(L(uid,"quiz_none"))
+            if cls:
+                quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == cls]
             else:
-                q = quizzes[0]
-                opts = q.get("options", [])
-                kb = [[InlineKeyboardButton(f"{'ABCD'[i]}. {o}", callback_data=f"quiz|ans|{q['id']}|{i}")]
-                      for i, o in enumerate(opts)]
-                kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
-                await update.message.reply_text(
-                    f"📝 {q.get('question','?')}\n",
-                    reply_markup=InlineKeyboardMarkup(kb))
+                quizzes = [q for q in quizzes if not q.get("cls")]
+        elif not is_main_admin(uid):
+            adm_cls = get_admin_cls(uid)
+            if adm_cls:
+                quizzes = [q for q in quizzes if not q.get("cls") or q.get("cls") == adm_cls]
+        if not quizzes:
+            await update.message.reply_text(L(uid,"quiz_none"))
+        else:
+            q = quizzes[0]
+            opts = q.get("options", [])
+            kb = [[InlineKeyboardButton(f"{'ABCD'[i]}. {o}", callback_data=f"quiz|ans|{q['id']}|{i}")]
+                  for i, o in enumerate(opts)]
+            kb.append([InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")])
+            await update.message.reply_text(
+                f"📝 {q.get('question','?')}\n",
+                reply_markup=InlineKeyboardMarkup(kb))
         return
 
     if text in (TR["rules_btn"], AR["rules_btn"]):
@@ -3446,7 +3527,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
     if not is_admin(uid): return
 
     # ── Güncelleme Modu (ikincil adminler) ──────────────
-    if not is_main_admin(uid) and text in ("🔄 وضع التحديث", "🔄 إيقاف التحديث ✅"):
+    if is_admin(uid) and not is_main_admin(uid) and text in ("🔄 وضع التحديث", "🔄 إيقاف التحديث ✅"):
         s_um = load_settings()
         s_um["update_mode"] = not s_um.get("update_mode", False)
         if s_um["update_mode"]:
@@ -4643,7 +4724,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if sadmin_act == "broadcast":
             if not get_admin_perm(uid, "can_broadcast"):
                 await query.answer("⛔ ليس لديك صلاحية", show_alert=True); return ConversationHandler.END
-            await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("bcls")))
+            adm_cls_bc = get_admin_cls(uid)
+            if adm_cls_bc:
+                # Secondary admin with fixed class — skip class selection
+                await safe_edit(query, "📢 الفترة الدراسية:",
+                    reply_markup=InlineKeyboardMarkup(_sft_kb("bsft", adm_cls_bc, "sadmin|broadcast")))
+            else:
+                await safe_edit(query, "📢 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(_cls_kb("bcls")))
             return WAIT_BROADCAST_MSG
 
         if sadmin_act == "bcls":
@@ -4655,8 +4742,21 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if sadmin_act == "bsft":
             cls_val = parts[2] if len(parts) > 2 else "all"
             sft_val = parts[3] if len(parts) > 3 else "all"
-            await safe_edit(query, "📢 المجموعة:",
-                reply_markup=InlineKeyboardMarkup(_grp_kb("bgrp", cls_val, sft_val, f"sadmin|bcls|{cls_val}")))
+            if sft_val == "all":
+                # Hepsi seçildi — grup sorusunu atla, direkt mesaj
+                tgt_parts_sf = []
+                if cls_val != "all": tgt_parts_sf.append(f"cls_{cls_val}")
+                sb_tgt_sf = "|".join(tgt_parts_sf) or "all"
+                context.user_data["sb_target"] = sb_tgt_sf
+                context.user_data["action"] = "sadmin_bcast"
+                lbl_sf = target_label(sb_tgt_sf)
+                prev_sf = get_target_users(sb_tgt_sf) if sb_tgt_sf != "all" else [u for u in load_users() if int(u) != ADMIN_ID]
+                prev_sf = [u for u in prev_sf if not is_blocked(u) and int(u) != ADMIN_ID]
+                await safe_edit(query, f"📢 {lbl_sf}\n👥 {len(prev_sf)} مستخدم\n\nاكتب نص الإعلان:",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="close")]]))
+            else:
+                await safe_edit(query, "📢 المجموعة:",
+                    reply_markup=InlineKeyboardMarkup(_grp_kb("bgrp", cls_val, sft_val, f"sadmin|bcls|{cls_val}")))
             return WAIT_BROADCAST_MSG
 
         if sadmin_act == "bgrp":
@@ -4667,10 +4767,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             if cls_val != "all": tgt_parts.append(f"cls_{cls_val}")
             if sft_val != "all": tgt_parts.append(f"sft_{sft_val}")
             if grp_val != "all": tgt_parts.append(f"grp_{grp_val}")
-            context.user_data["sb_target"] = "|".join(tgt_parts) or "all"
+            sb_tgt = "|".join(tgt_parts) or "all"
+            context.user_data["sb_target"] = sb_tgt
             context.user_data["action"] = "sadmin_bcast"
-            lbl = target_label(context.user_data["sb_target"])
-            await safe_edit(query, f"📢 {lbl}\n\nاكتب نص الإعلان:",
+            lbl = target_label(sb_tgt)
+            preview_targets = get_target_users(sb_tgt) if sb_tgt != "all" else [u for u in load_users() if int(u) != ADMIN_ID]
+            preview_targets = [u for u in preview_targets if not is_blocked(u) and int(u) != ADMIN_ID]
+            await safe_edit(query, f"📢 {lbl}\n👥 {len(preview_targets)} مستخدم\n\nاكتب نص الإعلان:",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="close")]]))
             return WAIT_BROADCAST_MSG
 
@@ -4730,6 +4833,9 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             sft_val = lab_parts[2] if len(lab_parts) > 2 else "all"
             context.user_data["pending_lab_sft"] = "" if sft_val == "all" else sft_val
             context.user_data["action"] = "lab_add_date"
+            if sft_val == "all":
+                # Hepsi seçildi — grup adımını atla, tarihe geç
+                context.user_data.pop("pending_lab_sft", None)
             await query.edit_message_text("📅 Tarih yaz (DD/MM/YYYY):\nÖrn: 22/04/2026")
             return WAIT_FOLDER
 
@@ -4818,7 +4924,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             week  = lab_parts[2]
             group = lab_parts[3]
             lab_name = context.user_data.pop("pending_lab_name", "")
-            add_lab_week(week, group, note=lab_name)
+            lab_cls  = context.user_data.pop("pending_lab_cls", "")
+            add_lab_week(week, group, note=lab_name, cls=lab_cls)
             from datetime import datetime as _dt2
             try:
                 d2 = _dt2.strptime(week, "%Y-%m-%d")
@@ -7566,7 +7673,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Notlar ───────────────────────────────────────
-    if cb.startswith("notes|") and not is_admin(uid):
+    if cb.startswith("notes|") and not is_main_admin(uid):
         parts_n = cb.split("|")
         action_n = parts_n[1]
 
@@ -7686,23 +7793,23 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         admin_cls = get_admin_cls(uid)
         if admin_cls:
             context.user_data["countdown_cls"] = admin_cls
-        cls_chosen = context.user_data.get("countdown_cls", "")
-        # Both class AND shift are "all" → skip group picker, go directly to date
-        if not cls_chosen and shift_val == "all":
+        if shift_val == "all":
+            # Hepsi seçildi — grup adımını atla, tarihe geç
             context.user_data["countdown_group"] = ""
             context.user_data["action"] = "countdown_date"
             await query.edit_message_text(
-                L(uid, "countdown_date"),
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
-                ]]))
+                L(uid,"countdown_date"),
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(L(uid,"back"), callback_data="nav|root")]]))
             return WAIT_FOLDER
-        cls_for_grp = admin_cls or cls_chosen
+        cls_for_grp = admin_cls or context.user_data.get("countdown_cls","")
         if cls_for_grp:
             cls_grps = get_class_groups(cls_for_grp)
             grp_keys = list(cls_grps.keys())
         else:
             grp_keys = ["A","B","C"]
+        adm_grp_cd = get_admin_grp(uid)
+        if adm_grp_cd:
+            grp_keys = [g for g in grp_keys if g == adm_grp_cd or g.startswith(adm_grp_cd)]
         kb = [[InlineKeyboardButton("الكل", callback_data="cd_grp|all")]]
         row = [InlineKeyboardButton(g, callback_data=f"cd_grp|{g}") for g in grp_keys]
         if row: kb.append(row)
@@ -7720,7 +7827,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text("📅 الفترة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
-    if cb.startswith("rep_cls|") and is_admin(uid):
+    if cb.startswith("rep_cls|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         cls_val = cb.split("|")[1]
         context.user_data["report_cls"] = "" if cls_val == "all" else cls_val
         kb = [
@@ -7731,38 +7838,35 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         await query.edit_message_text(
             "لمن هذا التقرير؟",
             reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
+        return WAIT_FOLDER
 
-    if cb.startswith("rep_shift|") and is_admin(uid):
+    if cb.startswith("rep_shift|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         shift_val = cb.split("|")[1]
         context.user_data["report_shift"] = "" if shift_val == "all" else shift_val
-        adm_cls_r = get_admin_cls(uid)
-        if adm_cls_r:
-            context.user_data["report_cls"] = adm_cls_r
-        cls_chosen_r = context.user_data.get("report_cls", "")
-        # Both class AND shift "all" → skip group, go to date
-        if not cls_chosen_r and shift_val == "all":
+        if shift_val == "all":
+            # Hepsi seçildi — grup adımını atla, tarihe geç
             context.user_data["report_group"] = ""
             context.user_data["action"] = "report_date"
             await query.edit_message_text(
                 "اكتب التاريخ (مثال: 20/05/2026) أو مع الوقت (20/05/2026 09:30):",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")
-                ]]))
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ إلغاء", callback_data="nav|root")]]))
             return WAIT_FOLDER
-        cls_for_grp_r = adm_cls_r or cls_chosen_r
-        if cls_for_grp_r:
-            cls_grps_r = get_class_groups(cls_for_grp_r)
-            grp_keys_r = list(cls_grps_r.keys())
+        cls_for_grp = get_admin_cls(uid) or context.user_data.get("report_cls", "")
+        if cls_for_grp:
+            cls_grps = get_class_groups(cls_for_grp)
+            grp_keys = list(cls_grps.keys())
         else:
-            grp_keys_r = ["A","B","C"]
-        kb_rg = [[InlineKeyboardButton("الكل", callback_data="rep_grp|all")]]
-        row_rg = [InlineKeyboardButton(g, callback_data=f"rep_grp|{g}") for g in grp_keys_r]
-        if row_rg: kb_rg.append(row_rg)
-        await query.edit_message_text("📋 المجموعة:", reply_markup=InlineKeyboardMarkup(kb_rg))
+            grp_keys = ["A","B","C"]
+        adm_grp_rp = get_admin_grp(uid)
+        if adm_grp_rp:
+            grp_keys = [g for g in grp_keys if g == adm_grp_rp or g.startswith(adm_grp_rp)]
+        kb = [[InlineKeyboardButton("الكل", callback_data="rep_grp|all")]]
+        row = [InlineKeyboardButton(g, callback_data=f"rep_grp|{g}") for g in grp_keys]
+        if row: kb.append(row)
+        await query.edit_message_text("📋 المجموعة:", reply_markup=InlineKeyboardMarkup(kb))
         return WAIT_FOLDER
 
-    if cb.startswith("rep_grp|") and is_admin(uid):
+    if cb.startswith("rep_grp|") and is_admin(uid) and (is_main_admin(uid) or get_admin_perm(uid, "can_countdown")):
         grp_val = cb.split("|")[1]
         context.user_data["report_group"] = "" if grp_val == "all" else grp_val
         context.user_data["action"] = "report_date"
@@ -7867,7 +7971,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
     # ── Quiz cevabı ──────────────────────────────────
-    if cb.startswith("quiz|ans|") and not is_admin(uid):
+    if cb.startswith("quiz|ans|") and not is_main_admin(uid):
         parts   = cb.split("|")
         qid     = parts[2]
         ans_idx = int(parts[3])
@@ -8314,7 +8418,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ConversationHandler.END
 
     # ── Kişisel Not — Ders adı girişi ─────────────────
-    if action == "note_subject_input" and not is_admin(uid):
+    if action == "note_subject_input" and not is_main_admin(uid):
         subject = "" if text.strip() == "." else text.strip()[:50]
         context.user_data["note_subject"] = subject
         context.user_data["action"] = "note_taking"
@@ -8363,14 +8467,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         context.user_data.pop("action",None)
         return ConversationHandler.END
 
-    if action == "note_taking" and not is_admin(uid):
+    if action == "note_taking" and not is_main_admin(uid):
         subject = context.user_data.get("note_subject","")
         add_user_note(uid, "text", text, subject=subject)
         await update.message.reply_text("✅ " + L(uid,"notes_saved"))
         return WAIT_FOLDER  # Sadece metin, devam et
 
     # ── Kişisel Not — Metin notu kaydet (eski uyumluluk)
-    if action == "add_note" and not is_admin(uid):
+    if action == "add_note" and not is_main_admin(uid):
         note_type = context.user_data.pop("note_type","text")
         subject   = context.user_data.pop("note_subject","")
         add_user_note(uid, note_type, text, subject=subject)
@@ -8509,6 +8613,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         else:
             targets = [u for u in load_users() if int(u) != ADMIN_ID]
         targets = [u for u in targets if not is_blocked(u) and int(u) != ADMIN_ID]
+        # Secondary admin scope enforcement — even when target="all"
+        adm_cls_bc = get_admin_cls(uid)
+        adm_grp_bc = get_admin_grp(uid)
+        adm_sft_bc = get_admin_shift(uid)
+        if adm_cls_bc:
+            targets = [u for u in targets if get_user_class(u) == adm_cls_bc]
+        if adm_grp_bc:
+            _grps_bc = load_groups()
+            targets = [u for u in targets if _grps_bc.get(u,"").startswith(adm_grp_bc)]
+        if adm_sft_bc:
+            _shfts_bc = load_shifts()
+            targets = [u for u in targets if _shfts_bc.get(u,"") in
+                       (adm_sft_bc, "sabah" if adm_sft_bc == "sabahi" else "gece")]
         btext = fmt_bcast("📢", "إعلان رسمي", text, uid)
         success = 0
         for uid_ in targets:
@@ -8769,7 +8886,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             kb.append([InlineKeyboardButton("الكل", callback_data="rep_cls|all")])
             kb.append([InlineKeyboardButton("◀️ إلغاء", callback_data="close")])
             await update.message.reply_text("📅 السنة الدراسية:", reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
+        return WAIT_FOLDER
 
     if action == "report_date" and is_admin(uid):
         name    = context.user_data.pop("report_name", "?")
@@ -8810,7 +8927,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text(
             "لمن هذا الامتحان؟" if not is_main_admin(uid) else "Bu sinav kime?",
             reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
+        return WAIT_FOLDER
 
     # ── Sınav Tarihi (Admin) ─────────────────────────
     if action == "countdown_date" and is_admin(uid):
@@ -9610,7 +9727,7 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         context.user_data.pop("action",None); context.user_data.pop("dm_target",None)
         return ConversationHandler.END
 
-    if action in ("add_note","note_taking") and not is_admin(uid):
+    if action in ("add_note","note_taking") and not is_main_admin(uid):
         subject = context.user_data.get("note_subject","")
         fid = None; cap = msg.caption or ""; note_type = "media"
         if msg.photo:
@@ -9915,15 +10032,15 @@ def main():
                 name_cd = cd.get("name","Sinav")
                 cls_cd  = cd.get("cls","")
                 shft_cd = cd.get("shift","")
+                grp_cd  = cd.get("group","")
                 tgt_val = f"cls_{cls_cd}" if cls_cd else "all"
                 targets = get_target_users(tgt_val)
                 if shft_cd:
                     shfts = load_shifts()
                     targets = [u for u in targets if shfts.get(u,"") in (shft_cd,"sabah" if shft_cd=="sabahi" else "gece")]
-                grp_cd = cd.get("group","")
                 if grp_cd:
-                    grps_d_ex = load_groups()
-                    targets = [u for u in targets if grps_d_ex.get(u,"").startswith(grp_cd)]
+                    grps_ex = load_groups()
+                    targets = [u for u in targets if grps_ex.get(u,"").startswith(grp_cd)]
                 day_lbl = "غداً" if remind_days == 1 else f"بعد {remind_days} أيام"
                 msg = f"⏰ تذكير بالامتحان\n\n📚 {name_cd}\n📅 {day_lbl} — {target_date}"
                 for uid_ in targets:
@@ -9957,7 +10074,8 @@ def main():
                 target_week = (_dt.now() + timedelta(days=lab_days)).strftime("%Y-%m-%d")
                 if entry.get("week") != target_week:
                     continue
-                grp  = entry.get("group","?")
+                grp      = entry.get("group","?")
+                lab_cls  = entry.get("cls","")
                 note = entry.get("note","")
                 day_lbl = "غداً" if lab_days == 1 else f"بعد {lab_days} أيام"
                 msg = (f"🔬 تذكير المختبر\n\n"
@@ -9967,7 +10085,9 @@ def main():
                 users_d = load_users()
                 for uid_, u in users_d.items():
                     if is_blocked(uid_): continue
-                    if grps_d.get(uid_,"") == grp:
+                    if lab_cls and get_user_class(uid_) != lab_cls: continue
+                    u_grp_ = grps_d.get(uid_,"")
+                    if u_grp_ and (u_grp_ == grp or u_grp_.startswith(grp)):
                         try: await ctx.bot.send_message(int(uid_), msg)
                         except: pass
                 try: await ctx.bot.send_message(ADMIN_ID, f"🔬 Lab {day_lbl}: {grp}")
@@ -10009,17 +10129,17 @@ def main():
             for fl in lab_fixed:
                 if fl.get("weekday") != today_wd: continue
                 fl_grps = fl.get("groups", [fl.get("group", "")])
-                if u_grp and fl_grps and not any(
-                        u_grp == g or u_grp.startswith(g) for g in fl_grps if g):
+                if u_grp and fl_grps and not any(u_grp == g or u_grp.startswith(g) for g in fl_grps if g):
                     continue
                 t_str = f" ⏰ {fl['time']}" if fl.get("time") else ""
                 events.append(f"🔬 مختبر: {fl.get('name','?')}{t_str}")
 
-            # Scheduled lab for today
+            # Scheduled lab for today (week field is YYYY-MM-DD)
+            today_iso = today.strftime("%Y-%m-%d")
             for le in lab_sched:
                 if le.get("week") != today_iso: continue
                 le_grp = le.get("group", "")
-                if u_grp and le_grp and not u_grp.startswith(le_grp): continue
+                if u_grp and le_grp and not (u_grp == le_grp or u_grp.startswith(le_grp)): continue
                 t_str = f" ⏰ {le['time']}" if le.get("time") else ""
                 events.append(f"🔬 مختبر: {le.get('note', le.get('group','?'))}{t_str}")
 
