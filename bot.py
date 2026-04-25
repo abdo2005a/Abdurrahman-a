@@ -3768,6 +3768,7 @@ async def handle_reply_buttons(update: Update, context: ContextTypes.DEFAULT_TYP
              InlineKeyboardButton("🎓 Sınıf İsimleri",   callback_data="set|class_names")],
             [InlineKeyboardButton("👥 Grup Yapılandırma", callback_data="set|class_groups"),
              InlineKeyboardButton("👮 Admin Yetkileri",   callback_data="set|admin_perms")],
+            [InlineKeyboardButton("📡 Kaynak Kanal",     callback_data="set|channel_id")],
             [InlineKeyboardButton("❓ FAQ Yönetimi",     callback_data="faqmgmt|panel"),
              InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
             [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
@@ -5816,6 +5817,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                      InlineKeyboardButton("🎓 Sınıf İsimleri",   callback_data="set|class_names")],
                     [InlineKeyboardButton("👥 Grup Yapılandırma", callback_data="set|class_groups"),
                      InlineKeyboardButton("👮 Admin Yetkileri",   callback_data="set|admin_perms")],
+                    [InlineKeyboardButton("📡 Kaynak Kanal",     callback_data="set|channel_id")],
                     [InlineKeyboardButton("❓ FAQ Yönetimi",     callback_data="faqmgmt|panel"),
                      InlineKeyboardButton("⚡ Otomatik Kurallar",callback_data="rulemgmt|panel")],
                     [InlineKeyboardButton(TR["pin_msg_btn"],      callback_data="set|pin_msg"),
@@ -7751,6 +7753,21 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("◀️ İptal", callback_data="set|class_names")
                 ]]))
+            return WAIT_FOLDER
+
+        if action == "channel_id":
+            s = load_settings()
+            cur_ch = s.get("source_channel_id", "")
+            cur_lbl = f"Mevcut: `{cur_ch}`" if cur_ch else "Henüz ayarlanmadı."
+            await query.edit_message_text(
+                f"📡 Kaynak Kanal ID\n\n{cur_lbl}\n\n"
+                "Kanalın ID'sini yaz (örn: -1001234567890)\n"
+                "Botu kanala admin olarak eklemeyi unutma.\n"
+                "Silmek için: -",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("◀️ İptal", callback_data="nav|settings_panel")
+                ]]))
+            context.user_data["action"] = "set_channel_id"
             return WAIT_FOLDER
 
         if action == "group_mgmt":
@@ -10337,6 +10354,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         await update.message.reply_text(f"✅ Açıklama güncellendi: {text[:80]}")
         context.user_data.pop("action",None); return ConversationHandler.END
 
+    if action == "set_channel_id" and is_main_admin(uid):
+        s = load_settings()
+        if text.strip() == "-":
+            s.pop("source_channel_id", None)
+            await update.message.reply_text("✅ Kaynak kanal silindi.")
+        else:
+            cid = text.strip()
+            if not cid.startswith("-"):
+                await update.message.reply_text("❌ Kanal ID'si - ile başlamalı (örn: -1001234567890)")
+                return WAIT_FOLDER
+            s["source_channel_id"] = cid
+            save_settings(s)
+            await update.message.reply_text(f"✅ Kaynak kanal ayarlandı: {cid}")
+        context.user_data.pop("action", None); return ConversationHandler.END
+
     if action == "set_welcome" and is_main_admin(uid):
         s = load_settings(); s["welcome_msg"] = text; save_settings(s)
         await update.message.reply_text(TR["set_welcome_ok"])
@@ -10762,6 +10794,89 @@ async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         log_user_message(user, "msg", text)
 
 # ================================================================
+#  KANAL DOSYA IMPORT
+# ================================================================
+
+async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Kaynak kanaldan gelen dosyaları yakala, admin'e klasör seçimi sun."""
+    msg = update.channel_post
+    if not msg: return
+    s   = load_settings()
+    src = s.get("source_channel_id", "")
+    if not src: return
+    chat_id = str(msg.chat_id)
+    if chat_id != str(src): return
+
+    # Dosya bilgilerini çıkar
+    fid = ftype = cap = None
+    if   msg.photo:     fid = msg.photo[-1].file_id; ftype = "photo";    cap = msg.caption or msg.photo[-1].file_unique_id[:12]
+    elif msg.video:     fid = msg.video.file_id;     ftype = "video";    cap = msg.caption or msg.video.file_name or "video"
+    elif msg.document:  fid = msg.document.file_id;  ftype = "document"; cap = msg.caption or msg.document.file_name or "document"
+    elif msg.audio:     fid = msg.audio.file_id;     ftype = "audio";    cap = msg.caption or msg.audio.file_name or "audio"
+    elif msg.animation: fid = msg.animation.file_id; ftype = "animation";cap = msg.caption or "gif"
+    elif msg.voice:     fid = msg.voice.file_id;     ftype = "voice";    cap = "voice"
+    if not fid: return
+
+    # bot_data'da bekleyen dosya olarak sakla
+    import uuid as _uuid
+    key = _uuid.uuid4().hex[:8]
+    context.bot_data.setdefault("pending_ch", {})[key] = {"fid": fid, "ftype": ftype, "cap": cap}
+
+    # Üst düzey klasörleri listele
+    content = load_content()
+    top_folders = list(content.get("folders", {}).keys())
+    icon_map = {"photo": "🖼", "video": "🎬", "document": "📄", "audio": "🎵", "animation": "🎞", "voice": "🎙"}
+    kb = []
+    for i, fname in enumerate(top_folders[:18]):
+        kb.append([InlineKeyboardButton(f"📁 {fname[:30]}", callback_data=f"chan|add|{key}|{i}")])
+    kb.append([InlineKeyboardButton("🗑 Atla / İptal", callback_data=f"chan|skip|{key}")])
+    type_icon = icon_map.get(ftype, "📎")
+    try:
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"📥 Kanaldan yeni dosya geldi!\n"
+            f"{type_icon} {ftype.upper()} — {cap[:60]}\n\n"
+            f"Hangi klasöre eklensin?",
+            reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        logger.warning(f"Kanal bildirim hatası: {e}")
+
+
+# ── chan| callback (admin klasör seçimi) ──────────────────────
+
+async def handle_chan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query; await query.answer()
+    uid   = str(query.from_user.id)
+    if not is_main_admin(uid): return
+    cb    = query.data
+    parts = cb.split("|")
+    act   = parts[1]; key = parts[2]
+
+    pending = context.bot_data.get("pending_ch", {})
+    fdata   = pending.get(key)
+
+    if act == "skip" or not fdata:
+        context.bot_data.get("pending_ch", {}).pop(key, None)
+        await query.edit_message_text("🗑 Dosya atlandı.")
+        return
+
+    if act == "add":
+        folder_idx = int(parts[3])
+        content    = load_content()
+        top_folders= list(content["folders"].keys())
+        if folder_idx >= len(top_folders):
+            await query.edit_message_text("❌ Klasör bulunamadı."); return
+        fname  = top_folders[folder_idx]
+        folder = content["folders"][fname]
+        fobj   = {"type": fdata["ftype"], "file_id": fdata["fid"], "caption": fdata["cap"], "name": fdata["cap"]}
+        folder.setdefault("files", []).append(fobj)
+        save_content(content)
+        context.bot_data.get("pending_ch", {}).pop(key, None)
+        await query.edit_message_text(f"✅ Dosya eklendi → 📁 {fname}\n📎 {fdata['cap'][:60]}")
+        log_admin_action(uid, "CHANNEL_IMPORT", f"folder={fname} type={fdata['ftype']}")
+
+
+# ================================================================
 #  MAIN
 # ================================================================
 
@@ -10847,6 +10962,9 @@ def main():
     app.add_handler(MessageHandler(text_f & ~reply_btn_f, handle_text))
     app.add_handler(MessageHandler(media_f, handle_media))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_any_message))
+    # Kanal import handler'ları
+    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
+    app.add_handler(CallbackQueryHandler(handle_chan_callback, pattern=r"^chan\|"))
 
     print("✅ Bot başlatıldı!")
     print(f"👑 Süper Admin  : {ADMIN_ID}")
@@ -11182,7 +11300,7 @@ def main():
     # Mevcut webhook varsa sil — run_polling başlamadan önce
     app.run_polling(
         drop_pending_updates=True,
-        allowed_updates=["message","callback_query","my_chat_member"],
+        allowed_updates=["message","callback_query","my_chat_member","channel_post"],
     )
 
 if __name__ == "__main__":
