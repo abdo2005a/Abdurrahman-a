@@ -9624,6 +9624,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return ConversationHandler.END
 
 # ================================================================
+#  KANAL MIRROR YARDIMCISI
+# ================================================================
+
+async def _mirror_to_channel(bot, fobj: dict, folder_label: str = ""):
+    """Dosyayı kaynak kanala sessizce gönder (depolama amaçlı)."""
+    s   = load_settings()
+    cid = s.get("source_channel_id", "")
+    if not cid: return
+    fid  = fobj.get("file_id", "")
+    if not fid: return
+    ftype = fobj.get("type", "")
+    cap   = fobj.get("caption") or fobj.get("name") or ""
+    # Caption'a klasör yolunu ekle (kanalda organize görünsün)
+    chan_cap = f"📁 {folder_label}\n📎 {cap}"[:1020] if folder_label else cap[:1020]
+    try:
+        if   ftype == "photo":     await bot.send_photo(    int(cid), fid, caption=chan_cap)
+        elif ftype == "video":     await bot.send_video(    int(cid), fid, caption=chan_cap)
+        elif ftype == "document":  await bot.send_document( int(cid), fid, caption=chan_cap)
+        elif ftype == "audio":     await bot.send_audio(    int(cid), fid, caption=chan_cap)
+        elif ftype == "animation": await bot.send_animation(int(cid), fid, caption=chan_cap)
+        elif ftype == "voice":     await bot.send_voice(    int(cid), fid)
+    except Exception as e:
+        logger.warning(f"Kanal mirror hatası ({ftype}): {e}")
+
+
+# ================================================================
 #  MEDYA GİRİŞ
 # ================================================================
 
@@ -9773,9 +9799,11 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 ct      = load_content()
                 fld     = get_folder(ct, p)
                 added   = 0
+                folder_label = "/".join(p) if p else "/"
                 for item in items:
                     fld.setdefault("files", []).append(item)
                     added += 1
+                    await _mirror_to_channel(c.bot, item, folder_label)
                 save_content(ct)
                 kb = [[InlineKeyboardButton(L(str(user.id),"close"), callback_data="nav|root")]]
                 try:
@@ -9829,6 +9857,8 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
         # Tekli dosya — direkt kaydet
         folder.setdefault("files",[]).append(fobj); save_content(content)
+        # Kanala mirror et (sessiz — hata olursa geç)
+        await _mirror_to_channel(context.bot, fobj, "/".join(path) if path else "/")
 
         # Sayacı güncelle veya yeni mesaj gönder
         status_id = context.user_data.get("add_file_status_id")
