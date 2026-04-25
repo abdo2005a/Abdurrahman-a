@@ -2501,6 +2501,7 @@ def load_settings():
         "lab_remind_days":    [1],
         "report_remind_days": [1],
         "anon_group_id":      None,
+        "source_channel_id": "-1001003838833995",
         "lab_remind_hour":   20,
         "user_buttons": {
             "btn_search": True,
@@ -10358,15 +10359,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         s = load_settings()
         if text.strip() == "-":
             s.pop("source_channel_id", None)
+            save_settings(s)
             await update.message.reply_text("✅ Kaynak kanal silindi.")
         else:
-            cid = text.strip()
-            if not cid.startswith("-"):
-                await update.message.reply_text("❌ Kanal ID'si - ile başlamalı (örn: -1001234567890)")
-                return WAIT_FOLDER
+            cid = text.strip().replace(" ", "")
+            # Otomatik -100 prefix ekle (sadece rakam girildiyse)
+            if cid.lstrip("-").isdigit() and not cid.startswith("-100"):
+                cid = "-100" + cid.lstrip("-")
             s["source_channel_id"] = cid
             save_settings(s)
-            await update.message.reply_text(f"✅ Kaynak kanal ayarlandı: {cid}")
+            await update.message.reply_text(f"✅ Kaynak kanal ayarlandı: `{cid}`", parse_mode="Markdown")
         context.user_data.pop("action", None); return ConversationHandler.END
 
     if action == "set_welcome" and is_main_admin(uid):
@@ -10797,15 +10799,30 @@ async def handle_any_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
 #  KANAL DOSYA IMPORT
 # ================================================================
 
+def _chan_notify_targets() -> list:
+    """Ana admin + can_add_file yetkili tüm alt adminler."""
+    targets = [str(ADMIN_ID)]
+    perms = load_admin_perms()
+    for adm_uid, p in perms.items():
+        if p.get("can_add_file") and str(adm_uid) not in targets:
+            targets.append(str(adm_uid))
+    # load_admins() listesindeki tüm adminler de dahil
+    for adm in load_admins():
+        if str(adm) not in targets:
+            targets.append(str(adm))
+    return targets
+
+
 async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Kaynak kanaldan gelen dosyaları yakala, admin'e klasör seçimi sun."""
+    """Kaynak kanaldan gelen dosyaları yakala, tüm adminlere klasör seçimi sun."""
     msg = update.channel_post
     if not msg: return
     s   = load_settings()
     src = s.get("source_channel_id", "")
     if not src: return
-    chat_id = str(msg.chat_id)
-    if chat_id != str(src): return
+    # Normalize: her iki tarafı da rakam olarak karşılaştır
+    def _norm_cid(v): return str(v).lstrip("-").lstrip("0") or "0"
+    if _norm_cid(msg.chat_id) != _norm_cid(src): return
 
     # Dosya bilgilerini çıkar
     fid = ftype = cap = None
@@ -10823,23 +10840,24 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.bot_data.setdefault("pending_ch", {})[key] = {"fid": fid, "ftype": ftype, "cap": cap}
 
     # Üst düzey klasörleri listele
-    content = load_content()
+    content     = load_content()
     top_folders = list(content.get("folders", {}).keys())
-    icon_map = {"photo": "🖼", "video": "🎬", "document": "📄", "audio": "🎵", "animation": "🎞", "voice": "🎙"}
+    icon_map    = {"photo": "🖼", "video": "🎬", "document": "📄", "audio": "🎵", "animation": "🎞", "voice": "🎙"}
     kb = []
     for i, fname in enumerate(top_folders[:18]):
         kb.append([InlineKeyboardButton(f"📁 {fname[:30]}", callback_data=f"chan|add|{key}|{i}")])
     kb.append([InlineKeyboardButton("🗑 Atla / İptal", callback_data=f"chan|skip|{key}")])
     type_icon = icon_map.get(ftype, "📎")
-    try:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"📥 Kanaldan yeni dosya geldi!\n"
-            f"{type_icon} {ftype.upper()} — {cap[:60]}\n\n"
-            f"Hangi klasöre eklensin?",
-            reply_markup=InlineKeyboardMarkup(kb))
-    except Exception as e:
-        logger.warning(f"Kanal bildirim hatası: {e}")
+    msg_text  = (f"📥 Kanaldan yeni dosya geldi!\n"
+                 f"{type_icon} {ftype.upper()} — {(cap or '')[:60]}\n\n"
+                 f"Hangi klasöre eklensin?")
+    # Tüm adminlere bildir
+    for adm_uid in _chan_notify_targets():
+        try:
+            await context.bot.send_message(int(adm_uid), msg_text,
+                                           reply_markup=InlineKeyboardMarkup(kb))
+        except Exception as e:
+            logger.warning(f"Kanal bildirim hatası ({adm_uid}): {e}")
 
 
 # ── chan| callback (admin klasör seçimi) ──────────────────────
@@ -10847,7 +10865,8 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_chan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     uid   = str(query.from_user.id)
-    if not is_main_admin(uid): return
+    # Ana admin veya can_add_file yetkili alt admin
+    if not is_admin(uid) and not is_main_admin(uid): return
     cb    = query.data
     parts = cb.split("|")
     act   = parts[1]; key = parts[2]
@@ -10872,8 +10891,9 @@ async def handle_chan_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         folder.setdefault("files", []).append(fobj)
         save_content(content)
         context.bot_data.get("pending_ch", {}).pop(key, None)
-        await query.edit_message_text(f"✅ Dosya eklendi → 📁 {fname}\n📎 {fdata['cap'][:60]}")
-        log_admin_action(uid, "CHANNEL_IMPORT", f"folder={fname} type={fdata['ftype']}")
+        adm_name = load_users().get(uid, {}).get("full_name") or uid
+        await query.edit_message_text(f"✅ Dosya eklendi → 📁 {fname}\n📎 {(fdata['cap'] or '')[:60]}")
+        log_admin_action(uid, "CHANNEL_IMPORT", f"folder={fname} type={fdata['ftype']} by={adm_name}")
 
 
 # ================================================================
