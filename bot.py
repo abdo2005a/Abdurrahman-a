@@ -10558,15 +10558,15 @@ def _channel_target(cid: str):
     return "@" + c
 
 
-async def _mirror_to_channel(bot, fobj: dict, folder_label: str = ""):
-    """Dosyayı kaynak kanala sessizce gönder (depolama amaçlı)."""
+async def _mirror_to_channel(bot, fobj: dict, folder_label: str = "") -> str | None:
+    """Dosyayı kanala gönder. Hata varsa hata metnini döndür, başarılıysa None döndür."""
     s   = load_settings()
     cid = s.get("source_channel_id", "")
-    if not cid: return
+    if not cid: return "source_channel_id ayarlanmamış"
     chat = _channel_target(cid)
-    if chat is None: return
+    if chat is None: return f"Geçersiz kanal ID: {cid}"
     fid  = fobj.get("file_id", "")
-    if not fid: return
+    if not fid: return "file_id yok"
     ftype = fobj.get("type", "")
     cap   = fobj.get("caption") or fobj.get("name") or ""
     chan_cap = f"📁 {folder_label}\n📎 {cap}"[:1020] if folder_label else cap[:1020]
@@ -10578,11 +10578,12 @@ async def _mirror_to_channel(bot, fobj: dict, folder_label: str = ""):
         elif ftype == "animation": await bot.send_animation(chat, fid, caption=chan_cap)
         elif ftype == "voice":     await bot.send_voice(    chat, fid)
         else:
-            logger.warning(f"Kanal mirror: bilinmeyen tür '{ftype}'")
-            return
+            return f"Desteklenmeyen tür: {ftype}"
         logger.info(f"Kanal mirror OK: {ftype} → {chat} [{folder_label}]")
+        return None
     except Exception as e:
         logger.warning(f"Kanal mirror hatası ({ftype}) → {chat}: {e}")
+        return str(e)
 
 
 # ================================================================
@@ -10827,17 +10828,26 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 fld     = get_folder(ct, p)
                 added   = 0
                 folder_label = "/".join(p) if p else "/"
+                chan_errors = []
                 for item in items:
                     fld.setdefault("files", []).append(item)
                     added += 1
-                    await _mirror_to_channel(c.bot, item, folder_label)
+                    err = await _mirror_to_channel(c.bot, item, folder_label)
+                    if err: chan_errors.append(err)
                 save_content(ct)
                 kb = [[InlineKeyboardButton(L(str(user.id),"close"), callback_data="nav|root")]]
+                _is_main = is_main_admin(str(user.id))
+                _chan_txt = ""
+                if _is_main:
+                    if not chan_errors:
+                        _chan_txt = f"\n📡 Kanal: ✅ {added} dosya gönderildi"
+                    else:
+                        _chan_txt = f"\n⚠️ Kanal hatası: {chan_errors[0][:80]}"
                 try:
                     await context.bot.send_message(
                         user.id,
-                        f"✅ {added} dosya eklendi!\n\n📎 " +
-                        ("Daha fazla dosya gönderebilirsiniz." if is_main_admin(str(user.id)) else
+                        f"✅ {added} dosya eklendi!\n📁 {folder_label}{_chan_txt}\n\n📎 " +
+                        ("Daha fazla dosya gönderebilirsiniz." if _is_main else
                          "يمكنك إرسال المزيد من الملفات."),
                         reply_markup=InlineKeyboardMarkup(kb))
                 except Exception as e:
@@ -10884,19 +10894,23 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 
         # Tekli dosya — direkt kaydet
         folder.setdefault("files",[]).append(fobj); save_content(content)
-        # Kanala mirror et (sessiz — hata olursa geç)
-        await _mirror_to_channel(context.bot, fobj, "/".join(path) if path else "/")
+        # Kanala mirror et — hata varsa admin'e bildir
+        _folder_path = "/".join(path) if path else "/"
+        _mirror_err  = await _mirror_to_channel(context.bot, fobj, _folder_path)
 
         # Sayacı güncelle veya yeni mesaj gönder
         status_id = context.user_data.get("add_file_status_id")
         count     = context.user_data.get("add_file_count", 0) + 1
         context.user_data["add_file_count"] = count
         kb = [[InlineKeyboardButton(L(uid,"close"), callback_data="nav|root")]]
+        _chan_line = (f"\n📡 Kanal: ✅" if not _mirror_err else f"\n⚠️ Kanal hatası: {_mirror_err[:80]}") if is_main_admin(uid) else ""
         status_text = (
             f"{'✅ Dosyalar ekleniyor...' if is_main_admin(uid) else '✅ جارٍ إضافة الملفات...'}\n"
             f"\n"
-            f"📎 {count} {'dosya eklendi' if is_main_admin(uid) else 'ملف تمت إضافته'}\n\n"
-            f"{'📤 Devam gönder, bitince Kapat.' if is_main_admin(uid) else '📤 أرسل المزيد أو اضغط إغلاق.'}"
+            f"📎 {count} {'dosya eklendi' if is_main_admin(uid) else 'ملف تمت إضافته'}"
+            f"{_chan_line}\n"
+            f"{'📁 ' + _folder_path + chr(10) if is_main_admin(uid) else ''}"
+            f"\n{'📤 Devam gönder, bitince Kapat.' if is_main_admin(uid) else '📤 أرسل المزيد أو اضغط إغلاق.'}"
         )
         if status_id:
             try:
