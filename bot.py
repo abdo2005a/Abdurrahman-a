@@ -10618,12 +10618,15 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
                 if fid:
                     import uuid as _uuid2
                     key2 = _uuid2.uuid4().hex[:8]
-                    context.bot_data.setdefault("pending_ch", {})[key2] = {"fid": fid, "ftype": ftype, "cap": cap}
+                    context.bot_data.setdefault("pending_ch", {})[key2] = {"fid": fid, "ftype": ftype, "cap": cap, "paths": {}}
                     content_fw = load_content()
                     top_fw = list(content_fw.get("folders", {}).keys())
                     icon_map2 = {"photo":"🖼","video":"🎬","document":"📄","audio":"🎵","animation":"🎞","voice":"🎙"}
-                    kb2 = [[InlineKeyboardButton(f"📁 {fn[:30]}", callback_data=f"chan|add|{key2}|{i}")]
-                           for i, fn in enumerate(top_fw[:18])]
+                    kb2 = []
+                    for _i2, _fn2 in enumerate(top_fw[:18]):
+                        _cnt2 = folder_item_count(content_fw["folders"][_fn2])
+                        _lbl2 = f"📁 {_fn2[:28]}" + (f" {_cnt2}" if _cnt2 else "")
+                        kb2.append([InlineKeyboardButton(_lbl2, callback_data=f"chan|nav|{key2}|{_i2}")])
                     kb2.append([InlineKeyboardButton("🗑 Atla", callback_data=f"chan|skip|{key2}")])
                     await msg.reply_text(
                         f"📥 Kanaldan iletildi: {icon_map2.get(ftype,'📎')} {(cap or '')[:50]}\nHangi klasöre eklensin?",
@@ -10992,7 +10995,7 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     # bot_data'da bekleyen dosya olarak sakla
     import uuid as _uuid
     key = _uuid.uuid4().hex[:8]
-    context.bot_data.setdefault("pending_ch", {})[key] = {"fid": fid, "ftype": ftype, "cap": cap}
+    context.bot_data.setdefault("pending_ch", {})[key] = {"fid": fid, "ftype": ftype, "cap": cap, "paths": {}}
 
     # Üst düzey klasörleri listele
     content     = load_content()
@@ -11000,7 +11003,9 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
     icon_map    = {"photo": "🖼", "video": "🎬", "document": "📄", "audio": "🎵", "animation": "🎞", "voice": "🎙"}
     kb = []
     for i, fname in enumerate(top_folders[:18]):
-        kb.append([InlineKeyboardButton(f"📁 {fname[:30]}", callback_data=f"chan|add|{key}|{i}")])
+        _cnt = folder_item_count(content["folders"][fname])
+        _lbl = f"📁 {fname[:28]}" + (f" {_cnt}" if _cnt else "")
+        kb.append([InlineKeyboardButton(_lbl, callback_data=f"chan|nav|{key}|{i}")])
     kb.append([InlineKeyboardButton("🗑 Atla / İptal", callback_data=f"chan|skip|{key}")])
     type_icon = icon_map.get(ftype, "📎")
     msg_text  = (f"📥 Kanaldan yeni dosya geldi!\n"
@@ -11020,7 +11025,6 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_chan_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query; await query.answer()
     uid   = str(query.from_user.id)
-    # Ana admin veya can_add_file yetkili alt admin
     if not is_admin(uid) and not is_main_admin(uid): return
     cb    = query.data
     parts = cb.split("|")
@@ -11034,21 +11038,73 @@ async def handle_chan_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text("🗑 Dosya atlandı.")
         return
 
-    if act == "add":
-        folder_idx = int(parts[3])
-        content    = load_content()
-        top_folders= list(content["folders"].keys())
-        if folder_idx >= len(top_folders):
-            await query.edit_message_text("❌ Klasör bulunamadı."); return
-        fname  = top_folders[folder_idx]
-        folder = content["folders"][fname]
-        fobj   = {"type": fdata["ftype"], "file_id": fdata["fid"], "caption": fdata["cap"], "name": fdata["cap"]}
-        folder.setdefault("files", []).append(fobj)
+    content = load_content()
+
+    def _show_picker(path: list):
+        node = get_folder(content, path)
+        subs = list(node.get("folders", {}).keys())
+        path_label = " / ".join(path) if path else "Ana Dizin"
+        kb = []
+        for _i, _fn in enumerate(subs[:18]):
+            _cnt = folder_item_count(node["folders"][_fn])
+            _lbl = f"📁 {_fn[:28]}" + (f" {_cnt}" if _cnt else "")
+            kb.append([InlineKeyboardButton(_lbl, callback_data=f"chan|nav|{key}|{_i}")])
+        if path:
+            kb.append([InlineKeyboardButton("📥 Buraya ekle", callback_data=f"chan|here|{key}")])
+            kb.append([InlineKeyboardButton("◀️ Geri", callback_data=f"chan|back|{key}"),
+                       InlineKeyboardButton("🗑 Atla", callback_data=f"chan|skip|{key}")])
+        else:
+            kb.append([InlineKeyboardButton("🗑 Atla / İptal", callback_data=f"chan|skip|{key}")])
+        return f"📁 <b>{path_label}</b>\nHangi klasöre eklensin?", InlineKeyboardMarkup(kb)
+
+    def _do_add(path: list):
+        node = get_folder(content, path)
+        path_label = " / ".join(path) if path else "Ana Dizin"
+        fobj = {"type": fdata["ftype"], "file_id": fdata["fid"],
+                "caption": fdata["cap"], "name": fdata["cap"]}
+        node.setdefault("files", []).append(fobj)
         save_content(content)
         context.bot_data.get("pending_ch", {}).pop(key, None)
         adm_name = load_users().get(uid, {}).get("full_name") or uid
-        await query.edit_message_text(f"✅ Dosya eklendi → 📁 {fname}\n📎 {(fdata['cap'] or '')[:60]}")
-        log_admin_action(uid, "CHANNEL_IMPORT", f"folder={fname} type={fdata['ftype']} by={adm_name}")
+        log_admin_action(uid, "CHANNEL_IMPORT",
+                         f"path={path_label} type={fdata['ftype']} by={adm_name}")
+        return path_label
+
+    # ── nav: step into a subfolder ──────────────────────────────
+    if act in ("nav", "add"):
+        idx  = int(parts[3])
+        path = fdata.setdefault("paths", {}).get(uid, [])
+        node = get_folder(content, path)
+        subs = list(node.get("folders", {}).keys())
+        if idx >= len(subs):
+            await query.edit_message_text("❌ Klasör bulunamadı."); return
+        new_path = path + [subs[idx]]
+        fdata.setdefault("paths", {})[uid] = new_path
+        new_node = get_folder(content, new_path)
+        if not new_node.get("folders"):
+            path_label = _do_add(new_path)
+            await query.edit_message_text(
+                f"✅ Dosya eklendi → 📁 {path_label}\n📎 {(fdata['cap'] or '')[:60]}")
+        else:
+            txt, kb = _show_picker(new_path)
+            await query.edit_message_text(txt, parse_mode="HTML", reply_markup=kb)
+        return
+
+    # ── here: add to current path ───────────────────────────────
+    if act == "here":
+        path = fdata.get("paths", {}).get(uid, [])
+        path_label = _do_add(path)
+        await query.edit_message_text(
+            f"✅ Dosya eklendi → 📁 {path_label}\n📎 {(fdata['cap'] or '')[:60]}")
+        return
+
+    # ── back: go up one level ───────────────────────────────────
+    if act == "back":
+        path = fdata.get("paths", {}).get(uid, [])
+        path = path[:-1] if path else []
+        fdata.setdefault("paths", {})[uid] = path
+        txt, kb = _show_picker(path)
+        await query.edit_message_text(txt, parse_mode="HTML", reply_markup=kb)
 
 
 # ================================================================
