@@ -11123,13 +11123,15 @@ def main():
     threading.Thread(target=lambda: HTTPServer(("0.0.0.0", _port), _H).serve_forever(), daemon=True).start()
     logger.info(f"Health check port: {_port}")
 
-    app = (Application.builder()
-           .token(TOKEN)
-           .connect_timeout(30)
-           .read_timeout(30)
-           .write_timeout(30)
-           .pool_timeout(30)
-           .build())
+    from telegram.request import HTTPXRequest
+    _proxy = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+              or os.environ.get("ALL_PROXY") or os.environ.get("BOT_PROXY"))
+    _req = HTTPXRequest(proxy=_proxy if _proxy else None,
+                        connect_timeout=30, read_timeout=30,
+                        write_timeout=30, pool_timeout=30)
+    app = Application.builder().token(TOKEN).request(_req).build()
+    if _proxy:
+        logger.info(f"Proxy kullanılıyor: {_proxy}")
 
     media_f = (filters.PHOTO | filters.VIDEO | filters.Document.ALL |
                filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL)
