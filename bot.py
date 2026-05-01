@@ -22,9 +22,20 @@ ADMIN_ID       = 7731559022
 ANON_GROUP_ID  = None  # Anonim mesaj grubu — Ayarlar'dan set edilir
 
 
-_default_dir = "/data/bot_data" if os.path.exists("/data") else os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "bot_data")
-BASE_DIR  = os.environ.get("DATA_DIR", _default_dir)
+def _pick_data_dir():
+    for _cand in ("/data/bot_data",
+                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data"),
+                  os.path.join(os.path.expanduser("~"), "bot_data")):
+        try:
+            os.makedirs(_cand, exist_ok=True)
+            _t = os.path.join(_cand, ".wtest")
+            open(_t, "w").close(); os.remove(_t)
+            return _cand
+        except (OSError, PermissionError):
+            continue
+    raise RuntimeError("Yazılabilir veri dizini bulunamadı")
+
+BASE_DIR  = os.environ.get("DATA_DIR") or _pick_data_dir()
 FILES_DIR = os.path.join(BASE_DIR, "files")
 os.makedirs(BASE_DIR,  exist_ok=True)
 os.makedirs(FILES_DIR, exist_ok=True)
