@@ -11123,7 +11123,13 @@ def main():
     threading.Thread(target=lambda: HTTPServer(("0.0.0.0", _port), _H).serve_forever(), daemon=True).start()
     logger.info(f"Health check port: {_port}")
 
-    app = Application.builder().token(TOKEN).build()
+    app = (Application.builder()
+           .token(TOKEN)
+           .connect_timeout(30)
+           .read_timeout(30)
+           .write_timeout(30)
+           .pool_timeout(30)
+           .build())
 
     media_f = (filters.PHOTO | filters.VIDEO | filters.Document.ALL |
                filters.AUDIO | filters.VOICE | filters.ANIMATION | filters.Sticker.ALL)
