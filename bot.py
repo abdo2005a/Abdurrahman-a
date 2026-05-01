@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 # ======================= KONFIGURASYON =======================
-TOKEN          = "8574020136:AAEaxD4fk9DPQQPsZ0y0lkhdKZXVrONxQJU"
+TOKEN          = "8676172142:AAHmhb7M7taVYNgUjiA97JeYN0wPkige5f0"
 ADMIN_ID       = 7731559022
 ANON_GROUP_ID  = None  # Anonim mesaj grubu — Ayarlar'dan set edilir
 
